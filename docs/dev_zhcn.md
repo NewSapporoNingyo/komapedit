@@ -637,6 +637,8 @@ plan benchmark 默认使用 `--interaction pan`。它会切换“曲线半径”
 
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
 
+独立 `curve.interpolate` 模板复用可选尾参数字段以及共享的 typed curve 插入校验、序列化和语义指纹，仅生成官方 0/1/2 参数形式；拒绝仅含 cant、非有限值、未知字段及不支持的方法。`typed_edit_contract` 在临时 Shift-JIS/CRLF Include 中逐一执行 dry run、内存 Apply、Reset、再次 Apply、Commit 与 fresh Reload，并保持表达式、注释、源码顺序和插入身份。既有新建元素 headless 命令还验证默认双参数、复选框联动、三种向导形式、新建后立即 Inspector 编辑、延迟取消、Revert、每个新元素唯一且带来源绑定的 2D/3D 标记，以及不传 `--commit` 时全部物理源文件的逐字节一致性。
+
 `--debug-headless-light-edit` 要求显式传入地图，例如 `tests\\light_valid.txt`。它先按正式路径完成预览模型到编辑元数据的合并，再不模拟 ImGui 点击而直接调用“光照效果”表单 Apply、延迟删除和三种“效果”向导模板。合并后，地图中每条既有光照语句都必须可进行源码编辑；既有语句经共享延迟路径修改、删除，向导再在所选源文件的固定里程 `0` 创建全部三种形式。该命令支持仅含任意有效子集的三类光照语句的地图，检查求值预览和官方源码形式，最后 Revert 回原始子集。该命令仅进行内存 Apply，传入 `--commit` 会被拒绝，并证明地图字节未改变。
 
 `--debug-headless-curve-parameter-edit` 要求显式传入包含三种现行 Curve 参数语句的地图。它按生产路径完成预览/编辑元数据合并，检查稳定身份、相互独立的 `CG`/`CC`/`CF` 平面标记与场景标牌、白色标牌主题及独立可见掩码；通过 Inspector 编辑里程和参数并拒绝 `SetFunction(2)`；经延迟路径删除；再通过三个正式向导模板新建现行形式；最后 Revert 回基线。该命令仅进行内存 Apply，传入 `--commit` 会被拒绝，并验证每个已加载物理源文件的字节完全不变。

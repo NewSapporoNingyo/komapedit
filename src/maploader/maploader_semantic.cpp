@@ -1697,10 +1697,10 @@ std::string expected_insert_semantic(MapContext& ctx,
         KvCurveRow row{};
         path_row(row);
         row.method = own_track_method_ref;
-        if (own_track_method == "Curve.Begin") {
-            row.argument_count = semantic_change.field_changes.find("cant") ==
-                semantic_change.field_changes.end() ? 1U : 2U;
-            row.radius.kind = KV_VALUE_NUMBER;
+        if (own_track_method == "Curve.Begin" || own_track_method == "Curve.Interpolate") {
+            row.argument_count = semantic_change.field_changes.count("radius") == 0
+                ? 0U : (semantic_change.field_changes.count("cant") == 0 ? 1U : 2U);
+            if (row.argument_count >= 1) row.radius.kind = KV_VALUE_NUMBER;
             if (row.argument_count == 2) row.cant.kind = KV_VALUE_NUMBER;
         } else if (own_track_method == "Curve.Change" ||
                    own_track_method == "Curve.SetGauge" ||

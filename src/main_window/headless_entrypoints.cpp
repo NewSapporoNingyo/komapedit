@@ -1081,6 +1081,18 @@ int App::run_debug_headless_new_element_edit(
         const std::string baseline_entry_hash =
             source_hash_for_path(app.model_, options.path);
 
+        const auto read_source_bytes = [](const std::string& path) {
+            std::ifstream input(std::filesystem::path(utf8_to_wide(path)), std::ios::binary);
+            if (!input) throw std::runtime_error("cannot read protected source: " + path);
+            return std::string(std::istreambuf_iterator<char>(input),
+                               std::istreambuf_iterator<char>());
+        };
+        std::map<std::string, std::string> protected_sources;
+        protected_sources.emplace(options.path, read_source_bytes(options.path));
+        for (const EditSourceFileInfo& file : app.model_.edit_files) {
+            protected_sources.emplace(file.file_path, read_source_bytes(file.file_path));
+        }
+
         const std::vector<std::string> target_candidates =
             new_element_target_candidates(app.model_);
         if (target_candidates.empty()) {
@@ -1599,6 +1611,123 @@ int App::run_debug_headless_new_element_edit(
               app.pending_edit_changes_.empty() &&
               app.model_.repeaters.size() == baseline_repeater_count);
         *out << "stage=repeater-cancelled\n";
+
+        check("curve_interpolate_template_order",
+              template_index("curve.interpolate") == template_index("curve") + 1);
+        double interpolate_distance = std::numeric_limits<double>::quiet_NaN();
+        for (size_t i = 1; i < distance_values.size(); ++i) {
+            const double candidate = std::max(distance_values[i - 1], app.dmin_) + 1.0;
+            if (candidate + 0.5 < std::min(distance_values[i], app.dmax_)) {
+                interpolate_distance = candidate;
+                break;
+            }
+        }
+        if (!check("interpolate_test_distances_in_visible_range", std::isfinite(interpolate_distance))) {
+            throw std::runtime_error("no visible distance gap for Curve.Interpolate marker checks");
+        }
+        app.show_curve_values_ = true;
+        std::vector<std::string> interpolate_ids;
+        for (int arity = 0; arity <= 2; ++arity) {
+            *out << "stage=curve-interpolate-create-" << arity << "\n";
+            if (!check("interpolate_template_prepared", prepare_wizard("curve.interpolate"))) {
+                throw std::runtime_error("missing Curve.Interpolate template");
+            }
+            auto& form = app.new_element_wizard_.form;
+            const auto* radius = find_inspector_field(form, "radius");
+            const auto* cant = find_inspector_field(form, "cant");
+            check("interpolate_defaults_two_numeric_arguments",
+                  form.fields.size() == 3 && radius && cant &&
+                      radius->optional_insertion_argument && cant->optional_insertion_argument &&
+                      !radius->disabled && !cant->disabled &&
+                      edit_field_buffer_text(*radius) == "0" && edit_field_buffer_text(*cant) == "0");
+            bool fields_ok = set_field(form, "distance", format_double(interpolate_distance + arity * 0.25, 6));
+            if (arity == 0) {
+                fields_ok = fields_ok && set_optional_argument(form, "radius", false);
+                check("interpolate_radius_omission_disables_cant",
+                      radius && cant && radius->disabled && cant->disabled &&
+                          !set_optional_argument(form, "cant", true));
+            } else {
+                fields_ok = fields_ok && set_field(form, "radius", "500");
+                fields_ok = fields_ok && (arity == 1
+                    ? set_optional_argument(form, "cant", false)
+                    : set_field(form, "cant", "0.025"));
+            }
+            if (!check("interpolate_wizard_apply", fields_ok && apply_wizard())) {
+                throw std::runtime_error("Curve.Interpolate wizard Apply failed");
+            }
+            std::string id;
+            for (const auto& entry : app.pending_edit_changes_) {
+                if (entry.second.row_kind == "curve" && entry.second.operation == "insert" &&
+                    std::find(interpolate_ids.begin(), interpolate_ids.end(), entry.first) ==
+                        interpolate_ids.end()) id = entry.first;
+            }
+            interpolate_ids.push_back(id);
+            const TableRow* row = model_row(app.model_.curve_rows, id);
+            check("interpolate_insert_typed_row_and_source",
+                  !id.empty() && row && table_cell(*row, "method") == "Curve.Interpolate" &&
+                      table_cell_number(*row, "argumentCount") == arity &&
+                      row->source.file_path == target_file &&
+                      app.model_.curve_rows.size() == baseline_curve_count + arity + 1);
+            const std::string expected_source = arity == 0 ? "Curve.Interpolate();" :
+                (arity == 1 ? "Curve.Interpolate(500);" : "Curve.Interpolate(500,0.025);");
+            check("interpolate_created_inspector_shape",
+                  app.open_element_inspector(id, "curve") &&
+                      app.inspector_.fields.size() == static_cast<size_t>(arity + 1) &&
+                      app.inspector_.raw_statement == expected_source);
+            const PlanData& plan = app.current_plan_data();
+            check("interpolate_created_plan_edit_target",
+                  std::count_if(plan.curve_interpolate_markers.begin(),
+                      plan.curve_interpolate_markers.end(), [&](const auto& marker) {
+                          return marker.edit_id == id &&
+                              marker.row_index < app.model_.curve_rows.size() &&
+                              app.model_.curve_rows[marker.row_index].edit_id == id;
+                      }) == 1);
+            *out << "interpolate_created_id=" << id << "\n"
+                 << "interpolate_created_distance=" << format_double(interpolate_distance + arity * 0.25, 6)
+                 << "\ninterpolate_created_source=" << expected_source << "\n";
+        }
+        Canvas3DSceneBuildOptions interpolate_scene_options;
+        interpolate_scene_options.model = &app.model_;
+        interpolate_scene_options.map_handle = app.handle_;
+        interpolate_scene_options.unit_distance = options.unit_distance;
+        interpolate_scene_options.control_point_interval = options.unit_distance;
+        const auto interpolate_scene = build_canvas3d_scene_preview(interpolate_scene_options);
+        for (const auto& id : interpolate_ids) {
+            check("interpolate_created_scene_edit_target",
+                  std::count_if(interpolate_scene.scene.markers.begin(),
+                      interpolate_scene.scene.markers.end(), [&](const Canvas3DSceneMarker& marker) {
+                          return marker.edit_id == id && marker.row_kind == "curve" &&
+                              marker.row_index && *marker.row_index < app.model_.curve_rows.size() &&
+                              app.model_.curve_rows[*marker.row_index].edit_id == id;
+                      }) == 1);
+        }
+        check("interpolate_created_followup_edit",
+              app.open_element_inspector(interpolate_ids[2], "curve") &&
+                  set_field(app.inspector_, "radius", "550") && apply_inspector());
+        const TableRow* edited_interpolate = model_row(app.model_.curve_rows, interpolate_ids[2]);
+        check("interpolate_followup_keeps_insert_identity_and_arity",
+              edited_interpolate && pending_insert(interpolate_ids[2]) &&
+                  table_cell_number(*edited_interpolate, "radius") == 550 &&
+                  table_cell_number(*edited_interpolate, "argumentCount") == 2);
+        app.request_element_delete(interpolate_ids[1], "curve");
+        check("interpolate_delete_deferred", app.pending_delete_request_.has_value());
+        app.process_pending_element_delete();
+        check("interpolate_delete_cancels_unsaved_insert",
+              !model_row(app.model_.curve_rows, interpolate_ids[1]) &&
+                  !pending_insert(interpolate_ids[1]) &&
+                  app.model_.curve_rows.size() == baseline_curve_count + 2);
+        app.discard_pending_edits();
+        check("interpolate_revert_restores_baseline",
+              app.pending_edit_changes_.empty() && app.model_.curve_rows.size() == baseline_curve_count &&
+                  std::none_of(app.model_.curve_rows.begin(), app.model_.curve_rows.end(),
+                      [&](const TableRow& row) {
+                          return std::find(interpolate_ids.begin(), interpolate_ids.end(), row.edit_id) !=
+                              interpolate_ids.end();
+                      }));
+        check("interpolate_workflow_all_disk_sources_unchanged",
+              std::all_of(protected_sources.begin(), protected_sources.end(), [&](const auto& entry) {
+                  return read_source_bytes(entry.first) == entry.second;
+              }));
 
         check("own_track_templates_found",
               template_index("curve") >= 0 && template_index("gradient") >= 0 &&
@@ -2441,6 +2570,10 @@ int App::run_debug_headless_new_element_edit(
             check("disk_source_hashes_unchanged",
                   disk_reload.ok && entry_hash_after == baseline_entry_hash &&
                   target_hash_after == baseline_target_hash);
+            check("all_physical_sources_unchanged",
+                  std::all_of(protected_sources.begin(), protected_sources.end(), [&](const auto& entry) {
+                      return read_source_bytes(entry.first) == entry.second;
+                  }));
             if (disk_reload.handle) kv_free(disk_reload.handle);
             *out << "stage=reset-and-disk-check-complete\n";
         }

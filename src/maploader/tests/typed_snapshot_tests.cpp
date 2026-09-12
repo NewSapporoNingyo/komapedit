@@ -4434,6 +4434,118 @@ void curve_interpolate_edit_contract() {
               map_string(reloaded_snapshot, reloaded_two->method) ==
                   "Curve.Interpolate",
           "Curve.Interpolate fresh reload retains identity, arity, and edited value");
+
+    // Reuse the Include/encoding fixture and typed insertion batch for every overload.
+    if (!reloaded.value) return;
+    const std::string target = include_path.u8string();
+    const std::vector<OwnTrackInsertSpec> invalid_specs = {
+        {"interpolate-cant-only", "curve", "Curve.Interpolate", "25", "", "0.1", ""},
+        {"interpolate-infinite-radius", "curve", "Curve.Interpolate", "25", "inf", "", ""},
+        {"interpolate-nan-cant", "curve", "Curve.Interpolate", "25", "300", "nan", ""},
+        {"interpolate-unknown-field", "curve", "Curve.Interpolate", "25", "", "", "1"},
+        {"interpolate-unknown-method", "curve", "Curve.Unsupported", "25", "", "", ""},
+    };
+    for (const auto& spec : invalid_specs) {
+        OwnTrackInsertBatch invalid(target, {spec});
+        KvEditReportSnapshot report{};
+        check(kv_edit_dry_run_typed(reloaded.value, &invalid.batch, &report,
+                                    sizeof(report)) != 0 && !report.ok &&
+                  report.blocking_error_count > 0,
+              "Curve.Interpolate insert rejects gaps, non-finite values, unknown fields and methods");
+    }
+    const std::array<std::string, 3> forms{{
+        "Curve.Interpolate();", "Curve.Interpolate(-500);",
+        "Curve.Interpolate(800,0.05);"}};
+    for (unsigned arity = 0; arity < forms.size(); ++arity) {
+        const std::string before_insert = read_source(include_path);
+        const std::string id = "interpolate-insert-" + std::to_string(arity);
+        const double distance = 23.0 + arity;
+        OwnTrackInsertBatch insert(target, {{
+            id, "curve", "Curve.Interpolate", std::to_string(distance),
+            arity == 0 ? "" : (arity == 1 ? "-500" : "800"),
+            arity == 2 ? "0.05" : "", ""}});
+        KvEditReportSnapshot dry{};
+        check(kv_edit_dry_run_typed(reloaded.value, &insert.batch, &dry,
+                                    sizeof(dry)) != 0 && dry.ok &&
+                  dry.full_reparse_ok && dry.non_target_changed_count == 0 &&
+                  dry.insert_count == 1,
+              "Curve.Interpolate overload insert dry run fully validates");
+        const auto inserted_matches = [&](const KvMapSnapshot& snapshot,
+                                           const KvCurveRow* row) {
+            return row && row->argument_count == arity &&
+                map_string(snapshot, row->method) == "Curve.Interpolate" &&
+                nearly_equal(row->distance, distance) &&
+                map_string(snapshot, row->file_path) == target &&
+                row->radius.kind == (arity ? KV_VALUE_NUMBER : KV_VALUE_NULL) &&
+                row->cant.kind == (arity == 2 ? KV_VALUE_NUMBER : KV_VALUE_NULL) &&
+                (arity == 0 || nearly_equal(row->radius.number_value, arity == 1 ? -500 : 800)) &&
+                (arity != 2 || nearly_equal(row->cant.number_value, 0.05));
+        };
+        for (int replay = 0; replay < 2; ++replay) {
+            KvEditReportSnapshot applied{};
+            check(kv_edit_apply_to_memory_typed(reloaded.value, &insert.batch,
+                      &applied, sizeof(applied)) != 0 && applied.ok &&
+                      applied.full_reparse_ok && applied.non_target_changed_count == 0,
+                  "Curve.Interpolate overload insert applies and reapplies to memory");
+            KvMapSnapshot snapshot{};
+            check(kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                      &snapshot, sizeof(snapshot)) != 0 &&
+                      snapshot.curve_count == 4 + arity &&
+                      inserted_matches(snapshot, find_curve(snapshot, id)) &&
+                      read_source(include_path) == before_insert &&
+                      read_source(fixture.map_path) == root_before &&
+                      read_source(random_path) == random_before,
+                  "Curve.Interpolate insert retains typed shape, stable insert id and physical sources");
+            if (replay == 0) {
+                check(kv_edit_reset_memory(reloaded.value) != 0,
+                      "Curve.Interpolate insert Reset succeeds");
+                KvMapSnapshot reset_insert{};
+                check(kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                          &reset_insert, sizeof(reset_insert)) != 0 &&
+                          reset_insert.curve_count == 3 + arity &&
+                          !find_curve(reset_insert, id),
+                      "Curve.Interpolate insert Reset removes only the unsaved row");
+            }
+        }
+        KvEditReportSnapshot saved{};
+        check(kv_edit_commit_typed(reloaded.value, &saved, sizeof(saved)) != 0 &&
+                  saved.ok && saved.full_reparse_ok && saved.changed_file_count == 1,
+              "Curve.Interpolate overload insert commits only its temporary Include");
+        bool saved_id = false;
+        for (std::uint64_t i = 0; i < saved.committed_row_count; ++i) {
+            saved_id = saved_id || arena_view(saved.string_data, saved.string_size,
+                                              saved.committed_rows[i].edit_id) == id;
+        }
+        check(saved_id, "Curve.Interpolate insert id survives Commit reconciliation");
+        const std::string saved_text = read_source(include_path);
+        check(saved_text.find(forms[arity]) != std::string::npos &&
+                  saved_text.find("BveTs Map 2.02:shift_jis\r\n") == 0 &&
+                  saved_text.find("Curve.Interpolate($radius); # keep radius expression\r\n") !=
+                      std::string::npos &&
+                  saved_text.find("Curve.Interpolate(700,0.125); # keep cant comment\r\n") !=
+                      std::string::npos &&
+                  read_source(fixture.map_path) == root_before &&
+                  read_source(random_path) == random_before,
+              "Curve.Interpolate insert Save preserves official forms, expressions, comments and encoding");
+        MapHandle fresh(kv_load_map_ex(fixture.path_utf8().c_str(), 5.0,
+                                     KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot fresh_snapshot{};
+        check(fresh.value && kv_get_map_snapshot(fresh.value, KV_MAP_SNAPSHOT_VERSION,
+                  &fresh_snapshot, sizeof(fresh_snapshot)) != 0 &&
+                  fresh_snapshot.curve_count == 4 + arity,
+              "Curve.Interpolate overload insert fresh Reload succeeds");
+        const KvCurveRow* fresh_row = nullptr;
+        for (std::uint64_t i = 0; i < fresh_snapshot.curve_count; ++i) {
+            if (nearly_equal(fresh_snapshot.curves[i].distance, distance)) {
+                fresh_row = &fresh_snapshot.curves[i];
+            }
+        }
+        check(inserted_matches(fresh_snapshot, fresh_row) &&
+                  fresh_row->order > fresh_snapshot.curves[1].order &&
+                  fresh_row->order < fresh_snapshot.curves[fresh_snapshot.curve_count - 1].order &&
+                  !map_string(fresh_snapshot, fresh_row->metadata.edit_id).empty(),
+              "Curve.Interpolate insert fresh Reload retains typed values and source order");
+    }
 }
 
 void other_track_insert_contract() {

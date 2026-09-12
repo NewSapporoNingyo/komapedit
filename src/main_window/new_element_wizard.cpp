@@ -315,7 +315,20 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             },
         },
         {
-            "gradient", NewElementTemplateCategory::TrackGeometry, 1,
+            "curve.interpolate", NewElementTemplateCategory::TrackGeometry, 1,
+            "curve", "Curve.Interpolate",
+            "Curve.Interpolate(radius, cant);\n"
+            "Curve.Interpolate(radius);\n"
+            "Curve.Interpolate();",
+            "new_element.usage.curve.interpolate", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"radius", "radius", MapElementNumericConstraint::Finite, true, "0", true},
+                {"cant", "cant", MapElementNumericConstraint::Finite, true, "0", true},
+            },
+        },
+        {
+            "gradient", NewElementTemplateCategory::TrackGeometry, 2,
             "gradient", "",
             "Gradient.*",
             "new_element.usage.gradient", false,
@@ -332,7 +345,7 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             },
         },
         {
-            "curve.setgauge", NewElementTemplateCategory::TrackGeometry, 3,
+            "curve.setgauge", NewElementTemplateCategory::TrackGeometry, 4,
             "curve", "Curve.SetGauge",
             "Curve.SetGauge(value);",
             "new_element.usage.curve.setgauge", false,
@@ -342,7 +355,7 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             },
         },
         {
-            "curve.setcenter", NewElementTemplateCategory::TrackGeometry, 4,
+            "curve.setcenter", NewElementTemplateCategory::TrackGeometry, 5,
             "curve", "Curve.SetCenter",
             "Curve.SetCenter(x);",
             "new_element.usage.curve.setcenter", false,
@@ -352,7 +365,7 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             },
         },
         {
-            "curve.setfunction", NewElementTemplateCategory::TrackGeometry, 5,
+            "curve.setfunction", NewElementTemplateCategory::TrackGeometry, 6,
             "curve", "Curve.SetFunction",
             "Curve.SetFunction(id);",
             "new_element.usage.curve.setfunction", false,
@@ -362,7 +375,7 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             },
         },
         {
-            "irregularity.change", NewElementTemplateCategory::TrackGeometry, 2,
+            "irregularity.change", NewElementTemplateCategory::TrackGeometry, 3,
             "irregularity.change", "",
             "Irregularity.Change(x, y, r, lx, ly, lr);",
             "new_element.usage.irregularity.change", false,
@@ -1730,7 +1743,7 @@ void App::render_new_element_wizard() {
             wizard.selected_template = template_index;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", usage.c_str());
+            ImGui::SetTooltip("%s\n\n%s", tpl.syntax, usage.c_str());
         }
         ImGui::PushStyleColor(ImGuiCol_Text, dim_text);
         render_new_element_usage_text(usage);
@@ -1943,8 +1956,7 @@ void App::render_new_element_wizard() {
             update_own_track_wizard_field_enablement(wizard);
             render_field("endDistance");
         } else {
-            render_map_element_field_inputs(
-                wizard.form, tpl.row_kind == "otherTrack.change");
+            render_map_element_field_inputs(wizard.form, true);
         }
         ImGui::Separator();
         if (ImGui::Button(tr("button.apply").c_str())) {

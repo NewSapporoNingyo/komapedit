@@ -38,11 +38,13 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Parse other-track `Track.Position`, `Track.X/Y.Interpolate`, `Track.Gauge`, and `Track.Cant.*` statements.
 - [x] Support control-point range and interval settings, with geometry regeneration.
 - [x] Load and display speed-limit sections.
-- [x] Edit or delete existing own-track curve change points, including paired `Curve.BeginTransition` statements where applicable; the New Map Element wizard inserts current `Curve.Begin(radius)`, paired `Curve.BeginTransition()` + `Curve.Begin(radius, cant)`, `Curve.Change(radius)`, and `Curve.End()` forms, while legacy aliases and `Interpolate` remain creation-disabled.
+- [x] Edit or delete existing own-track curve change points, including paired `Curve.BeginTransition` statements where applicable; the New Map Element wizard inserts current `Curve.Begin(radius)`, paired `Curve.BeginTransition()` + `Curve.Begin(radius, cant)`, `Curve.Change(radius)`, and `Curve.End()` forms, while legacy aliases remain creation-disabled; later Interpolate creation is archived separately below.
 - [x] Edit or delete existing own-track gradient change points, including paired `Gradient.BeginTransition` statements where applicable; the New Map Element wizard inserts `Gradient.Begin(gradient)` and `Gradient.End()`, optionally atomically preceded by `Gradient.BeginTransition()`, while `Gradient.BeginConst` and `Interpolate` remain creation-disabled.
 - [x] Allow the New Map Element wizard to set separate transition-start and consuming-statement distances for atomic own-track Curve/Gradient transition pairs while preserving BVE source order and full-reparse linkage validation.
 - [x] Display, edit, delete, and create `Curve.SetGauge`, `Curve.SetCenter`, and `Curve.SetFunction` through the existing typed Curve path. Preserve legacy `Curve.Gauge` on edit, restrict own-track SetFunction to `0`/`1`, and expose independent `CG`/`CC`/`CF` plan/scene markers without adding Map Info tables.
-- [x] Edit or delete every official 0/1/2-argument `Curve.Interpolate` statement through the existing typed Curve path while preserving its method, argument count, expressions, comments, encoding, and line endings. Its source-associated 2D endpoint and 3D board expose the shared Properties/Edit and Delete actions; creation remains pending.
+- [x] Edit or delete every official 0/1/2-argument `Curve.Interpolate` statement through the existing typed Curve path while preserving its method, argument count, expressions, comments, encoding, and line endings. Its source-associated 2D endpoint and 3D board expose the shared Properties/Edit and Delete actions.
+
+- [x] Create official 0/1/2-argument `Curve.Interpolate` statements through the independent Track Geometry wizard template, reusing optional-argument dependencies, typed insertion, source preservation, and the shared edit/delete/Apply/Revert/Save lifecycle.
 - [x] Edit or delete supported existing other-track change statements from their edit-mode 2D/3D markers. Track key, method, and argument count remain read-only; insertion, dragging, gizmos, and method conversion are not supported.
 - [x] Rename an other-track `trackKey` from the Other Tracks table across every same-key `Track[...]` statement in the root map and Includes, with whole-map duplicate protection and no cascading changes to dependent map elements; the change-point Inspector field remains read-only.
 
@@ -116,7 +118,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] In non-edit mode, keep 3D curve/gradient change-marker context menus at the clicked marker and show only disabled Properties/Edit and Delete actions instead of incorrectly reporting an unpaired BeginTransition.
 - [x] Display the current curve radius/cant, gradient, active speed limit, section-selected signal speeds, and distance to the next station in the 3D scene route overlay.
 - [x] Display both endpoint radii and cants in the 3D route overlay while the camera is inside an official `Curve.Interpolate` interval, with curve-direction arrows for nonzero endpoints and a triangular separator; omitted Interpolate arguments retain their evaluated inherited values, while two evaluated zero-radius endpoints use the localized `Straight` label.
-- [x] Show a board styled like the other curve-radius boards at every `Curve.Interpolate` point in the 3D scene, with the evaluated radius, cant, and curve direction, or `Intpl. 0` when the evaluated radius is zero; the boards support picking and the shared blue highlight. Their later source-backed edit/delete support is archived under track geometry above; creation remains pending.
+- [x] Show a board styled like the other curve-radius boards at every `Curve.Interpolate` point in the 3D scene, with the evaluated radius, cant, and curve direction, or `Intpl. 0` when the evaluated radius is zero; the boards support picking and the shared blue highlight. Their later source-backed edit/delete support is archived under track geometry above.
 - [x] Edit `Structure.Put`, `Signal.Put`, and `Repeater.Begin` positions along X/Y/Z with live 3D gizmos and configurable gizmo size; Inspector buttons convert `Put`/`Put0` and `Begin`/`Begin0` in either direction, while Put0/Begin0 expose a Z-only whole-metre placement/begin-distance gizmo.
 - [x] Place each `Sound3D.Put` label tip at its fixed X/Y source relative to the own track, and edit X/Y in 0.001 m steps or `distance` in whole metres through the live X/Y/Z gizmo without changing `Put(x, y)` syntax or adding audio playback.
 - [x] Preview all `Structure.PutBetween` Inspector fields with exact live vertex deformation and edit `distance` through a Z-only, whole-metre 3D gizmo.
@@ -200,11 +202,14 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 解析他轨道 `Track.Position`、`Track.X/Y.Interpolate`、`Track.Gauge` 和 `Track.Cant.*` 语句
 - [x] 支持控制点范围和间隔设置，并可重新生成几何
 - [x] 支持限速区间读取与显示
-- [x] 编辑或删除已有自轨道曲线变化点，并在适用时联动成对的 `Curve.BeginTransition`；“新建地图元素”向导可新建现行 `Curve.Begin(radius)`、成对的 `Curve.BeginTransition()` + `Curve.Begin(radius, cant)`、`Curve.Change(radius)` 和 `Curve.End()`，旧式别名与 `Interpolate` 仍不提供新建。
+- [x] 编辑或删除已有自轨道曲线变化点，并在适用时联动成对的 `Curve.BeginTransition`；“新建地图元素”向导可新建现行 `Curve.Begin(radius)`、成对的 `Curve.BeginTransition()` + `Curve.Begin(radius, cant)`、`Curve.Change(radius)` 和 `Curve.End()`，旧式别名仍不提供新建，后续 Interpolate 新建功能单独归档于下方。
 - [x] 编辑或删除已有自轨道坡度变化点，并在适用时联动成对的 `Gradient.BeginTransition`；“新建地图元素”向导可新建 `Gradient.Begin(gradient)` 与 `Gradient.End()`，可原子地前置 `Gradient.BeginTransition()`；`Gradient.BeginConst` 和 `Interpolate` 仍不提供新建。
 - [x] “新建地图元素”向导可为原子新增的自轨道 Curve/Gradient 缓和曲线对分别设置起点和后续生效语句里程，同时保持 BVE 源语句顺序和全量重解析联动验证。
 - [x] 通过现有类型化 Curve 路径显示、编辑、删除和新建 `Curve.SetGauge`、`Curve.SetCenter` 与 `Curve.SetFunction`。编辑时保留旧式 `Curve.Gauge`，自轨道 SetFunction 仅允许 `0`/`1`，并提供相互独立的 `CG`/`CC`/`CF` 平面/场景标记而不增加地图信息表格。
-- [x] 通过现有类型化 Curve 路径编辑或删除官方 0/1/2 参数 `Curve.Interpolate` 语句，并保持原方法、参数个数、表达式、注释、编码和换行。带稳定源码关联的 2D 端点与 3D 标牌使用共享的“属性/编辑”和“删除”操作；新建仍待完成。
+
+- [x] 通过现有类型化 Curve 路径编辑或删除官方 0/1/2 参数 `Curve.Interpolate` 语句，并保持原方法、参数个数、表达式、注释、编码和换行。带稳定源码关联的 2D 端点与 3D 标牌使用共享的“属性/编辑”和“删除”操作。
+
+- [x] 通过“轨道几何”中的独立向导模板新建官方 0/1/2 参数 `Curve.Interpolate` 语句，复用可选参数联动、类型化插入、源码保留，以及共享编辑/删除/Apply/Revert/Save 生命周期。
 - [x] 从编辑模式下的 2D/3D 标记编辑或删除受支持的既有他轨道变化语句；track key、方法和参数个数只读，暂不支持新建、拖动、gizmo 或方法转换
 - [x] 从“其他轨道”表统一重命名根地图及 Include 中同键的全部 `Track[...]` 语句；执行全地图重名保护且不级联修改依赖地图元素，他轨道变化点检查器中的 track key 保持只读
 
@@ -278,7 +283,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 在编辑模式未开启时，右键点击3D场景中的曲线变化点或坡度变化点标记，右键菜单仅显示禁用的“属性/编辑”和“删除”，不再错误显示“此BeginTransition没有对应的Begin/End，无法编辑或删除”或发生位置偏移
 - [x] 在 3D 场景线路信息叠加层显示当前曲线半径/超高、坡度、生效限速、闭塞选择出的信号限速和距下一站距离
 - [x] 当相机位于官方 `Curve.Interpolate` 区间内时，在 3D 线路信息叠加层同时显示两个端点的曲线半径与超高，以非零端点方向箭头和三角箭头分隔；省略参数的 Interpolate 保持其求值后的继承值，两端求值半径均为零时使用本地化“直线”标签
-- [x] 在 3D 场景中为每个 `Curve.Interpolate` 插值点显示与其他曲线半径标牌同款的标牌，内容为求值后的半径、超高和曲线方向，求值半径为零时显示 `Intpl. 0`；标牌支持拾取和共享的蓝色高亮。其后续基于源码的编辑/删除功能归档于上方“轨道几何”条目，新建仍待完成
+- [x] 在 3D 场景中为每个 `Curve.Interpolate` 插值点显示与其他曲线半径标牌同款的标牌，内容为求值后的半径、超高和曲线方向，求值半径为零时显示 `Intpl. 0`；标牌支持拾取和共享的蓝色高亮。其后续基于源码的编辑/删除功能归档于上方“轨道几何”条目。
 - [x] 通过尺寸可调的实时 3D 操纵器编辑 `Structure.Put`、`Signal.Put` 和 `Repeater.Begin` 的 X/Y/Z 位置；检查器按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，Put0/Begin0 提供仅 Z 轴、整米步进的放置/起始里程操纵器
 - [x] 在 3D 场景中将 `Sound3D.Put` 的标签尖端定位到相对自轨道的固定 X/Y 音源；通过实时 X/Y/Z 操纵器编辑 X/Y（0.001 m）或 distance（Z 轴整米），不改变 `Put(x, y)` 语法或音频播放行为
 - [x] 为 `Structure.PutBetween` 的全部检查器字段提供精确的实时顶点变形预览，并通过仅 Z 轴、整米步进的 3D 操纵器编辑 `distance`

@@ -57,7 +57,7 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 | `Curve.Begin(radius, cant)` / `[旧式] Curve.BeginCircular(radius, cant)`                                                                                                                    |   √   |    √     |    △     |     ✕      | `Curve.*` 表单仅将当前 `Curve.Begin(radius, cant)` 与独立里程的前置缓和曲线一同输出；旧式 `Curve.BeginCircular` 仍仅可编辑 |
 | `Curve.Begin(radius)` / `Curve.Change(radius)`                                                                                                                                              |   √   |    √     |    √     |     ✕      | `Curve.*` 表单可选择当前 Begin 或 Change，并可原子添加受支持的结束位置；已有行保持原方法                      |
 | `Curve.End()`                                                                                                                                                                               |   √   |    √     |    √     |     ✕      | `Curve.*` 表单可单独或随起始位置添加 End，并可带独立里程的前置缓和曲线；已有行仍可编辑或删除                  |
-| `Curve.Interpolate(radius, cant)` / `Curve.Interpolate(radius)` / `Curve.Interpolate()`                                                                                                     |   √   |    √     |    ✕     |     ✕      | 官方 0/1/2 参数形式均生成类型化 Curve 行并保持原参数个数：0 参数仅编辑 distance，1 参数编辑 distance/radius，2 参数编辑 distance/radius/cant。开启“曲线半径”后，可从 2D 端点和 3D 标牌使用共享的“属性/编辑”和“删除”；暂不支持新建 |
+| `Curve.Interpolate(radius, cant)` / `Curve.Interpolate(radius)` / `Curve.Interpolate()`                                                                                                     |   √   |    √     |    √     |     ✕      | 官方 0/1/2 参数形式均生成类型化 Curve 行并保持原参数个数：0 参数仅编辑 distance，1 参数编辑 distance/radius，2 参数编辑 distance/radius/cant。开启“曲线半径”后，可从 2D 端点和 3D 标牌使用共享的“属性/编辑”和“删除”；独立 Curve.Interpolate 向导模板可新建全部三种形式 |
 | `Gradient.BeginTransition()`                                                                                                                                                                |   √   |    △     |    △     |     ✕      | 合并后的 `Gradient.*` 表单可在选定 Begin/End 前添加；起止缓和选项联动且各自保留独立里程                      |
 | `Gradient.Begin(gradient)` / `[旧式] Gradient.BeginConst(gradient)`                                                                                                                         |   √   |    √     |    √     |     ✕      | `Gradient.*` 表单可单独或随 End 添加当前 `Gradient.Begin(gradient)`，并可带前置缓和曲线；旧式 `Gradient.BeginConst` 仍仅可编辑 |
 | `Gradient.End()`                                                                                                                                                                            |   √   |    √     |    √     |     ✕      | `Gradient.*` 表单可单独或随 Begin 添加 End，并可带独立里程的前置缓和曲线；已有行仍可编辑或删除               |
@@ -400,7 +400,7 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 
 #### 场景标牌
 
-标记可见性由 `辅助信息` 控制。开启“曲线半径”后，每个 `Curve.Interpolate` 插值点都会显示与其他曲线半径标牌同款的标牌，内容为求值后的半径、超高和曲线方向；求值半径为零时改为显示 `Intpl. 0`，不显示方向箭头。插值点标牌支持拾取、共享的蓝色高亮，以及与 2D 端点相同的“属性/编辑”和“删除”右键操作；暂不支持新建。
+标记可见性由 `辅助信息` 控制。开启“曲线半径”后，每个 `Curve.Interpolate` 插值点都会显示与其他曲线半径标牌同款的标牌，内容为求值后的半径、超高和曲线方向；求值半径为零时改为显示 `Intpl. 0`，不显示方向箭头。插值点标牌支持拾取、共享的蓝色高亮，以及与 2D 端点相同的“属性/编辑”和“删除”右键操作；可通过独立 `Curve.Interpolate` 模板新建。
 
 ### 10. 编辑与新建地图元素/新建文件向导、更改的应用与保存
 
@@ -463,7 +463,9 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 
 - Repeater 可一次添加 Begin、End 或两者；同时添加时 End 里程不能小于 Begin。同名有效区间内只能按规则插入变化点，不能创建相互重叠的普通区间。
 - Repeater“属性/编辑”中的“插入变化点”会复制当前草稿参数，并把起始/结束里程预填为当前起点，便于继续修改。
-- 曲线向导支持 `Curve.Begin(radius)`、`Curve.Change(radius)`、`Curve.End()`；坡度向导支持 `Gradient.Begin(gradient)`、`Gradient.End()`。可选的缓和曲线起点与对应语句会按正确源码顺序一起创建。旧式别名和 Interpolate 不提供新建入口。
+- 曲线向导支持 `Curve.Begin(radius)`、`Curve.Change(radius)`、`Curve.End()`；坡度向导支持 `Gradient.Begin(gradient)`、`Gradient.End()`。可选的缓和曲线起点与对应语句会按正确源码顺序一起创建。旧式别名和 Gradient.Interpolate 不提供新建入口。
+
+- “轨道几何”分类中，独立 `Curve.Interpolate` 模板紧随 `Curve.*`。distance 必填；radius 与 cant 默认均包含且为 `0`。取消 cant 可新建仅含 radius 的形式；取消 radius 会同时禁用 cant，生成 `Curve.Interpolate()`。新元素复用相同的 2D/3D 标记、“属性/编辑”、删除、Apply/Revert 与全局 Save 生命周期。
 - 其他轨道模板只生成当前 `Track.*` 形式。可选尾参数必须从前到后连续启用，例如填写 `radiusV` 前必须包含 `radiusH`。新的规范 trackKey 会创建他轨道；数值 key 与带引号的字符串 key 保持区分。
 - 如果向导无法自动确定安全的源码插入位置，文本预览会高亮解析器允许的边界，由用户选择后继续。
 

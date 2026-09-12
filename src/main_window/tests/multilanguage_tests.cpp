@@ -40,7 +40,7 @@ bool expect_no_value_fragment(const Map& translations, const char* fragment) {
 }
 
 bool same_keys(const Translation& translation) {
-    constexpr std::size_t expected_key_count = 578;
+    constexpr std::size_t expected_key_count = 579;
     if (translation.en.size() != expected_key_count ||
         translation.zh.size() != expected_key_count ||
         translation.ja.size() != expected_key_count) {
@@ -166,6 +166,9 @@ int main() {
     ok = expect_value(translation.ja, "status.edit.apply_station_list_before_save", "保存する前に停車場定義テーブルの変更を適用してください。") && ok;
     ok = expect_value(translation.ja, "dialog.apply_station_list_before_save", "保存する前に停車場定義テーブルの変更を適用してください。") && ok;
     ok = expect_value(translation.ja, "label.repeater_structure_keys", "ストラクチャーキー") && ok;
+    ok = expect_value(translation.en, "new_element.usage.curve.interpolate", "Add a curve interpolation point. Omitted radius and cant inherit the previous values.") && ok;
+    ok = expect_value(translation.zh, "new_element.usage.curve.interpolate", "新建曲线插值点。省略的半径和超高继承前值。") && ok;
+    ok = expect_value(translation.ja, "new_element.usage.curve.interpolate", "曲線の補間点を追加します。省略した半径とカントは直前の値を引き継ぎます。") && ok;
     ok = expect_value(translation.en, "value.curve_function.sine", "Sine half-wave transition") && ok;
     ok = expect_value(translation.en, "value.curve_function.linear", "Linear transition") && ok;
     ok = expect_value(translation.ja, "value.curve_function.sine", "サイン半波長逓減") && ok;

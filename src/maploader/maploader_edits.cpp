@@ -2946,12 +2946,19 @@ void validate_own_track_insert_change(const MapEditChange& change) {
         validate_insert_field_names(change, {"distance", "method", "radius", "cant"});
         validate_insert_method(change, "", {
             "Curve.BeginTransition", "Curve.Begin", "Curve.Change", "Curve.End",
-            "Curve.SetGauge", "Curve.SetCenter", "Curve.SetFunction",
+            "Curve.SetGauge", "Curve.SetCenter", "Curve.SetFunction", "Curve.Interpolate",
         });
         if (method == "Curve.BeginTransition" || method == "Curve.End") {
             if (change.field_changes.find("radius") != change.field_changes.end() ||
                 change.field_changes.find("cant") != change.field_changes.end()) {
                 throw std::runtime_error(method + " insert does not accept radius or cant");
+            }
+            return;
+        }
+        if (method == "Curve.Interpolate" &&
+            change.field_changes.find("radius") == change.field_changes.end()) {
+            if (change.field_changes.find("cant") != change.field_changes.end()) {
+                throw std::runtime_error("Curve.Interpolate insert cannot include cant without radius");
             }
             return;
         }
@@ -3347,7 +3354,9 @@ std::string build_insert_statement(const MapEditChange& change,
     }
     if (row_kind == "curve") {
         const std::string method = insert_method_or_default(change, "");
-        if (method == "Curve.BeginTransition" || method == "Curve.End") {
+        if (method == "Curve.BeginTransition" || method == "Curve.End" ||
+            (method == "Curve.Interpolate" &&
+             change.field_changes.find("radius") == change.field_changes.end())) {
             return method + "();";
         }
         const std::string radius = insert_required_number(change, "radius");
@@ -3359,7 +3368,7 @@ std::string build_insert_statement(const MapEditChange& change,
             return "Curve.Change(" + radius + ");";
         }
         const auto cant = change.field_changes.find("cant");
-        return "Curve.Begin(" + radius +
+        return method + "(" + radius +
             (cant == change.field_changes.end()
                  ? std::string{}
                  : "," + insert_required_number(change, "cant")) +
