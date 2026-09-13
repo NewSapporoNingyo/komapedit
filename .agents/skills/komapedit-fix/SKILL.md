@@ -20,8 +20,10 @@ description: Diagnose and repair a specific komapedit defect or regression. Use 
 - Typed transport/snapshot lifetime: `maploader_snapshot.cpp`, `include/maploader_snapshot.h`, and runtime dispatch.
 - Source edits: `maploader_edits.cpp`, `maploader_semantic.cpp`, Scenario direct save in `scenario_route.cpp`, and the GUI pending-edit lifecycle in `edit_ledger.cpp`/`editable_list_drafts.cpp`.
 - Tables/navigation: `src/table/` and cached `MapModel` data.
-- 2D/3D behavior: the relevant canvas plus shared marker/linkage helpers.
+- 2D behavior: `canvas2D.cpp` orchestration plus the owning `canvas2d_view_state`, `canvas2d_marker_cache`, `canvas2d_interaction`, `canvas2d_background`, `canvas2d_primitives`, or `profile_plots` module.
+- 3D behavior: the `include/canvas3D.h` facade, private `canvas3d_impl.h` state, and the functional `canvas3d_*` owner named in `docs/dev.md`; frame-overlay statistics live in `canvas3d_scene_ui.cpp`, while Present/wakeup behavior lives in `win32_dx11_bootstrap.cpp`.
 - Settings/window lifecycle: `app_settings.*`, `ui_elements.cpp`, `scene_preview_lifecycle.cpp`, and shared state in `kme.h`.
+- Edit-performance diagnostics: `include/operation_timing.h`, the relevant GUI/maploader stage owners, and `edit_benchmark.cpp`.
 - Release/runtime dependencies: CMake, build scripts, runtime paths, and actual toolchain cache.
 
 Trace the value or state through its full owner chain. Do not patch the visible symptom in a downstream view when the invariant is broken upstream.
@@ -40,7 +42,7 @@ Trace the value or state through its full owner chain. Do not patch the visible 
 1. Re-run the original reproduction.
 2. Build Debug and run the affected contract/headless checks. Use `komapedit-debug-headless-validation` for command selection.
 3. Test Release only when the defect is Release-specific, optimization-sensitive, or packaging-related.
-4. Compare before/after behavior using identical route, parameters, build type, and load profile for performance issues.
+4. Compare before/after behavior using identical route, parameters, build type, load profile, and measurement kind for performance issues. Do not equate the smoothed scene-overlay FPS with headless benchmark `p95_fps` or Present rate.
 5. Verify source hashes or a temporary copy around any real-route writeback test.
 
 ## Report with evidence

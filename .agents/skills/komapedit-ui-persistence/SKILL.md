@@ -1,13 +1,13 @@
 ---
 name: komapedit-ui-persistence
-description: Add or repair komapedit GUI state persistence. Use for settings.ini preferences, history.ini recent-map/per-map background data, imgui.ini docking/window layout, canonical setting schemas, default visibility or controls, menu checkmarks, 3D quality/gizmo preferences, or persistence-related table/window regressions.
+description: Add or repair komapedit GUI state persistence. Use for settings.ini preferences, history.ini recent-map/per-map background data, imgui.ini docking/window layout, canonical setting schemas, default visibility or controls, menu checkmarks, persisted 2D/3D scene controls and performance-warning thresholds, or persistence-related table/window regressions.
 ---
 
 # Komapedit UI Persistence
 
 ## Choose the correct owner
 
-- `settings/settings.ini`: application preferences, view visibility, UI style, 3D scene quality/gizmo settings, and reusable controls.
+- `settings/settings.ini`: application preferences, view visibility, UI style, persisted 2D controls, and 3D scene visibility/fog/distance/edit-component/camera/performance-warning controls.
 - `settings/history.ini`: recent maps and per-map background-image alignment/history.
 - `settings/imgui.ini`: Dear ImGui window geometry, docking, and layout.
 
@@ -22,12 +22,13 @@ Do not create a new sidecar file when one of these owners already fits.
 5. Keep the current schema canonical-only: accept exact saver-emitted sections, keys, and value grammars. Do not add aliases or migrations, and never rewrite an existing file during load; explicit Save is the only path that canonicalizes it.
 6. Keep startup tab/focus behavior explicit in code when the request requires a default; saved `imgui.ini` selection may otherwise override assumptions.
 7. Avoid per-frame disk writes. Save only through the existing dirty/change-detection lifecycle.
+8. Keep settings and ImGui-layout retries independent in `App::service_pending_persistence()`. Clear a pending request only after the corresponding full write and close succeeds; a failure must remain pending and use the existing throttled retry path.
 
 ## Preserve related contracts
 
 1. Update all three UI languages if visible text changes.
 2. Keep headless modes from writing `imgui.ini`.
-3. Use existing warnings and fallbacks for unsupported 3D render scale, MSAA, filtering, or outline settings.
+3. The current persisted 3D schema covers scene visibility, fog, map-driven draw distance, automatic scene loading, explicit draw distance, edit-component size, camera speed, and performance-warning thresholds. Do not claim or add render-scale, MSAA, texture-filtering, or outline-quality keys without an explicit schema-changing task.
 4. Keep window visibility synchronization shared between menus, runtime state, and persisted settings.
 
 ## Validate

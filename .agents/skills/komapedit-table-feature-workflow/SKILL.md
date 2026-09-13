@@ -31,12 +31,13 @@ Do not reintroduce `kv_get_ir_json()`, GUI-side source reparsing, a fallback dat
 
 ## Connect views through stable identity
 
-1. Add plan/scene markers only when required and build them with the owning overlay/scene cache, not every frame.
+1. Add plan/scene markers only when required and build them with the owning overlay/scene cache, not every frame. Current 2D ownership is split between `src/canvas2d/canvas2d_marker_cache.cpp` and `canvas2d_interaction.cpp`; current 3D scene-data/marker ownership is in `src/canvas3d/canvas3d_scene_data.cpp` and `canvas3d_scene_markers.cpp`.
 2. Reuse shared marker visuals and table-navigation helpers.
 3. Preserve one-to-one row identity for duplicate keys or same-distance events; do not locate by distance alone.
 4. Ensure locate actions update marker visibility/highlight side effects consistently in both directions.
 5. Route editing through `komapedit-source-backed-editing` rather than adding table-local rewrite logic.
+6. When an edit requires full snapshot hydration, let it supersede affected-family partial refreshes and invalidate each table/marker owner once. Preserve single-edit stable-ID refreshes when the owning cache supports them.
 
 ## Validate
 
-Build Debug, run `typed_snapshot_contract` for snapshot changes, `--debug-headless-table-find` for search semantics, and plan/scene headless modes for connected markers/navigation. Update all three UI languages when visible text changes and document any manual table-layout checks still required.
+Build Debug, run `typed_snapshot_contract` for snapshot changes, `--debug-headless-table-find` for search semantics, and plan/scene headless modes for connected markers/navigation. When changing Apply-time hydration or invalidation, add `--debug-headless-edit-bench` to prove batched refresh behavior separately from performance timing. Update all three UI languages when visible text changes and document any manual table-layout checks still required.

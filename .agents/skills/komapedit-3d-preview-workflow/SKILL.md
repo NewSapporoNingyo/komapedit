@@ -1,6 +1,6 @@
 ---
 name: komapedit-3d-preview-workflow
-description: Add, diagnose, or repair komapedit 3D model/scene preview behavior. Use for Canvas3D rendering, scene geometry snapshots, camera/depth/fog, Structure/Signal/Repeater placement and gizmos, map markers, picking/navigation, route overlays, scene caches, model_loader.dll, Assimp integration, 3D settings, or runtime model dependency packaging.
+description: Add, diagnose, or repair komapedit 3D model/scene preview behavior. Use for Canvas3D rendering, scene geometry snapshots, camera/depth/fog, Structure/Signal/Repeater placement and gizmos, map markers, picking/navigation, route overlays, scene caches, visible FPS/frame statistics, Debug stage profiling, model_loader.dll, Assimp integration, 3D settings, or runtime model dependency packaging.
 ---
 
 # Komapedit 3D Preview Workflow
@@ -10,6 +10,7 @@ description: Add, diagnose, or repair komapedit 3D model/scene preview behavior.
 - Main-window scene/model window lifecycle: `src/main_window/scene_preview_lifecycle.cpp`; menu and dock visibility: `ui_elements.cpp`; Inspector/gizmo draft state: `element_inspector_data.cpp` and `element_inspector_render.cpp`; shared App state: `kme.h`. `gui_kme.cpp` now retains only App construction/destruction and log wiring.
 - Public preview API and thin delegates: `include/canvas3D.h` and `src/canvas3d/canvas3D.cpp`. Shared private state remains in `canvas3d_impl.h`; method definitions are independently compiled in the functional `canvas3d_*.cpp` modules. Use the 3D module table in `docs/dev.md` to select the owner for rendering/resources, loading, scene data/lifecycle, geometry/markers, camera, editing/gizmos, or preview UI. Do not put implementations back into the shared state header or include implementation fragments.
 - CPU-only camera range and track sampling shared with the scene: `src/canvas3d/scene_track_sampling.cpp` and `src/canvas3d/scene_track_sampling.h`.
+- Visible scene FPS and overlay UI: `src/canvas3d/canvas3d_scene_ui.cpp`; Debug CPU/GPU stage instrumentation: `src/canvas3d/scene_frame_profile.h`; Win32 render wakeups and swap-chain `Present`: `src/main_window/win32_dx11_bootstrap.cpp`.
 - Scene geometry generation and revisions: `src/maploader/maploader_geometry.cpp`, snapshot code, and `MapContext`.
 - Shared symbols: `src/main_window/map_marker_visuals.cpp` and `include/map_marker_visuals.h`.
 - Structure model import/materials/textures: `src/model_loader/model_loader.cpp` and `include/model_loader.h`.
@@ -30,6 +31,7 @@ Determine whether the defect is UI wiring, scene-cache data, geometry/placement 
 8. Require the explicit Inspector coordinate-offset control before editing `Put0`/`Begin0` coordinates, confirm before discarding nonzero offsets in the reverse conversion, and keep the documented confirmation before editing short-form `Signal.Put` extended coordinates.
 9. Preserve reversed-Z/camera-relative or chunk-local precision behavior, depth clear/compare pairing, fog, draw distance, transparent material ordering, and fallback warnings.
 10. Keep route-overlay fields mapped to their actual total/current statistics; verify labels before changing geometry.
+11. Keep measurement kinds explicit. The visible FPS is a smoothed estimate from intervals between scene render calls, skips long inactive intervals, and is not swap-chain `Present` completion, monitor-refresh telemetry, headless CPU-frame p95, or Debug CPU/GPU stage profiling.
 
 ## Handle models and dependencies
 
@@ -42,7 +44,8 @@ Determine whether the defect is UI wiring, scene-cache data, geometry/placement 
 
 1. Build Debug.
    The existing render/cache and model-loader contracts live in `src/canvas3d/tests/scene_render_contract.cpp` and `scene_loader_contract.cpp`, guarded by `NDEBUG` and compiled into the EXE; the headless entry points remain explicit, outside CTest.
-2. Run `canvas3d_camera_contract` for camera-range/track-sampling changes, `route_value_sampling_contract` for route-overlay value/interval changes, `--debug-headless-scene3d-bench` for scene changes, and `--debug-headless-scene-camera-transfer` for camera/station transfer.
-3. Use the affected real route only when scale or resource layout matters; compare identical benchmark parameters and report strict budget failures honestly.
-4. Build Release and verify runtime DLLs only for packaging, dependency, or optimization-specific work.
-5. Run a short manual model/scene preview check when visual materials, picking, gizmos, labels, or startup layout changed; headless proof does not replace it.
+2. Run `canvas3d_camera_contract` for camera-range/track-sampling changes, `route_value_sampling_contract` for route-overlay value/interval changes, `--debug-headless-scene-loader-contract` for loader/cache ownership, `--debug-headless-scene3d-bench` for scene changes, and `--debug-headless-scene-camera-transfer` for camera/station transfer.
+3. Add `--profile-stages` only when diagnosing scene benchmark stages. Treat its possibly nested CPU timings and asynchronous GPU intervals as explanatory diagnostics, not as the unchanged CPU-frame acceptance gate.
+4. Use the affected real route only when scale or resource layout matters; compare identical benchmark parameters and report strict budget failures honestly. Do not compare the visible FPS value directly with headless `p95_fps` or monitor refresh.
+5. Build Release and verify runtime DLLs only for packaging, dependency, or optimization-specific work.
+6. Run a short manual model/scene preview check when visual materials, picking, gizmos, labels, startup layout, or the visible FPS changed. Validate refresh-rate/Present behavior manually when that distinction matters; headless proof does not replace it.

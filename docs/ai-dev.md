@@ -51,7 +51,7 @@ Validation: [Debug build only / affected CTests / headless mode and authorized r
 Preserve: [compatibility, performance, user interaction, files, or APIs that must not change]
 ```
 
-The skill routes source editing, tables, 3D preview, settings, localization, and validation to narrower project skills when needed.
+The skill routes source editing, resource-list workflows, typed tables, 2D/3D previews, settings/persistence, localization, and Debug/headless validation to narrower project skills when needed.
 
 ### Bug fixing
 
@@ -96,6 +96,8 @@ Keep the task documentation-only unless implementation discrepancies must only b
 ```
 
 Documentation must be derived from current source/tests. Use [`komapedit-doc-sync-validation`](../.agents/skills/komapedit-doc-sync-validation/SKILL.md) for the final scope, parity, encoding, link, and table checks.
+
+For source-map or validation-command updates, compare the current `include/`/`src/` inventory and CMake target list, then check the live command-line parsing/dispatch. A previous guide or remembered headless list is not proof of the current owners or options.
 
 ## Explicit Pi Agent collaboration
 

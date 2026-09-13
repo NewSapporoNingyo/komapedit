@@ -51,7 +51,7 @@ AI 工具应自行阅读 [`AGENTS.md`](../AGENTS.md)。可重复执行的工作�
 必须保持：[兼容性、性能、用户操作、文件或 API]
 ```
 
-该技能会按需继续路由到源码编辑、表格、3D 预览、设置、三语 UI 与验证等专项技能。
+该技能会按需继续路由到源码编辑、资源列表工作流、类型化表格、2D/3D 预览、设置/持久化、三语 UI 与 Debug/headless 验证等专项技能。
 
 ### 问题修复
 
@@ -96,6 +96,8 @@ AI 工具应自行阅读 [`AGENTS.md`](../AGENTS.md)。可重复执行的工作�
 ```
 
 文档内容必须来自当前源码/测试。最后使用 [`komapedit-doc-sync-validation`](../.agents/skills/komapedit-doc-sync-validation/SKILL.md) 检查范围、双语一致性、编码、链接与表格。
+
+更新源码分区或验证命令时，应对照当前 `include/`/`src/` 文件清单与 CMake target 列表，再核对实际命令行解析/分发。旧版指南或记忆中的 headless 清单不能证明当前所有者和参数。
 
 ## 显式调用 Pi Agent 协作
 

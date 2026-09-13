@@ -25,6 +25,7 @@ Komapedit-only skills and distilled memories belong in the repository's `.agents
 2. Use current code as the behavior source. Use Git history and memories to understand intent, not to override current code.
 3. Identify paired English/Chinese files and any tables or lists whose structure must remain aligned.
 4. Confirm whether the task is documentation-only. Do not modify source or run unrelated builds in a doc-only task.
+5. For source maps and command inventories, compare `rg --files` and the owning CMake target/source lists with current option parsing, dispatch, and usage text. Do not infer current modules or CLI modes from an older guide alone.
 
 ## Edit surgically
 
@@ -39,11 +40,12 @@ Komapedit-only skills and distilled memories belong in the repository's `.agents
 
 1. Run `git diff --check` on tracked documents.
 2. Check relative links, referenced paths, headings, code fences, and command names.
-3. Compare paired README/dev/AI-guide tables, row counts, and status language when changed.
-4. When skills are in scope, validate every changed `SKILL.md` frontmatter plus any matching `agents/openai.yaml` description or prompt, and confirm the indexes in `AGENTS.md` and the paired AI guides still describe the same routing.
-5. Inspect ignored documents directly if the user placed them in scope; Git status cannot prove their contents.
-6. For AI-asset migration, verify project ownership from content, classify raw summaries by normalized header `cwd`, compare same-name files before copying, and confirm ignored archives remain ignored. If external mixed registries need cleanup, use their managed update mechanism rather than treating the project copy as physical deletion.
-7. Skip compilation for pure prose changes unless the documentation changes a command that should be smoke-tested; honor an explicit no-build boundary.
+3. Reconcile changed source-map entries against the current tracked inventory/CMake owners and changed CLI examples against the live parser/dispatch source.
+4. Compare paired README/dev/AI-guide tables, row counts, and status language when changed.
+5. When skills are in scope, validate every changed `SKILL.md` frontmatter plus any matching `agents/openai.yaml` description or prompt, and confirm the indexes in `AGENTS.md` and the paired AI guides still describe the same routing.
+6. Inspect ignored documents directly if the user placed them in scope; Git status cannot prove their contents.
+7. For AI-asset migration, verify project ownership from content, classify raw summaries by normalized header `cwd`, compare same-name files before copying, and confirm ignored archives remain ignored. If external mixed registries need cleanup, use their managed update mechanism rather than treating the project copy as physical deletion.
+8. Skip compilation for pure prose changes unless the documentation changes a command that should be smoke-tested; honor an explicit no-build boundary.
 
 ## Report scope
 

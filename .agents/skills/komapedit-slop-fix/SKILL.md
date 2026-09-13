@@ -29,7 +29,7 @@ description: Audit and repair evidence-backed maintainability, correctness, safe
 - Logic whose names or structure conceal the real invariant.
 - Overdesign and over-engineering, such as “significantly increasing code complexity for a boundary case that occurs only one in a thousand times.”
 - Module boundaries are unclear; for example, “a function that places a model on 3D canvas is located in a source file related to the main window.”
-- Overly fragmented logic, such as “the implementation required to draw a particular graphic is scattered across more than a dozen source files.”
+- Fragmentation that forces one responsibility to be understood or changed across unrelated owners. File count alone is not evidence: the current Canvas2D and Canvas3D functional module splits are intentional, and each module should retain the responsibility listed in `docs/dev.md`.
 - The same set of operational logic uses inconsistent backend implementations; for example, “when setting the number of parameters to be inserted into a statement, two different approaches coexist: enabling parameters via checkboxes and automatically detecting the number of parameters based on the entered data.”
 
 ## Repair conservatively
@@ -47,7 +47,7 @@ description: Audit and repair evidence-backed maintainability, correctness, safe
 1. Configure or verify Debug with `KOMAPEDIT_STRICT_WARNINGS=ON` for strict maintenance validation.
 2. Run all registered CTests and affected Debug headless checks.
 3. Use a representative real route for parser/edit/scene risk when available, with source hash protection around writeback paths.
-4. Measure performance before and after on the same machine, route, parameters, build type, and load profile; report median and p95.
+4. Measure performance before and after on the same machine, route, parameters, build type, load profile, and measurement kind; report median and p95. Use `--debug-headless-edit-bench` for production Apply/Save/Delete refresh work and `--profile-stages` with the plan/scene benchmark for frame-stage work when applicable. The visible scene-overlay FPS is a separate smoothed render-call estimate.
 5. Treat an unmet strict budget as unmet. Do not lower thresholds or repeat selectively to manufacture a pass.
 6. If no problem is proven and no code changes, do not run unnecessary tests merely to create activity.
 

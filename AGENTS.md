@@ -128,11 +128,12 @@ Use `docs/dev.md` for the detailed source map. Start with these owners:
 | Parser/source records/snapshots/edits | `src/maploader/` by module responsibility |
 | Model import | `src/model_loader/model_loader.cpp` |
 | Main GUI/settings/runtime loading | `src/main_window/` |
+| Shared numeric safety/edit timing | `include/numeric_safety.h`, `include/operation_timing.h` |
 | 2D plan/profile | `src/canvas2d/` |
 | 3D model/scene preview | `include/canvas3D.h`, the private `src/canvas3d/canvas3d_impl.h` state owner, and functional `src/canvas3d/canvas3d_*.cpp` modules; see the 3D source map in `docs/dev.md` |
 | Tables/navigation | `src/table/` |
 | Shared marker/linkage rules | `include/map_marker_visuals.h`, linkage headers, corresponding sources |
-| Contract/headless validation | `src/maploader/tests/`, `src/main_window/debug_headless.*`, `src/main_window/headless_entrypoints.cpp` |
+| Contract/headless validation | `src/maploader/tests/`, `src/main_window/debug_headless.*`, `src/main_window/headless_entrypoints.cpp`, `src/main_window/edit_benchmark.cpp` |
 
 ## Project skill index
 
@@ -148,11 +149,11 @@ All project skills live under `.agents/skills/<name>/SKILL.md`.
 | `komapedit-write-docs` | Documentation ownership, synchronization, bilingual updates, and AGENTS/TODO maintenance |
 | `komapedit-source-backed-editing` | Typed map/list edits plus Scenario direct-save drafts, source spans, insertion/deletion, writeback, and edit ABI |
 | `komapedit-resource-list-source-editing` | Station/Structure/Signal/Sound/Sound3D list loading, replacement, creation, blank-list first rows, insertion order, and glare-row workflows |
-| `komapedit-debug-headless-validation` | Debug/CTest/headless command selection, localization/file-creation contracts, real-route safety, and result interpretation |
-| `komapedit-3d-preview-workflow` | Canvas3D, scene geometry/cache, models, markers, gizmos, camera/depth, and packaging |
+| `komapedit-debug-headless-validation` | Debug/CTest/headless and benchmark selection, localization/file-creation contracts, real-route safety, and result interpretation |
+| `komapedit-3d-preview-workflow` | Canvas3D, scene geometry/cache, models, markers, gizmos, camera/depth, frame statistics/profiling, and packaging |
 | `komapedit-table-feature-workflow` | Typed snapshot table features, caching/find, and table↔plan/scene navigation |
 | `komapedit-station-edit-workflow` | `Station.List`/`Station.Put` identity, drafts, source order, markers, and writeback |
-| `komapedit-ui-persistence` | `settings.ini`, `history.ini`, `imgui.ini`, canonical schemas, defaults, and visibility state |
+| `komapedit-ui-persistence` | `settings.ini`, `history.ini`, `imgui.ini`, canonical schemas, defaults, visibility, and current 2D/3D controls |
 | `komapedit-trilingual-ui-menu-change` | Focused EN/ZH/JA UI/menu/label/link changes |
 | `komapedit-doc-sync-validation` | Final doc-only scope, parity, encoding, table, and link validation |
 

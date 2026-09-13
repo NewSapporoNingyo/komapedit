@@ -17,7 +17,8 @@ Read the relevant portions of:
 - `maploader_identity.cpp` and `maploader_snapshot.cpp`;
 - `include/maploader_snapshot.h` and `include/maploader.h`;
 - `maploader_semantic.cpp` and `maploader_edits.cpp`;
-- GUI owners in `edit_ledger.cpp`, `editable_list_drafts.cpp`, `element_inspector_data.cpp`, `element_inspector_render.cpp`, `new_element_wizard.cpp`, `app_dialogs.cpp`, `kme.h`, relevant tables/canvases, `debug_headless.cpp`, and `headless_entrypoints.cpp`.
+- GUI owners in `edit_ledger.cpp`, `editable_list_drafts.cpp`, `element_inspector_data.cpp`, `element_inspector_render.cpp`, `new_element_wizard.cpp`, `app_dialogs.cpp`, `kme.h`, relevant tables/canvases, `debug_headless.cpp`, `headless_entrypoints.cpp`, and the Debug-only edit driver in `edit_benchmark.cpp`;
+- shared edit instrumentation in `include/operation_timing.h`, keeping its GUI and maploader timing domains separate.
 
 For map/list operations, trace every request through parse → source identity → typed snapshot → GUI draft → dry run → source patch → full reparse → semantic proof → memory Apply or commit → refreshed snapshot. A change is incomplete if only one stage recognizes the row. Use the separate direct-save path below for Scenario documents.
 
@@ -67,6 +68,13 @@ When edit mode first displays a preview snapshot and later applies a full edit r
 - Treat inline Station/Structure/Signal/Sound/Sound3D list editing as a shared draft workflow. Use `komapedit-resource-list-source-editing` for loading, replacement, creation, and insertion details. Preserve physical source file, source order, unknown trailing fields, and optional Signal glare-row shape.
 - For `KV_EDIT_INSERT`, use structured fields and the same distance/environment/full-reparse validation as updates. Do not accept arbitrary replacement statements.
 
+## Preserve refresh and timing behavior
+
+1. Coalesce preview refreshes by affected row family after a batch. A forced full refresh for a family supersedes its single-edit refreshes, and a full snapshot hydration must not be followed by a redundant partial hydration.
+2. Preserve the stable-ID fast paths for a single Structure/Signal placement update and a position-only Repeater update. Escalate to the existing dynamic-content refresh or scheduled full rebuild only when the changed field or operation invalidates that local path.
+3. Keep `GuiTiming` and `MapTiming` in separate thread-local domains. Stage durations are inclusive and aggregated by name; they are diagnostics only and must never decide edit success or alter rollback behavior.
+4. Use `--debug-headless-edit-bench` for edit-performance or refresh-coalescing claims. Its temporary-copy Save, original-source hash checks, failure restoration, Revert, and no-change paths are part of the proof, not optional benchmark setup.
+
 ## Validate source safety
 
-Run the affected registered contracts and the corresponding headless source-anchor/edit mode. For Scenario work, use `--headless-load-scenario [--scenario-edit-roundtrip]` or `--debug-headless-scenario-create` as appropriate. For any commit test, prefer temporary fixtures; if a real route is explicitly used, hash every touched source before and after and restore only through a verified, user-authorized path. Confirm map/list Apply leaves disk unchanged, Save survives reload, IDs remain stable, and non-target snapshot content is unchanged; separately confirm that Scenario Save uses only its documented direct-write boundary.
+Run the affected registered contracts and the corresponding headless source-anchor/edit mode. For Scenario work, use `--headless-load-scenario [--scenario-edit-roundtrip]` or `--debug-headless-scenario-create` as appropriate. Use `--debug-headless-edit-bench` only when the change or claim concerns measured edit cost, refresh coalescing, rollback restoration, or temporary-copy Save. For any commit test, prefer temporary fixtures; if a real route is explicitly used, hash every touched source before and after and restore only through a verified, user-authorized path. Confirm map/list Apply leaves disk unchanged, Save survives reload, IDs remain stable, and non-target snapshot content is unchanged; separately confirm that Scenario Save uses only its documented direct-write boundary.

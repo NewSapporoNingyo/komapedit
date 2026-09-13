@@ -94,11 +94,13 @@ ctest --test-dir build --output-on-failure
 | 身份与快照 | `maploader_identity.cpp`、`maploader_snapshot.cpp`、`maploader_semantic.cpp`：稳定 ID、强类型快照、修订、比较与指纹 |
 | 编辑 | `maploader_edits.cpp`：试运行、内存应用、直接应用、提交、重置、源码补丁、编码感知写回与距离调整；Include 语句支持受限的路径参数更新，经新旧子树掩码的全量重解析验证 |
 | 共享关联 | `include/repeater_linkage.h`、`include/own_track_transition_linkage.h`：Repeater 链与曲线/坡度过渡配对 |
+| 共享线路值采样 | `include/route_value_sampling.h`、`src/main_window/route_value_sampling.cpp`：稳定的求值事件序列、BeginTransition/Interpolate 区间分类、省略值继承与 2D/3D 共用端点里程 |
+| 共享数值安全与编辑计时 | `include/numeric_safety.h`：GUI/场景 double 转整数时检查有限性和范围；`include/operation_timing.h`：GUI 与 maploader 分域的可选稳态时钟包含式计时 |
 | 模型读取 | `src/model_loader/model_loader.cpp`、`include/model_loader.h`：Assimp 隔离与 model-loader API v2 |
 | 主窗口 | `gui_kme.cpp`、`kme.h` 及职责明确的 `src/main_window/` 模块：App 状态协调、Win32/D3D11 启动、通用工具/背景图、快照水合/加载、编辑/距离/Inspector/列表草稿/新建文件/新建元素工作流、对话框/UI、场景预览与无头入口。新建文件渲染位于 `new_element_wizard.cpp`，正文/对话框辅助位于 `app_dialogs.cpp`，延迟创建位于 `element_inspector_data.cpp`，工作流契约位于 `headless_entrypoints.cpp` |
 | 运行时/设置 | `app_settings.cpp/.h`、`runtime_paths.cpp/.h`、`maploader_runtime.cpp`：INI、相对可执行文件路径、DLL 加载、精确 API 检查 |
 | 源码工具 | `file_structure_diagram.cpp`、`text_preview.cpp`：Include 图、工作副本预览、源码操作（更换 Include 文件、解除引用）与距离边界选择 |
-| Debug 验证 | `debug_headless.cpp/.h`、`headless_entrypoints.cpp`、`touch_input.cpp/.h`：无界面契约、基准、相机传递、查找、触摸、编辑与文件创建检查 |
+| Debug 验证 | `debug_headless.cpp/.h`、`headless_entrypoints.cpp`、`edit_benchmark.cpp`、`touch_input.cpp/.h`：参数解析、无界面契约、正式工作流与编辑基准、相机传递、查找、触摸、编辑与文件创建检查 |
 | 二维视图 | `src/canvas2d/canvas2D.cpp`：平面/profile 数据、缓存化的 `Curve.Interpolate` 端点标记水合与平面绘制编排；`canvas2d_view_state.cpp/.h`：平移/缩放/旋转和坐标转换；`canvas2d_marker_cache.cpp/.h`：轨道采样与 marker/Repeater 叠加缓存；`canvas2d_interaction.cpp/.h`：测量/marker 命中、上下文目标/动作和源码映射；`canvas2d_background.cpp/.h`：图片坐标、绘制和两点对齐；`canvas2d_primitives.cpp/.h`：屏幕变换、裁剪折线、网格、比例尺和标记绘制；`profile_plots.cpp`：纵断面与半径图表 |
 | 三维视图 | `include/canvas3D.h` 与 `src/canvas3d/canvas3D.cpp`：公共预览接口和薄委托；私有 `canvas3d_impl.h` 状态及按职责划分的 `canvas3d_*.cpp` 实现，详见下文三维模块表；`scene_track_sampling.cpp/.h` 与 `scene_route_overlay.cpp/.h`：CPU 采样和纯线路信息格式化 |
 | 表格/导航 | `src/table/datatable.cpp`、`table_navigation.cpp`：缓存表格、行内编辑、查找与行/平面/场景导航 |
@@ -158,13 +160,18 @@ ctest --test-dir build --output-on-failure
 - `Event` 保留 maploader 已求值、按稳定里程顺序输出的线路值及事件类型；`append_event()` 统一识别普通值、`BeginTransition` 和 `Interpolate`，无参数 Interpolate 沿用前值。
 - `sample()` 返回当前常量值或所在过渡/插值区间的起止里程与两端值，供 2D/3D 共用；它不臆造未由 BVE 曲线函数定义的线性当前半径。
 
+#### `include/numeric_safety.h` 与 `include/operation_timing.h`
+
+- `kme::truncating_int_or_zero()` 只对有限且位于 `int` 范围内的 double 做截断转换；非有限值或越界值统一返回 `0`，GUI 与场景代码共用这一边界。
+- `kme::timing::Timing` 提供线程局部、显式激活的包含式阶段计时。GUI 与 maploader 使用不同 domain，阶段按名称累计毫秒数和次数；诊断异常不得改变编辑成功与否，日志文本也不参与控制流。
+
 #### `include/canvas3D.h`
 
 - **场景输入模型**：`Canvas3DTrackPoint/Path/Visibility` 描述轨道采样与显示；`Canvas3DSceneObject`、`Canvas3DModelInstance`、`Canvas3DRepeaterSegment`、背景/雾/绘制距离事件构成场景实体输入。
 - **线路信息与标记**：`route_value_sampling::Event`、站点、限速、Section 信号事件用于相机里程采样；`Canvas3DSceneMarker` 保存视觉 kind、里程、轨道位置、表格目标和 edit id，`Canvas3DSceneMarkerVisibility` 以分类型位控制索引重建。
 - **构建与刷新结构**：`Canvas3DScene` 是完整不可知渲染器的 CPU 描述；`Canvas3DSceneBuildOptions/Result`、`Canvas3DSceneMapRefreshOptions` 区分首次构建、动态内容刷新和地图内容刷新；`Canvas3DSceneStats` 暴露实例、模型和帧率统计。
 - **交互结构**：相机姿态、上下文动作、拾取目标、`Canvas3DPlacementEditTarget`、拖动轴与 `Canvas3DPlacementDragUpdate` 将渲染交互转换为 GUI 可应用的源码字段更新。
-- **`Canvas3D` 门面类**：模型预览方法负责加载/重载/清理单模型；场景方法负责 `load_scene()`、刷新、轨道/标记可见性、窗口距离和质量偏好；跳转、placement/repeater edit target、`render_scene_preview()` 与调试读取方法委托给 PImpl，避免在头文件泄露 D3D/Assimp 实现。
+- **`Canvas3D` 门面类**：模型预览方法负责加载/重载/清理单模型；场景方法负责 `load_scene()`、刷新、轨道/标记可见性、窗口距离、雾、地图绘制距离、编辑组件尺寸、相机速度和性能警告；跳转、placement/repeater edit target、`render_scene_preview()` 与调试读取方法委托给 PImpl，避免在头文件泄露 D3D/Assimp 实现。
 
 #### `include/multilanguage.h`
 
@@ -341,6 +348,7 @@ ctest --test-dir build --output-on-failure
 - `gui_common_utils.cpp` 集中字体、主题/日志颜色、编码转换、数值格式、路径及里程跳转控件帮助函数；`background_image.cpp` 拥有 WIC 解码、背景纹理重建与 history 背景持久化。
 - `map_snapshot_hydration.cpp` 从 typed snapshot 构建 `MapModel`、行元数据、Station edit id、限速缓存与过渡关联；`map_load_pipeline.cpp` 处理 Map/Scenario 探测、Scenario 快照/草稿基线与 Route 候选、异步地图加载、入口历史、结果应用、元数据合并、加载计时和几何再生成。
 - `edit_ledger.cpp` 处理 typed 批次/报告、账本同步、本地预览、删除、保存/撤销/关闭；`distance_resolution_workflow.cpp` 处理距离消歧请求与继续应用。
+- `edit_benchmark.cpp` 承载独立的 Debug 编辑性能入口：真实输入只做内存 Apply/Delete/Revert 与字节保护，Save 仅在保持相对依赖布局的排他临时普通文件副本中运行，同时检查刷新合并、回滚和阶段计时契约。
 - `element_inspector_data.cpp` 管理 Inspector 打开、定位、字段/场景编辑数据与 Apply；`element_inspector_render.cpp` 只渲染 Inspector 字段、可选插入参数和可变 Repeater/Section UI。
 - `editable_list_drafts.cpp` 管理资源列表草稿；`new_element_wizard.cpp` 拥有新元素模板/向导、结构化插入以及新建文件向导的状态与渲染；`headless_entrypoints.cpp` 承载复用正式 App 工作流的新元素、资源列表替换/插入、新建文件向导和 Scenario 创建契约。
 - `app_dialogs.cpp` 拥有文件对话框、Scenario Route 候选选择、Scenario 新文件正文构建和其它模态弹窗；`element_inspector_data.cpp` 处理新文件请求的延迟、排他创建与创建后打开；`ui_elements.cpp` 拥有 dockspace、菜单、工具栏、状态栏、控制台、快捷键和设置投影；`scene_preview_lifecycle.cpp` 拥有场景/模型预览的启停、重建、可见性和窗口渲染。
@@ -433,6 +441,8 @@ ctest --test-dir build --output-on-failure
 
 `scene_frame_profile.h` 提供仅 Debug 启用的阶段计时。两份内部契约源文件通过 `NDEBUG` 条件保护编译到 EXE，继续由现有 scene benchmark/loader headless 模式显式执行，不注册为 CTest，也不使用 `.inl` 文本包含。保留现有所有者负责的模型 DLL 加载/释放配对、worker 取消/join 与唤醒/上传顺序、reversed-Z 与相机相对坐标、有界 Repeater 缓存，以及标记身份/可见性失效规则。
 
+场景画面上的 FPS 由 `canvas3d_scene_ui.cpp` 按稳态时钟的相邻渲染调用间隔计算，并以 `0.15` 系数做指数平滑；间隔超过 `0.25` 秒时不采样，从而在事件驱动画布空闲期间保留上一次活动值。该读数不是 Present 完成时间、显示器刷新率或 `--debug-headless-scene3d-bench` 的 `p95_fps`。主循环 Present 与渲染唤醒仍由 `win32_dx11_bootstrap.cpp` 负责。
+
 - **轨道与相机采样**：`scene_track_sampling.cpp`/`scene_track_sampling.h` 提供无 D3D 依赖的普通轨道采样、相机专用起点前外推及相机里程边界；普通几何/放置/标记路径不使用起点前外推。`canvas3d_scene_camera.cpp` 与几何模块复用该采样边界。
 - **线路信息格式化**：`scene_route_overlay.cpp`/`scene_route_overlay.h` 是无 D3D/ImGui 依赖的纯文本格式化边界；它复用共享线路值采样，在 `Curve.Interpolate` 区间显示两个端点的半径、超高、方向箭头和三角分隔符；两端都是显示意义上的零半径时复用本地化“直线”标签。
 - **数学与场景转换**：`Vec3/DVec3/Vec4/Mat4` 及矩阵、投影、包围盒帮助函数构建相机和 world transform；key 规范化与 Repeater 区间函数把 `Canvas3DScene` 转为可渲染数据。
@@ -475,12 +485,12 @@ ctest --test-dir build --output-on-failure
 
 #### `src/main_window/debug_headless.h`
 
-- 每个 `*Options` 结构对应一个命令行模式：Map/Scenario 加载、plan/scene/open benchmark、场景相机传递、source anchor、roundtrip、distance/own/other track、Station/资源列表、Repeater、Section、Include、新建文件/元素、table find、touch 和 settings persistence。
+- 每个 `*Options` 结构对应一个命令行模式：Map/Scenario 加载、plan/scene/open/edit benchmark、场景 loader/相机传递、diagnostics popup、source anchor、roundtrip、distance/own/other track、Station/资源列表、Repeater、Section、Include、新建文件/元素、table find、touch 和 settings persistence。
 - 头文件声明各 `run_debug_headless_*()` 入口，生产 Release 可不启用这些路径；参数结构使 `main()` 的命令行解析与具体测试实现解耦。
 
 #### `src/main_window/debug_headless.cpp`
 
-- **公共设施**：COM RAII、UTF 路径、输出文件、耗时统计、hash、快照 matrix 汇总、日志捕获和 fixture 查找函数为所有无界面模式提供确定输出。
+- **公共设施与参数**：COM RAII、UTF 路径、输出文件、耗时统计、hash、快照 matrix 汇总、日志捕获和 fixture 查找函数为无界面模式提供确定输出；该文件也解析各模式参数。独立拆分的编辑基准实现在 `edit_benchmark.cpp`。
 - **加载/几何/场景检查**：基础 Map load 验证 snapshot 结构和矩阵，Scenario load 验证 v2 快照、编辑 roundtrip、候选选择及解析后地图；plan/scene benchmark 重复构建缓存并输出分阶段时间、数量和 hash；camera-transfer 检查 rebuild 前后姿态；scene 调试读取像素与 fog 状态验证渲染结果。
 - **`typed_edit_headless`**：`Field/Change/Batch/Report` 是公共编辑 ABI 的 RAII 包装，负责字符串 view 生命周期、dry-run/apply/commit 报告复制和失败信息。
 - **距离/自轨道/他轨道批次**：`distance_batch_headless` 的 MapHandle、edit 选择、resolution choice 和 report facts 驱动多文件/Include/变量环境用例；own/other track 模式验证方法不转换、参数形状、Apply/Reset/Commit 和几何变化。
@@ -488,9 +498,14 @@ ctest --test-dir build --output-on-failure
 - **插入与源码锚点**：insert 模式验证允许模板、距离块选择和未知字段拒绝；source-anchor/roundtrip 模式检查物理文件、Include stack、行列/span、stable id 和保存后重载一致性。
 - **UI 与持久化纯逻辑检查**：table-find 模式验证大小写、exact/step/unused 状态；touch 模式用 debug 注入检查 tap、long press、scroll、pinch 和消费语义；settings-persistence 模式仅在自动清理的临时目录中验证规范往返、旧格式拒绝、不自动重写及 History 边界。文件末各 `run_debug_headless_*()` 解析 options、运行对应场景并输出 PASS/FAIL。
 
+#### `src/main_window/edit_benchmark.cpp`
+
+- `App::run_debug_headless_edit_benchmark()` 使用正式 App 的 Inspector Apply、延迟 Delete、Save、Revert、刷新与场景首帧路径；按操作输出包含式计时与汇总统计。输入线路及全部已加载物理源码逐字节保护，Save 仅在独占临时根目录中的普通文件副本上运行；复制流程拒绝 Windows reparse point 和逃逸临时根目录的目标。
+- 固定刷新夹具验证完整 hydration 与局部 refresh 不重复、表格/平面缓存只失效一次、失败 Apply 恢复上一份已验证工作副本，以及空 Save 正确结束。该文件在 Release 中由 `NDEBUG` 排除。
+
 #### `src/main_window/headless_entrypoints.cpp`
 
-- 复用正式 `App` 编辑状态和对话框请求处理，验证新元素的 Apply/Inspector/删除路径、资源列表文件替换、资源列表行插入，以及新建地图和五种资源列表的创建/复用、引用提交、重载与清理。
+- 复用正式 `App` 编辑状态和对话框请求处理，验证新元素的 Apply/Inspector/删除路径、资源列表文件替换/行插入、新建 Map/Scenario/五种资源列表的创建或复用、引用提交、重载与清理，以及 Scenario 生命周期。
 - 新建文件校验只接受 `tests/` 下不存在的目标路径，并清理自身创建的文件；资源列表插入保持仅内存 Apply，资源列表替换通过正式文件选择器执行且不提交磁盘。
 
 #### `src/maploader/tests/typed_snapshot_tests.cpp`

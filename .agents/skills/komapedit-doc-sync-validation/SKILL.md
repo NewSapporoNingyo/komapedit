@@ -20,6 +20,7 @@ Use `komapedit-write-docs` to choose content ownership and establish facts. Use 
 3. Confirm `TODO.md` contains unfinished work only and completed items are archived in `docs/TODO_done.md`.
 4. Confirm `AGENTS.md` indexes detailed skills/memories instead of duplicating their volatile details.
 5. When skills changed, confirm each `SKILL.md` has valid frontmatter, referenced paths and sibling skill names exist, and matching `agents/openai.yaml` metadata is not contradicted by the workflow text.
+6. Reconcile source-map/module claims with the current tracked inventory and owning CMake source lists. Reconcile command names, arguments, and output expectations with current option parsing, dispatch, and usage text.
 
 ## Check project AI-asset migrations
 

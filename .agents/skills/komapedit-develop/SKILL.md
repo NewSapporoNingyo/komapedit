@@ -18,7 +18,7 @@ description: Plan and implement scoped feature or behavior changes in komapedit.
 - Use `komapedit-source-backed-editing` for parser-to-save map/list editing and Scenario direct-save or creation work.
 - Use `komapedit-resource-list-source-editing` with both skills above for `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, or `Sound3D.Load` import/replacement, list creation, blank-list first rows, and source-backed row insertion.
 - Use `komapedit-table-feature-workflow` for typed snapshot rows, Map Info tables, table search, and cross-view navigation.
-- Use `komapedit-3d-preview-workflow` for scene/model preview work.
+- Use `komapedit-3d-preview-workflow` for scene/model preview, frame-statistics, or scene-profiling work.
 - Use `komapedit-station-edit-workflow` for `Station.List` or `Station.Put` behavior.
 - Use `komapedit-ui-persistence` for settings, visibility, docking, and persisted controls.
 - Use `komapedit-trilingual-ui-menu-change` for small localized UI/menu changes.
@@ -29,13 +29,14 @@ Read every triggered skill before changing files.
 ## Implement a vertical slice
 
 1. Trace the owning path from input to output before patching. Respect the existing module boundaries documented in `docs/dev.md`.
-2. Plan a small, coherent slice. Avoid parallel parsers, GUI-owned source models, duplicated state machines, and per-frame reconstruction.
-3. Extend the shared representation first, then its consumers. Typical flows are:
+2. For canvas work, keep `canvas2D.cpp` as the plan orchestrator around the focused `canvas2d_*` modules, and keep `canvas3D.cpp` as the thin public delegate over `Canvas3D::Impl` and the functional `canvas3d_*` modules. Extend the named owner instead of regrowing either monolith or scattering one responsibility across unrelated modules.
+3. Plan a small, coherent slice. Avoid parallel parsers, GUI-owned source models, duplicated state machines, and per-frame reconstruction.
+4. Extend the shared representation first, then its consumers. Typical flows are:
    - parser → `KvMapSnapshot` → `MapModel` → table/2D/3D consumers;
    - source metadata → edit target → semantic validation → source patch → full reparse → GUI refresh.
-4. Preserve the public C ABI rules, source encodings, official BVE syntax established by the compliance matrix, stable edit identities, UI lifecycle, and cache invalidation contracts.
-5. Update Simplified Chinese, English, and Japanese together when visible GUI text changes.
-6. Add focused regression coverage when the change has a deterministic contract. Do not invent a large new harness if an existing CTest or Debug headless entry point proves the path.
+5. Preserve the public C ABI rules, source encodings, official BVE syntax established by the compliance matrix, stable edit identities, UI lifecycle, and cache invalidation contracts.
+6. Update Simplified Chinese, English, and Japanese together when visible GUI text changes.
+7. Add focused regression coverage when the change has a deterministic contract. Do not invent a large new harness if an existing CTest or Debug headless entry point proves the path.
 
 ## Validate proportionately
 
@@ -43,7 +44,8 @@ Read every triggered skill before changing files.
 2. Run affected CTests and the narrowest relevant headless check. Use a real route only when it adds evidence beyond fixtures.
 3. Build Release only for release-specific behavior, packaging, runtime DLL layout, optimization-sensitive bugs, or an explicit request.
 4. Separate compile/headless evidence from manual GUI acceptance. Never claim an unperformed visual check passed.
-5. If a performance gate fails, report the measured result; do not lower the threshold or substitute a looser run as a pass.
+5. Use the existing inclusive edit-timing traces, edit benchmark, and plan/scene stage profiling when they match the claim. The visible scene FPS overlay, headless frame timing, and swap-chain Present rate are different measurements.
+6. If a performance gate fails, report the measured result; do not lower the threshold or substitute a looser run as a pass.
 
 ## Finish the change
 
