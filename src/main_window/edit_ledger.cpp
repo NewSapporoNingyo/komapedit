@@ -77,6 +77,52 @@ bool App::edit_ui_operation_pending() const {
     return pending_edit_ui_operation_.operation != PendingEditUiOperation::None;
 }
 
+App::GuiTiming::Trace* App::begin_edit_timing(const char* operation) noexcept try {
+    if (!edit_timing_) {
+        edit_timing_ = std::make_unique<GuiTiming::Trace>();
+        edit_timing_operation_ = operation;
+        edit_timing_outcome_ = "failed";
+        edit_timing_change_count_ = 0;
+        edit_timing_wait_scene_frame_ = scene_preview_started_ && show_scene_preview_window_;
+        ++edit_timing_sequence_;
+        KME_ADD_LOG("[info]edit begin: id=" + std::to_string(edit_timing_sequence_) +
+                    " operation=" + operation + " scene=" +
+                    (scene_preview_started_ ? "on" : "off"));
+    }
+    ++edit_timing_depth_;
+    return edit_timing_.get();
+} catch (...) {
+    edit_timing_.reset();
+    ++edit_timing_depth_;
+    return nullptr;
+}
+
+void App::end_edit_timing() noexcept {
+    if (edit_timing_depth_ != 0) --edit_timing_depth_;
+    if (edit_timing_depth_ == 0) edit_timing_status_key_ = program_status_key_;
+    finish_edit_timing();
+}
+
+void App::finish_edit_timing() noexcept try {
+    if (!edit_timing_ || edit_timing_depth_ != 0) return;
+    if (pending_inspector_request_) return;
+    if (edit_timing_wait_scene_frame_) return;
+    last_edit_seconds_ = edit_timing_->seconds();
+    last_edit_timing_ = std::move(*edit_timing_);
+    edit_timing_.reset();
+    const std::string label = "gui." + edit_timing_operation_ +
+        " id=" + std::to_string(edit_timing_sequence_) +
+        " changes=" + std::to_string(edit_timing_change_count_) +
+        " scene=" + (scene_preview_started_ ? "on" : "off");
+    KME_ADD_LOG("[info]" + last_edit_timing_.format(
+        label, last_edit_seconds_, edit_timing_outcome_));
+    set_program_status(edit_timing_outcome_ == "scene_refresh_failed"
+        ? program_status_key_ : edit_timing_status_key_, format_double(last_edit_seconds_, 3));
+} catch (...) {
+    // Logging/status allocation failures cannot turn a completed edit into a crash.
+    edit_timing_.reset();
+}
+
 void App::request_edit_ui_operation(PendingEditUiOperation operation) {
     if (operation == PendingEditUiOperation::None || edit_ui_operation_pending()) return;
 
@@ -495,27 +541,28 @@ bool App::update_scene_repeater_segment_from_model(const std::string& edit_id) {
 
 void App::refresh_local_preview_after_edit(const std::string& row_kind,
                                            const std::string& edit_id) {
-    if (row_kind == "station.put" || row_kind == "station.list") {
+    refresh_local_preview_after_edits({{row_kind, edit_id}});
+}
+
+void App::refresh_local_preview_after_edits(const std::map<std::string, std::string>& targets) {
+    if (targets.empty()) return;
+    GuiTiming::Stage timing("refresh.local");
+    const auto has = [&](const char* kind) { return targets.count(kind) != 0; };
+    if (has("station.put") || has("station.list")) {
         normalize_station_preview_rows(model_);
     }
-    if (row_kind == "cabIlluminance.change") {
+    if (has("cabIlluminance.change")) {
         normalize_cab_illuminance_preview_rows(model_);
     }
-    if (row_kind == "speedlimit") rebuild_speed_limit_runtime_cache(model_);
-    const bool alignment_changed = row_kind == "curve" || row_kind == "gradient" ||
-        row_kind == "otherTrack.change";
-    if (row_kind == "include" && scene_preview_started_ && scene_preview_canvas_) {
-        scene_preview_dirty_ = true;
-        scene_preview_preserve_models_on_rebuild_ = true;
-        scene_preview_preserve_camera_on_rebuild_ = true;
-    }
-    if (alignment_changed && scene_preview_started_ && scene_preview_canvas_) {
+    if (has("speedlimit")) rebuild_speed_limit_runtime_cache(model_);
+    const bool alignment_changed = has("curve") || has("gradient") || has("otherTrack.change");
+    if ((has("include") || alignment_changed) && scene_preview_started_ && scene_preview_canvas_) {
         scene_preview_dirty_ = true;
         scene_preview_preserve_models_on_rebuild_ = true;
         scene_preview_preserve_camera_on_rebuild_ = true;
     }
     Canvas3DSceneMapRefreshOptions map_refresh;
-    map_refresh.route_stations = row_kind == "station.put" || row_kind == "station.list";
+    map_refresh.route_stations = has("station.put") || has("station.list");
     static constexpr std::array<const char*, 20> k_marker_row_kinds = {
         "station.put", "station.list", "irregularity.change", "beacon.put",
         "mapSound.play", "mapSound3D.put", "rollingNoise.change",
@@ -527,17 +574,17 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     };
     map_refresh.markers = std::any_of(
         k_marker_row_kinds.begin(), k_marker_row_kinds.end(),
-        [&](const char* candidate) { return row_kind == candidate; });
-    map_refresh.fog = row_kind == "fog.change";
-    map_refresh.draw_distances = row_kind == "drawDistance.change";
-    map_refresh.speed_limits = row_kind == "speedlimit";
-    map_refresh.section_signals = row_kind == "section.begin" ||
-        row_kind == "section.speedLimit";
+        [&](const char* candidate) { return has(candidate); });
+    map_refresh.fog = has("fog.change");
+    map_refresh.draw_distances = has("drawDistance.change");
+    map_refresh.speed_limits = has("speedlimit");
+    map_refresh.section_signals = has("section.begin") || has("section.speedLimit");
     if ((map_refresh.route_stations || map_refresh.markers || map_refresh.fog ||
          map_refresh.draw_distances || map_refresh.speed_limits ||
          map_refresh.section_signals) &&
-        scene_preview_started_ && scene_preview_canvas_) {
+        scene_preview_started_ && scene_preview_canvas_ && !scene_preview_dirty_) {
         std::string error;
+        GuiTiming::Stage scene_timing("scene.map_content");
         if (!scene_preview_canvas_->refresh_scene_map_content(model_, map_refresh, error)) {
             KME_ADD_LOG("[warn]3D scene marker refresh failed, scheduling full rebuild: " +
                     (error.empty() ? std::string("unknown error") : error));
@@ -546,7 +593,8 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
             scene_preview_preserve_camera_on_rebuild_ = true;
         }
     }
-    if (row_kind == "speedlimit") {
+    timing.next("refresh.tables_markers");
+    if (targets.size() == 1 && has("speedlimit")) {
         refresh_speed_limit_table_cache();
         rebuild_speed_limit_marker_overlay_cache();
     } else {
@@ -554,35 +602,35 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
         rebuild_marker_overlay_cache();
     }
     sync_marker_visibility_sizes();
+    timing.next("scene.placements");
+    // The scheduled rebuild consumes the complete updated model. Updating the
+    // outgoing scene here would rebuild its markers/chunks only to discard them.
+    if (!scene_preview_started_ || !scene_preview_canvas_ || scene_preview_dirty_) return;
 
-    bool placement_instance_synced = false;
-    if ((row_kind == "structure.put" || row_kind == "structure.between" ||
-         row_kind == "signal.put") && !edit_id.empty()) {
-        placement_instance_synced =
-            update_scene_placement_instance_from_model(edit_id, row_kind);
-    }
-    bool repeater_segment_synced = false;
-    if (row_kind == "repeater" && !edit_id.empty()) {
-        const auto pending = pending_edit_changes_.find(edit_id);
-        const bool position_only = pending != pending_edit_changes_.end() &&
-            !pending->second.field_changes.empty() &&
-            std::all_of(pending->second.field_changes.begin(),
-                        pending->second.field_changes.end(),
-                        [](const auto& field) {
-                            return field.first == "x" || field.first == "y" || field.first == "z";
-                        });
-        if (position_only) {
-            repeater_segment_synced = update_scene_repeater_segment_from_model(edit_id);
+    bool affects_scene_dynamic = has("structure.model") || has("background.change");
+    for (const auto& target : targets) {
+        const std::string& row_kind = target.first;
+        const std::string& edit_id = target.second;
+        if (row_kind == "structure.put" || row_kind == "structure.between" || row_kind == "signal.put") {
+            if (edit_id.empty() || !update_scene_placement_instance_from_model(edit_id, row_kind)) {
+                affects_scene_dynamic = true;
+            }
+        } else if (row_kind == "repeater") {
+            const auto pending = pending_edit_changes_.find(edit_id);
+            const bool position_only = pending != pending_edit_changes_.end() &&
+                !pending->second.field_changes.empty() &&
+                std::all_of(pending->second.field_changes.begin(),
+                            pending->second.field_changes.end(),
+                            [](const auto& field) {
+                                return field.first == "x" || field.first == "y" || field.first == "z";
+                            });
+            if (!position_only || !update_scene_repeater_segment_from_model(edit_id)) {
+                affects_scene_dynamic = true;
+            }
         }
     }
-    const bool affects_scene_dynamic =
-        ((row_kind == "structure.put" || row_kind == "structure.between" ||
-          row_kind == "signal.put") &&
-         !placement_instance_synced) ||
-        row_kind == "structure.model" ||
-        (row_kind == "repeater" && !repeater_segment_synced) ||
-        row_kind == "background.change";
-    if (affects_scene_dynamic && scene_preview_started_ && scene_preview_canvas_) {
+    if (affects_scene_dynamic) {
+        GuiTiming::Stage scene_timing("scene.dynamic_content");
         std::string error;
         if (!scene_preview_canvas_->refresh_scene_dynamic_content(model_, station_jump_index_, error)) {
             KME_ADD_LOG("[warn]3D scene dynamic refresh failed, scheduling full rebuild: " +
@@ -721,6 +769,8 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 }
 
 bool App::delete_element_target(const MapElementDeleteRequest& request) {
+    EditTimingScope operation(*this, "delete");
+    GuiTiming::Stage timing("delete.prepare_apply");
     if (!edit_actions_available() || request.edit_id.empty() ||
         !row_kind_supports_delete(request.row_kind)) {
         return false;
@@ -890,6 +940,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
         cancel_insert_or_add_delete(request.edit_id, request.row_kind);
     }
 
+    timing.next("delete.apply");
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, true)) {
         const bool close_repeater_inspector = inspector_.open && inspector_.row_kind == "repeater" &&
             repeater_chain_edit_ids.find(inspector_.edit_id) != repeater_chain_edit_ids.end();
@@ -1357,6 +1408,8 @@ bool App::sync_edit_memory_with_ledger(
     if (!edit_actions_available()) return false;
     if (!handle_ || load_state_.running) return false;
 
+    GuiTiming::Stage timing("backend.reset");
+
     if (!kv_edit_reset_memory(handle_)) {
         edit_memory_matches_pending_ledger_ = false;
         const char* err = kv_get_last_error();
@@ -1370,9 +1423,11 @@ bool App::sync_edit_memory_with_ledger(
         return true;
     }
 
+    timing.next("backend.batch");
     TypedEditBatchStorage batch_storage = typed_edit_batch(changes);
     const KvEditBatch batch = batch_storage.view();
     KvEditReportSnapshot report{};
+    timing.next("backend.apply");
     if (!kv_edit_apply_to_memory_typed(handle_, &batch, &report, sizeof(report))) {
         edit_memory_matches_pending_ledger_ = false;
         const char* err = kv_get_last_error();
@@ -1381,6 +1436,7 @@ bool App::sync_edit_memory_with_ledger(
         return false;
     }
 
+    timing.next("backend.report");
     if (!parse_and_log_edit_report(report, "[info]edit memory updated",
                                    nullptr, nullptr, nullptr, resolution_requests)) {
         edit_memory_matches_pending_ledger_ = false;
@@ -1394,6 +1450,9 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
                                        std::optional<MapElementInspectorRequest> reload_request,
                                        bool applying_delete,
                                        std::string resolution_origin_edit_id) {
+    EditTimingScope operation(*this, applying_delete ? "delete" : "apply");
+    GuiTiming::Stage timing("preview.backup");
+    edit_timing_change_count_ = changes.size();
     if (!edit_actions_available()) return false;
     const bool ended_batch = !pending_edit_changes_.empty() && changes.empty();
     const bool reapplies_inspector_change = reload_request.has_value();
@@ -1423,12 +1482,15 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     }
     const auto snapshot_backup = original_edit_rows_;
 
+    timing.next("preview.backend");
     std::vector<DistanceResolutionRequest> resolution_requests;
     if (!sync_edit_memory_with_ledger(changes, &resolution_requests)) {
+        GuiTiming::Stage rollback_timing("preview.rollback");
         if (!pending_edit_changes_.empty()) {
             sync_edit_memory_with_ledger(pending_edit_changes_);
         }
         if (!resolution_requests.empty()) {
+            edit_timing_outcome_ = "needs_source_choice";
             begin_distance_resolution_workflow(
                 changes, std::move(reload_request), applying_delete,
                 std::move(resolution_origin_edit_id), resolution_requests);
@@ -1437,6 +1499,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     }
 
     auto rollback_local_preview = [&]() {
+        GuiTiming::Stage rollback_timing("preview.rollback");
         for (auto& backup : row_backups) {
             if (std::vector<TableRow>* rows =
                     inspector_rows_for_kind(model_, backup.first)) {
@@ -1444,9 +1507,9 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             }
         }
         original_edit_rows_ = snapshot_backup;
-        for (const std::string& row_kind : affected_row_kinds) {
-            refresh_local_preview_after_edit(row_kind);
-        }
+        std::map<std::string, std::string> rollback_targets;
+        for (const std::string& row_kind : affected_row_kinds) rollback_targets.emplace(row_kind, "");
+        refresh_local_preview_after_edits(rollback_targets);
 
         edit_memory_matches_pending_ledger_ = false;
         if (!sync_edit_memory_with_ledger(pending_edit_changes_)) {
@@ -1457,6 +1520,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         return false;
     };
 
+    timing.next("preview.hydration");
     const bool signal_aspects_hydrated =
         affected_row_kinds.find("signal.aspect") !=
         affected_row_kinds.end();
@@ -1489,11 +1553,15 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         ledger_contains_include_edit(pending_edit_changes_) ||
         ledger_contains_resource_list_load_edit(changes) ||
         ledger_contains_resource_list_load_edit(pending_edit_changes_);
-    if (signal_aspects_hydrated || alignment_hydrated) {
+    if (!full_insert_hydration && (signal_aspects_hydrated || alignment_hydrated)) {
+        GuiTiming::Stage partial_refresh("snapshot.partial_refresh");
         KvMapSnapshot snapshot{};
-        if (!kv_get_map_snapshot(
+        GuiTiming::Stage snapshot_fetch("snapshot.get");
+        const bool snapshot_loaded = kv_get_map_snapshot(
                 handle_, KV_MAP_SNAPSHOT_VERSION,
-                &snapshot, sizeof(snapshot)) ||
+                &snapshot, sizeof(snapshot)) != 0;
+        snapshot_fetch.finish();
+        if (!snapshot_loaded ||
             snapshot.version != KV_MAP_SNAPSHOT_VERSION ||
             snapshot.structure_size < sizeof(KvMapSnapshot) ||
             (signal_aspects_hydrated && snapshot.signal_aspect_count != 0 &&
@@ -1560,10 +1628,14 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         // row-patching loops below cannot target them. Re-hydrate the whole
         // model from the validated working-copy snapshot; every pending
         // change of the batch is already reflected in it.
+        GuiTiming::Stage full_refresh("snapshot.full_refresh");
         KvMapSnapshot snapshot{};
-        if (!kv_get_map_snapshot(
+        GuiTiming::Stage snapshot_fetch("snapshot.get");
+        const bool snapshot_loaded = kv_get_map_snapshot(
                 handle_, KV_MAP_SNAPSHOT_VERSION,
-                &snapshot, sizeof(snapshot)) ||
+                &snapshot, sizeof(snapshot)) != 0;
+        snapshot_fetch.finish();
+        if (!snapshot_loaded ||
             snapshot.version != KV_MAP_SNAPSHOT_VERSION ||
             snapshot.structure_size < sizeof(KvMapSnapshot)) {
             const char* error = kv_get_last_error();
@@ -1592,6 +1664,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         original_edit_rows_.clear();
     }
 
+    timing.next("preview.rows");
     std::map<std::string, std::vector<std::string>> refresh_targets;
     auto note_refresh_target = [&](const std::string& row_kind, const std::string& edit_id,
                                    bool force_full_refresh) {
@@ -1676,13 +1749,15 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
     }
     pending_edit_changes_ = changes;
+    timing.next("preview.refresh");
+    std::map<std::string, std::string> combined_refresh;
     for (auto& entry : refresh_targets) {
         std::vector<std::string>& targets = entry.second;
         std::sort(targets.begin(), targets.end());
         targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
-        const std::string edit_id = targets.size() == 1 ? targets.front() : std::string{};
-        refresh_local_preview_after_edit(entry.first, edit_id);
+        combined_refresh.emplace(entry.first, targets.size() == 1 ? targets.front() : std::string{});
     }
+    refresh_local_preview_after_edits(combined_refresh);
     if (ended_batch) {
         distance_resolution_choices_.clear();
     }
@@ -1694,11 +1769,15 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         set_program_status("status.edit.applied_to_preview");
     }
     if (reapplies_inspector_change) set_program_status("status.edit.applied_to_preview");
+    timing.next("preview.text");
     refresh_text_preview_from_working_copy();
+    edit_timing_outcome_ = "success";
     return true;
 }
 
 bool App::save_pending_edits(bool refresh_inspector) {
+    EditTimingScope operation(*this, "save");
+    GuiTiming::Stage timing("save.prepare");
     if (!edit_actions_available()) return false;
     if (load_state_.running) return false;
     if (has_unapplied_editable_list_drafts()) {
@@ -1706,7 +1785,11 @@ bool App::save_pending_edits(bool refresh_inspector) {
         set_program_status("status.edit.apply_list_before_save");
         return false;
     }
-    if (!handle_ || !has_pending_edits()) return false;
+    if (!handle_) return false;
+    if (!has_pending_edits()) {
+        edit_timing_outcome_ = "no_changes";
+        return false;
+    }
 
     if (!edit_memory_matches_pending_ledger_) {
         std::vector<DistanceResolutionRequest> replay_requests;
@@ -1726,6 +1809,8 @@ bool App::save_pending_edits(bool refresh_inspector) {
     // Apply/Revert/Delete keep the maploader working copy synchronized with the
     // pending ledger. Save is only the disk-write boundary; resetting, replaying,
     // or rebuilding the GUI model here would parse the same map state again.
+    edit_timing_change_count_ = pending_edit_changes_.size();
+    timing.next("save.commit");
     KvEditReportSnapshot report{};
     if (!kv_edit_commit_typed(handle_, &report, sizeof(report))) {
         const char* err = kv_get_last_error();
@@ -1733,6 +1818,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
         return false;
     }
 
+    timing.next("save.metadata");
     int committed_file_count = 0;
     if (!parse_and_log_edit_report(report, "[info]edit save committed",
                                    nullptr, nullptr, &committed_file_count)) {
@@ -1750,17 +1836,21 @@ bool App::save_pending_edits(bool refresh_inspector) {
     pending_edit_changes_.clear();
     edit_memory_matches_pending_ledger_ = true;
     original_edit_rows_.clear();
+    timing.next("save.text");
     refresh_text_preview_from_working_copy();
+    timing.next("save.inspector");
     if (refresh_inspector && inspector_target_deleted) {
         inspector_.open = false;
     } else if (inspector_request) {
         open_element_inspector(*inspector_request);
     }
     set_program_status("status.edit.saved");
+    edit_timing_outcome_ = "success";
     return true;
 }
 
 bool App::save_pending_document_changes(bool refresh_inspector) {
+    EditTimingScope operation(*this, "save");
     if (load_state_.running || !(edit_actions_available() || scenario_edit_actions_available())) {
         return false;
     }
@@ -1772,7 +1862,10 @@ bool App::save_pending_document_changes(bool refresh_inspector) {
     const bool map_dirty = has_pending_edits();
     const bool scenario_dirty = has_scenario_unsaved_changes();
     const bool scenario_route_warning_before_save = scenario_route_changed_;
-    if (!map_dirty && !scenario_dirty) return false;
+    if (!map_dirty && !scenario_dirty) {
+        edit_timing_outcome_ = "no_changes";
+        return false;
+    }
 
     if (map_dirty) {
         if (!save_pending_edits(refresh_inspector)) return false;
@@ -1780,10 +1873,12 @@ bool App::save_pending_document_changes(bool refresh_inspector) {
             KME_ADD_LOG(LogSeverity::Warning,
                         "Scenario save deferred because its Route path changed after Map save.");
             set_program_status("status.scenario_save_deferred");
+            edit_timing_outcome_ = "partial_success";
             return false;
         }
     }
     if (!scenario_dirty) return true;
+    edit_timing_outcome_ = "failed";
     if (!scenario_edit_actions_available() || !scenario_preview_) return false;
 
     ScenarioPreview& draft = *scenario_preview_;
@@ -1881,6 +1976,7 @@ bool App::save_pending_document_changes(bool refresh_inspector) {
         set_program_status(scenario_route_changed_
                                ? "status.scenario_route_changed"
                                : "status.scenario_saved");
+        edit_timing_outcome_ = "success";
     } catch (const std::exception& e) {
         if (snapshot) kv_free_scenario_snapshot(snapshot);
         KME_ADD_LOG(std::string("[error]Scenario save snapshot was invalid: ") + e.what());

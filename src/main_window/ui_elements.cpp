@@ -1394,6 +1394,7 @@ void App::render() {
     render_new_file_wizard();
     render_popups();
     process_distance_resolution_retry();
+    finish_edit_timing();
     touch_input::apply_touch_scroll_to_hovered_window();
     save_runtime_settings_if_changed();
 }

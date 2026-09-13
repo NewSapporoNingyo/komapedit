@@ -8887,11 +8887,27 @@ int edit_contract() {
             other_edit_id, map_string(baseline, other_source.source_hash),
             "4.25", "parameter0");
         KvEditReportSnapshot other_report{};
+        {
+            std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+            diagnostic_logs.clear();
+        }
+        kv_set_log_callback(diagnostic_log_callback);
         check(kv_edit_apply_to_memory_typed(
                   handle.value, &other_update.batch, &other_report,
                   sizeof(other_report)) != 0 && other_report.ok &&
                   other_report.non_target_changed_count == 0,
               "other-track parameter apply-to-memory");
+        kv_set_log_callback(nullptr);
+        {
+            std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+            check(std::any_of(diagnostic_logs.begin(), diagnostic_logs.end(), [](const auto& log) {
+                return log.find("edit timing: dll.apply outcome=success") != std::string::npos &&
+                    log.find("validation.non_targets_count=1") != std::string::npos &&
+                    log.find("plan.distance_index_") == std::string::npos &&
+                    log.find("plan.physical_distance_index_") == std::string::npos;
+            }), "coordinate edit validates semantics without constructing distance indices");
+            diagnostic_logs.clear();
+        }
         bool layout_preserved = false;
         for (std::uint64_t i = 0; i < other_report.preview_snippet_count; ++i) {
             const std::string_view after = arena_view(
@@ -8935,11 +8951,21 @@ int edit_contract() {
                     .source_hash),
             "25", "distance");
         KvEditReportSnapshot distance_report{};
+        kv_set_log_callback(diagnostic_log_callback);
         check(kv_edit_apply_to_memory_typed(
                   handle.value, &other_distance_update.batch, &distance_report,
                   sizeof(distance_report)) != 0 && distance_report.ok &&
                   distance_report.full_reparse_ok,
               "other-track distance apply-to-memory");
+        kv_set_log_callback(nullptr);
+        {
+            std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+            check(std::any_of(diagnostic_logs.begin(), diagnostic_logs.end(), [](const auto& log) {
+                return log.find("edit timing: dll.apply outcome=success") != std::string::npos &&
+                    log.find("plan.distance_index_count=1") != std::string::npos;
+            }), "distance move constructs one shared distance index");
+            diagnostic_logs.clear();
+        }
         KvMapSnapshot moved{};
         check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
                                   &moved, sizeof(moved)) != 0 &&

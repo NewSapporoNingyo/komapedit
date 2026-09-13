@@ -99,6 +99,17 @@ struct HeadlessEditRoundtripOptions {
     std::string error;
 };
 
+struct HeadlessEditBenchmarkOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    int repeat = 5;
+    bool scene = false;
+    std::string error;
+};
+HeadlessEditBenchmarkOptions parse_headless_edit_benchmark_options(const std::vector<std::string>& args);
+
 struct HeadlessDistanceEditBatchOptions {
     bool requested = false;
     std::string path;

@@ -748,6 +748,7 @@ private:
 
     void flush_pending_includes() {
         if (pending_includes_.empty()) return;
+        kme::timing::MapTiming::Stage timing("parse.include_join_merge");
 
         std::string first_fatal_error;
         for (auto& pending : pending_includes_) {
@@ -2665,6 +2666,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
         options.has_random_seed = true;
     }
     auto ctx = std::make_unique<MapContext>();
+    kme::timing::MapTiming::Stage edit_timing("parse.setup");
     ctx->source_overrides = std::move(overrides);
     ctx->parse_options = options;
     ActiveTimingScope active(ctx->timing);
@@ -2679,6 +2681,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
     ctx->file_structure.push_back({k_no_source_ref, {}, ctx->entry_file_path});
 
     KME_MAPLOADER_LOG_INFO("parsing syntax tree");
+    edit_timing.next("parse.syntax_diagnostics");
     try {
         ScopedTimer timer(&ctx->timing.parse_seconds);
         Parser parser(*ctx, std::move(loaded));
@@ -2697,10 +2700,12 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
     emit_diagnostics(*ctx);
 
     KME_MAPLOADER_LOG_INFO("sorting parsed IR");
+    edit_timing.next("parse.relocate");
     {
         ScopedTimer timer(&ctx->timing.relocate_seconds);
         relocate(*ctx);
     }
+    edit_timing.next("parse.geometry");
     generate_geometry(*ctx, unit_distance, has_arbitrary_distribution,
                       arbitrary_distribution[0], arbitrary_distribution[1],
                       arbitrary_distribution[2]);

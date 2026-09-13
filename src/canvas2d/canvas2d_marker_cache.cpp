@@ -247,6 +247,7 @@ void App::rebuild_speed_limit_marker_overlay_cache() {
 }
 
 void App::rebuild_marker_overlay_cache() {
+    GuiTiming::Stage edit_timing("plan.markers");
     using namespace canvas2d;
 
     plan_data_cache_.valid = false;

@@ -14,6 +14,8 @@
 
 namespace kme::maploader::detail {
 
+using kme::timing::MapTiming;
+
 using kme::maploader::encode_text_for_writeback;
 using kme::maploader::path_from_utf8;
 using kme::maploader::path_to_utf8;
@@ -23,6 +25,7 @@ using SemanticSnapshot = SemanticMapSnapshot;
 using SemanticElement = SemanticElementSnapshot;
 
 SemanticSnapshot semantic_snapshot_for_context(MapContext& ctx) {
+    MapTiming::Stage timing("semantic.snapshot");
     return build_semantic_map_snapshot(ctx);
 }
 
@@ -263,6 +266,7 @@ std::string newline_text(const std::string& newline) {
 }
 
 SourcePatch load_source_patch(const MapContext& ctx, const SourceFileRecord& record) {
+    MapTiming::Stage timing("source.patch_read_decode_hash");
     SourcePatch patch;
     patch.record = &record;
     auto override_it = ctx.source_overrides.find(record.source_key);
@@ -3544,6 +3548,7 @@ struct DistancePlanningIndex {
     std::unordered_map<size_t, DistanceSectionAnalysis> sections_by_statement;
 
     explicit DistancePlanningIndex(const MapContext& ctx) {
+        MapTiming::Stage timing("plan.distance_index");
         for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
             const ParsedStatement& statement = ctx.parsed_statements[i];
             std::string context_key = key_for_context(ctx, statement.source);
@@ -4371,6 +4376,7 @@ void append_resolution_request(MapContext& ctx,
 
 const KvEditReportSnapshot& build_edit_report_snapshot(MapContext& ctx,
                                                        const MapEditReport& report) {
+    MapTiming::Stage timing("report.snapshot");
     auto storage = std::make_unique<EditReportSnapshotStorage>();
     const size_t string_hint = report.changed_files.size() + report.warnings.size() +
         report.blocking_errors.size() + report.committed_files.size() * 2 +
@@ -4737,6 +4743,7 @@ bool rollback_staged_file(TransactionalWriteEntry& entry, std::string& error) {
 
 TransactionalWriteOutcome replace_files_transactionally(
     std::vector<TransactionalWriteRequest> requests) {
+    MapTiming::Stage timing("transaction.total");
     TransactionalWriteOutcome outcome;
     if (requests.empty()) return outcome;
 
@@ -4780,6 +4787,7 @@ TransactionalWriteOutcome replace_files_transactionally(
 
     try {
         for (TransactionalWriteEntry& entry : entries) {
+            MapTiming::Stage stage("transaction.stage_verify");
             write_new_binary_file_for_edit(entry.temporary, entry.request.bytes);
             if (source_file_hash(entry.temporary) != entry.request.new_hash) {
                 throw std::runtime_error("staged source hash mismatch for: " +
@@ -4787,6 +4795,7 @@ TransactionalWriteOutcome replace_files_transactionally(
             }
         }
         for (const TransactionalWriteEntry& entry : entries) {
+            MapTiming::Stage stage("transaction.concurrency_check");
             if (!entry.request.expected_hash.empty() &&
                 source_file_hash(entry.request.path) != entry.request.expected_hash) {
                 throw std::runtime_error("source file changed externally: " +
@@ -4795,6 +4804,7 @@ TransactionalWriteOutcome replace_files_transactionally(
         }
 
         for (TransactionalWriteEntry& entry : entries) {
+            MapTiming::Stage stage("transaction.replace_verify");
             if (!entry.request.expected_hash.empty() &&
                 source_file_hash(entry.request.path) != entry.request.expected_hash) {
                 throw std::runtime_error("source file changed during save: " +
@@ -4815,6 +4825,7 @@ TransactionalWriteOutcome replace_files_transactionally(
         }
     } catch (const std::exception& e) {
         const std::string cause = e.what();
+        timing.next("transaction.rollback");
         bool rollback_ok = std::none_of(
             entries.begin(), entries.end(), [](const TransactionalWriteEntry& entry) {
                 return entry.replacement_failure_uncertain;
@@ -4938,6 +4949,7 @@ bool validate_non_target_derived_state(MapContext& baseline,
 
 std::unique_ptr<MapContext> parse_report_candidate(MapContext& ctx,
                                                    const MapEditReport& report) {
+    MapTiming::Stage timing("candidate.reparse");
     SourceTextOverrides overrides = ctx.source_overrides;
     apply_patched_files_to_overrides(overrides, report);
     std::string entry_file_path = ctx.entry_file_path;
@@ -5687,18 +5699,22 @@ bool final_environment_matches_include_edits(
 void validate_edit_report(MapContext& baseline,
                           const std::vector<MapEditChange>& changes,
                           MapEditReport& report) {
+    MapTiming::Stage timing("validation.reparse");
     std::unique_ptr<MapContext> candidate;
     SemanticSnapshot before_snapshot;
     SemanticSnapshot after_snapshot;
     try {
         candidate = parse_report_candidate(baseline, report);
+        timing.next("validation.before_snapshot");
         before_snapshot = semantic_snapshot_for_context(baseline);
+        timing.next("validation.after_snapshot");
         after_snapshot = semantic_snapshot_for_context(*candidate);
     } catch (const std::exception& e) {
         report.blocking_errors.push_back(std::string("full edited-map reparse failed: ") + e.what());
         return;
     }
 
+    timing.next("validation.targets");
     const std::vector<SemanticElement>& before_elements = before_snapshot.elements;
     const std::vector<SemanticElement>& after_elements = after_snapshot.elements;
     std::map<std::string, const SemanticElement*> before_by_id;
@@ -6325,6 +6341,7 @@ void validate_edit_report(MapContext& baseline,
         }
     }
 
+    timing.next("validation.non_targets");
     // The swapped-in file's subtree is new content on the candidate side of
     // the reparse comparison. Collect its statement mask and element ids so
     // the non-target and environment checks only police untouched regions.
@@ -6432,6 +6449,7 @@ void validate_edit_report(MapContext& baseline,
     // disk-baseline IDs while a batch is pending so it can reset and replay the
     // complete ledger. Preserve those validated identities in the working-copy
     // context instead of forcing the GUI to guess an old-to-new row mapping.
+    timing.next("validation.identities_links");
     candidate->native_element_edit_id_to_stable.clear();
     candidate->native_element_edit_id_to_stable.reserve(
         candidate_to_stable_edit_ids.size());
@@ -6542,6 +6560,7 @@ void validate_edit_report(MapContext& baseline,
         }
     }
 
+    timing.next("validation.derived_variables");
     std::string derived_error;
     if (!validate_non_target_derived_state(
             baseline, *candidate, excluded_before, derived_error)) {
@@ -7019,6 +7038,7 @@ bool physical_include_instances_are_compatible(
 }
 
 void replace_context_and_advance_revisions(MapContext& current, MapContext&& replacement) {
+    MapTiming::Stage timing("context.replace_destroy");
     const std::uint64_t next_content_revision = current.content_revision + 1;
     const std::uint64_t next_geometry_revision = current.geometry_revision + 1;
     const std::uint64_t next_scene_revision = current.scene_revision + 1;
@@ -7035,9 +7055,14 @@ void replace_context_and_advance_revisions(MapContext& current, MapContext&& rep
 MapEditReport build_edit_report(MapContext& ctx,
                                 const std::vector<MapEditChange>& changes,
                                 bool write_files) {
+    MapTiming::Stage timing("plan.prepare");
     MapEditReport report;
     std::map<size_t, SourcePatch> patches;
-    DistancePlanningIndex distance_index(ctx);
+    std::optional<DistancePlanningIndex> distance_index;
+    const auto get_distance_index = [&]() -> DistancePlanningIndex& {
+        if (!distance_index) distance_index.emplace(ctx);
+        return *distance_index;
+    };
     std::set<std::string> map_source_keys;
     for (const FileStructureRecord& record : ctx.file_structure) {
         if (!record.absolute_path.empty()) {
@@ -7046,14 +7071,20 @@ MapEditReport build_edit_report(MapContext& ctx,
     }
     std::map<size_t, std::map<std::pair<size_t, size_t>, size_t>>
         physical_distance_anchor_indices_by_file;
-    for (size_t statement_index = 0;
-         statement_index < ctx.parsed_statements.size(); ++statement_index) {
-        const ParsedStatement& statement = ctx.parsed_statements[statement_index];
-        if (!is_distance_statement(statement)) continue;
-        physical_distance_anchor_indices_by_file[statement.source.source_file_index].emplace(
-            std::make_pair(statement.source.byte_start, statement.source.byte_end),
-            statement_index);
-    }
+    bool physical_distance_anchors_built = false;
+    const auto ensure_physical_distance_anchors = [&]() {
+        if (physical_distance_anchors_built) return;
+        MapTiming::Stage index_timing("plan.physical_distance_index");
+        for (size_t statement_index = 0;
+             statement_index < ctx.parsed_statements.size(); ++statement_index) {
+            const ParsedStatement& statement = ctx.parsed_statements[statement_index];
+            if (!is_distance_statement(statement)) continue;
+            physical_distance_anchor_indices_by_file[statement.source.source_file_index].emplace(
+                std::make_pair(statement.source.byte_start, statement.source.byte_end),
+                statement_index);
+        }
+        physical_distance_anchors_built = true;
+    };
     const auto has_monotonic_tail_insert_position = [&](size_t file_index,
                                                         double target_distance) {
         const auto anchors = physical_distance_anchor_indices_by_file.find(file_index);
@@ -7331,6 +7362,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                     if (!parse_edit_number(target_text, target_distance)) {
                         throw std::runtime_error("invalid numeric edit value: " + target_text);
                     }
+                    ensure_physical_distance_anchors();
                     const auto anchor_it =
                         physical_distance_anchor_indices_by_file.find(target_file_index);
                     const size_t physical_distance_anchor_count = anchor_it ==
@@ -7434,11 +7466,11 @@ MapEditReport build_edit_report(MapContext& ctx,
                             (gap == best_gap && tie_breaks_before(fallback_origin_index))) {
                             fallback_origin_index = i;
                             fallback_section = analyze_distance_section(
-                                ctx, i, distance_index);
+                                ctx, i, get_distance_index());
                             best_gap = gap;
                         }
                         const DistanceSectionAnalysis section = analyze_distance_section(
-                            ctx, i, distance_index);
+                            ctx, i, get_distance_index());
                         if (!section_can_place_target(section)) continue;
                         if (origin_index == k_no_source_ref ||
                             gap < best_resolved_gap ||
@@ -7574,7 +7606,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                                 suggested_distance_expression_for_target(
                                     *statement, edit.target_distance, change);
                             edit.section = analyze_distance_section(
-                                ctx, target.statement_index, distance_index);
+                                ctx, target.statement_index, get_distance_index());
                         }
                     }
                     ++report.update_count;
@@ -7630,12 +7662,12 @@ MapEditReport build_edit_report(MapContext& ctx,
         SourcePatch& patch = patches[group.source_file_index];
         ResolvedDistanceGroup resolved;
         if (resolve_distance_group(
-                ctx, patch, group, prepared, distance_index, resolved, report)) {
+                ctx, patch, group, prepared, get_distance_index(), resolved, report)) {
             std::string mismatch_variable;
             if (!physical_include_instances_are_compatible(
                     ctx, patch, group, prepared,
                     targeted_distance_statement_indices, resolved,
-                    distance_index, mismatch_variable)) {
+                    get_distance_index(), mismatch_variable)) {
                 append_resolution_request(ctx, patch, group, prepared,
                                           "physicalSourceHasIncompatibleIncludeContexts",
                                           mismatch_variable, false,
@@ -7893,7 +7925,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                 source_range_in_text(group_patch, before_anchor.source);
             size_t indent_statement_index = k_no_source_ref;
             for (size_t statement_index :
-                 distance_index.statements_for(ctx, before_anchor.source)) {
+                 get_distance_index().statements_for(ctx, before_anchor.source)) {
                 const ParsedStatement& candidate = ctx.parsed_statements[statement_index];
                 const auto candidate_range =
                     source_range_in_text(group_patch, candidate.source);
@@ -8176,6 +8208,7 @@ MapEditReport build_edit_report(MapContext& ctx,
         patch.replacements.push_back(std::move(insertion));
     }
 
+    timing.next("plan.patch_sources");
     for (auto& patch_entry : patches) {
         SourcePatch& patch = patch_entry.second;
         if (!patch.record || patch.replacements.empty()) continue;
@@ -8269,6 +8302,7 @@ MapEditReport build_edit_report(MapContext& ctx,
     std::vector<MapEditChange> validation_changes;
     validation_changes.reserve(effective_changes.size());
     for (const MapEditChange* change : effective_changes) validation_changes.push_back(*change);
+    timing.next("plan.validate");
     validate_edit_report(ctx, validation_changes, report);
     if (!report.ok()) return report;
 
@@ -8452,6 +8486,7 @@ void reparse_context_with_overrides(MapContext& ctx,
                                     SourceTextOverrides overrides,
                                     bool has_arbitrary_distribution,
                                     const std::array<double, 3>& arbitrary_distribution) {
+    MapTiming::Stage timing("reset.reparse");
     const auto disk_identities = ctx.disk_native_element_edit_id_to_stable;
     const auto disk_source_hashes = ctx.disk_source_hashes_for_stable_ids;
     std::string entry_file_path = ctx.entry_file_path;
@@ -8465,6 +8500,7 @@ void reparse_context_with_overrides(MapContext& ctx,
     options.collect_edit_metadata = true;
     auto next = parse_map_context(path_from_utf8(entry_file_path), unit_distance, std::move(overrides),
                                   has_arbitrary_distribution, arbitrary_distribution, options);
+    timing.next("reset.disk_identity_check");
     if (!disk_identities.empty() && !disk_source_hashes.empty()) {
         bool disk_baseline_matches = next->source_files.size() == disk_source_hashes.size();
         for (const SourceFileRecord& file : next->source_files) {
@@ -8603,6 +8639,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
 }
 
 MapEditReport commit_memory_edits(MapContext& ctx) {
+    MapTiming::Stage timing("save.prevalidate");
     MapEditReport report;
     struct PendingWrite {
         std::string source_key;
@@ -8610,6 +8647,7 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
         std::string bytes;
         std::string expected_hash;
         std::string hash;
+        size_t byte_length = 0;
     };
     std::vector<PendingWrite> writes;
 
@@ -8638,6 +8676,7 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
                     "working-copy semantics changed after the last validated Apply");
                 return report;
             }
+            timing.next("save.candidate_destroy");
         } catch (const std::exception& e) {
             report.blocking_errors.push_back(
                 std::string("pre-save full edited-map reparse failed: ") + e.what());
@@ -8645,6 +8684,7 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
         }
     }
 
+    timing.next("save.read_hash_encode");
     for (const auto& entry : ctx.source_overrides) {
         const SourceTextOverride& source = entry.second;
         if (!source.dirty) continue;
@@ -8665,8 +8705,9 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
         try {
             std::string bytes = encode_text_for_writeback(source.text, source.encoding, source.utf8_bom);
             std::string hash = hex64(stable_hash64(bytes));
+            const size_t byte_length = bytes.size();
             writes.push_back({source.source_key, std::move(path), std::move(bytes),
-                              source.base_hash, std::move(hash)});
+                              source.base_hash, std::move(hash), byte_length});
             report.changed_files.push_back(source.file_path);
         } catch (const std::exception& e) {
             report.blocking_errors.push_back(e.what());
@@ -8675,13 +8716,15 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
 
     if (!report.ok()) return report;
 
+    timing.next("save.transaction_prepare");
     std::vector<TransactionalWriteRequest> transaction_writes;
     transaction_writes.reserve(writes.size());
-    for (const PendingWrite& write : writes) {
-        transaction_writes.push_back({write.path, write.bytes,
+    for (PendingWrite& write : writes) {
+        transaction_writes.push_back({write.path, std::move(write.bytes),
                                       write.expected_hash, write.hash});
     }
     try {
+        timing.next("save.transaction");
         TransactionalWriteOutcome outcome =
             replace_files_transactionally(std::move(transaction_writes));
         report.warnings.insert(report.warnings.end(),
@@ -8697,13 +8740,14 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
         report.blocking_errors.push_back(e.what());
         return report;
     }
+    timing.next("save.committed_metadata");
     for (const PendingWrite& write : writes) {
         auto source_index = ctx.source_file_indices.find(write.source_key);
         if (source_index != ctx.source_file_indices.end() &&
             source_index->second < ctx.source_files.size()) {
             SourceFileRecord& source_file = ctx.source_files[source_index->second];
             source_file.source_hash = write.hash;
-            source_file.byte_length = write.bytes.size();
+            source_file.byte_length = write.byte_length;
         }
         ctx.source_overrides.erase(write.source_key);
     }

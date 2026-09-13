@@ -571,6 +571,7 @@ void annotate_own_track_transition_links(MapModel& model) {
 MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
                               const std::string& path,
                               double snapshot_call_seconds) {
+    kme::timing::GuiTiming::Stage edit_timing("snapshot.hydrate");
     const auto hydrate_started_at = std::chrono::steady_clock::now();
     MapModel model;
     model.path = path;

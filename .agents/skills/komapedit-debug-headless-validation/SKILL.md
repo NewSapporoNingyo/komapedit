@@ -40,6 +40,7 @@ Use `ctest --test-dir build -C Debug --output-on-failure` after the tree is conf
 - Scene camera/station transfer: `--debug-headless-scene-camera-transfer`.
 - Source metadata: `--debug-headless-source-anchors`.
 - General edit lifecycle: `--debug-headless-edit-roundtrip`.
+- Real-route edit timing: `--debug-headless-edit-bench <map-path> --scene off|on --repeat 5 --unit-distance 25`; use three sequential processes per scene state for comparisons. Initial models settle before timing; Save uses independent temporary copies, and every original physical source is byte/hash checked. Stage durations are inclusive, and refresh/rollback assertions are distinct from timing results.
 - Own/other track, grouped distance, Station list, Repeater, Section, or insertion edits: use the matching `--debug-headless-*-edit*` mode.
 - Lighting Effects source editability: `--debug-headless-light-edit`; it must exercise the production preview-to-edit-metadata merge, every statement already present, and the create path for any missing optional light kind.
 - Cached table search: `--debug-headless-table-find`.

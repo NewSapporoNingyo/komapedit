@@ -159,6 +159,10 @@ When any Station List row uses a non-empty `arrivalSoundKey` or `depertureSoundK
 
 ### UI, tables, and rendering
 
+Edit timing uses the internal C++17 `operation_timing.h` steady-clock scopes, with separate GUI and maploader domains and no C ABI change. The App owns a transaction trace through deferred Inspector processing and the first required scene frame. Hidden/collapsed scene windows do not keep a trace waiting for the user to reopen them. Console stages are inclusive (`*_ms`, `*_count`); GUI totals include DLL time. `source.read_decode_hash` describes caller-thread source work; parallel Include work is included in `parse.include_join_merge` and `parse.syntax_diagnostics`. Model loading keeps its separate asynchronous diagnostics. Timing never substitutes for semantic validation or drives application state by parsing log text.
+
+`refresh_local_preview_after_edits()` coalesces row-family refreshes for Apply and rollback. Whole-model hydration supersedes partial alignment/list hydration; a scheduled full scene rebuild supersedes updates to the outgoing scene. Single placement/Repeater coordinate updates retain their stable-ID fast paths. `build_edit_report()` constructs distance and physical-anchor indices only at their existing consumers, once per batch. Save transfers encoded bytes into transactional requests while retaining length/hash metadata; reparse, variable/non-target proof, encoding checks, disk-baseline checks, write verification, and rollback are unchanged.
+
 - Keep the Dear ImGui docking layout and current menu/tool concepts.
 - Add ordinary application UI text in Simplified Chinese, English, and Japanese, with concise toolbar/menu wording and stable ImGui IDs across languages.
 - Keep labels that directly represent BVE map-statement parameters in the official English names or abbreviations (for example, `distance`, `trackKey`, `x`, and `ry`); do not route those labels through localization.
@@ -210,6 +214,7 @@ build\komapedit.exe --debug-headless-source-anchors <map-path> --headless-output
 build\komapedit.exe --debug-headless-station-list-edit <map-path> --headless-output build\station-list-edit.txt
 build\komapedit.exe --debug-headless-station-put-margin-edit <map-path> --headless-output build\station-put-margin-edit.txt
 build\komapedit.exe --debug-headless-edit-roundtrip <map-path> --headless-output build\edit-roundtrip.txt
+build\komapedit.exe --debug-headless-edit-bench <map-path> --scene off|on --repeat 5 --unit-distance 25 --headless-output build\edit-bench.txt
 build\komapedit.exe --debug-headless-own-track-edit [map-path] --headless-output build\own-track-edit.txt
 build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --headless-output build\other-track-edit.txt
 build\komapedit.exe --debug-headless-distance-edit-batch [map-path] --headless-output build\distance-edit-batch.txt
@@ -235,6 +240,10 @@ build\komapedit.exe --debug-headless-settings-persistence --headless-output buil
 build\komapedit.exe --debug-headless-curve-parameter-edit <map-path> --headless-output build\curve-parameter-edit.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
+
+`--debug-headless-edit-bench` directly exercises the production App Apply/Save and deferred Delete paths without clicking. It first applies/deletes/reverts in memory on the input and protects every loaded physical source with before/after byte and hash checks. Save runs only on independent regular-file copies below an exclusive temporary root; dependencies retain their relative directory layout, escaped source targets and reparse points are rejected, and the fixture is removed afterward. Use a route containing editable `Structure.Put`, `Repeater.Begin`, and `Curve.SetGauge` rows. The benchmark selects the first valid targets in source order, uses fixed coordinate/gauge deltas, a 1260×680 scene, a 100 m / 1200 m window, and a camera at the route minimum + 500 m (clamped by the normal camera API).
+
+`--scene` defaults to `off`, `--repeat` defaults to `5` (range 1–100), and `--unit-distance` defaults to `25`. Each repeat restores the source copies and creates a fresh App. Initial model loading completes before measurement; the required first scene frame is timed, and later asynchronous settling is separate. Output includes workload/target identities, inclusive stage counts/durations, per-case totals, median/p95/max, source-integrity checks, and refresh/rollback contracts. For a comparison, run three independent processes per scene setting with five repeats each, sequentially without builds or other benchmarks, using the same Debug settings, route, and parameters. Treat performance, correctness, and manual GUI checks as separate evidence; full validation can still exceed one second.
 
 `--debug-headless-resource-list-replace` reproduces preview loading followed by edit-metadata loading and merge, then opens the production Win32 picker for `Structure.Load`. Manually select a different valid Structure List. It verifies the merged stable edit ID, memory Apply with complete reparse, refreshed structure-list cache, updated path, and unchanged hashes after a fresh disk reload. It never calls Save or Commit; cancelling, selecting the same file, or selecting an invalid list reports `FAIL`.
 

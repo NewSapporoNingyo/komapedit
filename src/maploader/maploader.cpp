@@ -533,6 +533,7 @@ KV_API int kv_edit_dry_run_typed(void* handle, const KvEditBatch* batch,
                                  KvEditReportSnapshot* out_report,
                                  uint64_t out_size) {
     try {
+        kme::timing::MapTiming::Operation timing("dll.dry_run", [](const std::string& text) { KME_MAPLOADER_LOG_INFO(text); });
         if (!handle) throw std::runtime_error("handle is null");
         if (!batch) throw std::runtime_error("edit batch is null");
         if (!out_report) throw std::runtime_error("edit report output is null");
@@ -542,9 +543,12 @@ KV_API int kv_edit_dry_run_typed(void* handle, const KvEditBatch* batch,
         auto* ctx = static_cast<MapContext*>(handle);
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
+        kme::timing::MapTiming::Stage conversion("batch.convert");
         std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
+        conversion.finish();
         MapEditReport report = kme::maploader::detail::plan_staged_edit_batch(*ctx, changes);
         *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
+        timing.outcome = report.ok() ? "success" : "blocked";
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
@@ -559,6 +563,7 @@ KV_API int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
                                          KvEditReportSnapshot* out_report,
                                          uint64_t out_size) {
     try {
+        kme::timing::MapTiming::Operation timing("dll.apply", [](const std::string& text) { KME_MAPLOADER_LOG_INFO(text); });
         if (!handle) throw std::runtime_error("handle is null");
         if (!batch) throw std::runtime_error("edit batch is null");
         if (!out_report) throw std::runtime_error("edit report output is null");
@@ -568,7 +573,9 @@ KV_API int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
         auto* ctx = static_cast<MapContext*>(handle);
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
+        kme::timing::MapTiming::Stage conversion("batch.convert");
         std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
+        conversion.finish();
         MapEditReport report = kme::maploader::detail::plan_staged_edit_batch(*ctx, changes);
         if (report.ok()) {
             try {
@@ -578,6 +585,7 @@ KV_API int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
             }
         }
         *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
+        timing.outcome = report.ok() ? "success" : "blocked";
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
@@ -590,11 +598,13 @@ KV_API int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
 
 KV_API int kv_edit_reset_memory(void* handle) {
     try {
+        kme::timing::MapTiming::Operation timing("dll.reset", [](const std::string& text) { KME_MAPLOADER_LOG_INFO(text); });
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
         kme::maploader::detail::reset_memory_edits(*ctx);
+        timing.outcome = "success";
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
@@ -609,6 +619,7 @@ KV_API int kv_edit_apply_typed(void* handle, const KvEditBatch* batch,
                                KvEditReportSnapshot* out_report,
                                uint64_t out_size) {
     try {
+        kme::timing::MapTiming::Operation timing("dll.direct_apply", [](const std::string& text) { KME_MAPLOADER_LOG_INFO(text); });
         if (!handle) throw std::runtime_error("handle is null");
         if (!batch) throw std::runtime_error("edit batch is null");
         if (!out_report) throw std::runtime_error("edit report output is null");
@@ -618,12 +629,15 @@ KV_API int kv_edit_apply_typed(void* handle, const KvEditBatch* batch,
         auto* ctx = static_cast<MapContext*>(handle);
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
+        kme::timing::MapTiming::Stage conversion("batch.convert");
         std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
+        conversion.finish();
         MapEditReport report = kme::maploader::detail::plan_staged_edit_batch(*ctx, changes);
         if (report.ok()) {
             kme::maploader::detail::finalize_direct_disk_apply(*ctx, report);
         }
         *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
+        timing.outcome = report.ok() ? "success" : "blocked";
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
@@ -637,6 +651,7 @@ KV_API int kv_edit_apply_typed(void* handle, const KvEditBatch* batch,
 KV_API int kv_edit_commit_typed(void* handle, KvEditReportSnapshot* out_report,
                                 uint64_t out_size) {
     try {
+        kme::timing::MapTiming::Operation timing("dll.save", [](const std::string& text) { KME_MAPLOADER_LOG_INFO(text); });
         if (!handle) throw std::runtime_error("handle is null");
         if (!out_report) throw std::runtime_error("edit report output is null");
         if (out_size < sizeof(KvEditReportSnapshot)) {
@@ -647,6 +662,7 @@ KV_API int kv_edit_commit_typed(void* handle, KvEditReportSnapshot* out_report,
         ctx->edit_target_snapshot.reset();
         MapEditReport report = kme::maploader::detail::commit_memory_edits(*ctx);
         *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
+        timing.outcome = report.ok() ? "success" : "blocked";
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());

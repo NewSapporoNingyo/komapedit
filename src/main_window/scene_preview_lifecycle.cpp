@@ -97,6 +97,8 @@ void App::stop_scene_preview() {
 }
 
 double App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camera) {
+    GuiTiming::Activation timing_activation(edit_timing_.get());
+    GuiTiming::Stage timing("scene.rebuild");
     if (!scene_preview_canvas_ || !scene_preview_started_) {
         pending_scene_preview_started_at_.reset();
         return 0.0;
@@ -122,6 +124,7 @@ double App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_cam
     options.show_own_track_markers = show_scene_owntrack_markers_;
     const auto scene_build_started_at = std::chrono::steady_clock::now();
     Canvas3DSceneBuildResult build_result = build_canvas3d_scene_preview(options);
+    timing.next("scene.gpu_models");
     const double scene_build_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - scene_build_started_at).count();
     for (const std::string& message : build_result.log_messages) add_forwarded_log(message);
@@ -139,6 +142,7 @@ double App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_cam
     std::string error;
     if (!scene_preview_canvas_->load_scene(std::move(build_result.scene), error,
                                            preserve_loaded_models, preserve_camera)) {
+        if (edit_timing_) edit_timing_outcome_ = "scene_refresh_failed";
         KME_ADD_LOG("[error]3D scene preview failed: " + error);
         scene_preview_dirty_ = true;
         scene_preview_preserve_models_on_rebuild_ = false;
@@ -305,7 +309,10 @@ void App::render_scene_preview_window() {
     };
     drain_scene_preview_logs();
     finish_pending_scene_preview_load_timing();
-    if (!show_scene_preview_window_) return;
+    if (!show_scene_preview_window_) {
+        edit_timing_wait_scene_frame_ = false;
+        return;
+    }
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
     if (focus_scene_preview_next_) ImGui::SetNextWindowFocus();
     std::string title = tr("frame.scene_preview") + "###ScenePreview3D";
@@ -429,8 +436,13 @@ void App::render_scene_preview_window() {
         context_menu_options.new_element_enabled = edit_actions_available();
         sync_scene_placement_edit_from_inspector();
         sync_scene_preview_marker_visibility();
-        Canvas3DSceneFrameResult scene_result =
-            scene_preview_canvas_->render_scene_preview(avail, scene_ui_text, context_menu_options);
+        Canvas3DSceneFrameResult scene_result;
+        {
+            GuiTiming::Activation timing_activation(edit_timing_.get());
+            GuiTiming::Stage timing_stage("scene.first_frame");
+            scene_result = scene_preview_canvas_->render_scene_preview(avail, scene_ui_text, context_menu_options);
+            edit_timing_wait_scene_frame_ = false;
+        }
         if (scene_result.placement_drag) {
             apply_scene_placement_drag_update(*scene_result.placement_drag);
         }
@@ -464,6 +476,9 @@ void App::render_scene_preview_window() {
                                    RepeaterDeleteMode::StartFromChangePoint);
         }
         drain_scene_preview_logs();
+    } else {
+        // A collapsed view rebuilds when reopened; do not time the user's wait.
+        edit_timing_wait_scene_frame_ = false;
     }
     focus_scene_preview_next_ = false;
     ImGui::End();

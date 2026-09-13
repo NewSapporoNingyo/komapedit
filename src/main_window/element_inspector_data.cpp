@@ -86,6 +86,8 @@ void App::request_element_inspector(const std::string& edit_id, const std::strin
 
 void App::process_pending_element_inspector() {
     if (!pending_inspector_request_) return;
+    GuiTiming::Activation timing_activation(edit_timing_.get());
+    GuiTiming::Stage timing("inspector.reload");
     MapElementInspectorRequest request = std::move(*pending_inspector_request_);
     pending_inspector_request_.reset();
     open_element_inspector(request);
@@ -708,6 +710,8 @@ void App::process_pending_resource_list_file_change() {
 }
 
 bool App::apply_other_track_rename() {
+    EditTimingScope operation(*this, "apply");
+    GuiTiming::Stage timing("rename.prepare");
     if (!edit_actions_available()) return false;
     const std::string source_key = trim_gui_ascii_copy(other_track_rename_.source_key);
     const std::string requested_key = trim_gui_ascii_copy(other_track_rename_.apply_key);
@@ -791,10 +795,12 @@ bool App::apply_other_track_rename() {
     }
     if (!ledger_changed) {
         other_track_rename_ = OtherTrackRenameState{};
+        edit_timing_outcome_ = "no_changes";
         set_program_status("status.edit.no_changes");
         return true;
     }
 
+    timing.next("rename.apply");
     if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) return false;
 
     std::string applied_key;
@@ -1983,6 +1989,8 @@ void App::apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& u
 }
 
 void App::apply_inspector_changes() {
+    EditTimingScope operation(*this, "apply");
+    GuiTiming::Stage timing("inspector.prepare_apply");
     if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
     const bool repeater_inspector = inspector_.row_kind == "repeater";
@@ -2371,11 +2379,13 @@ void App::apply_inspector_changes() {
         }
     }
 
+    timing.next("inspector.apply");
     if (replacements.empty() && !repeater_key_sync_requested) {
         if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
             if (repeater_inspector) {
                 inspector_.session.repeater_drafts.erase(repeater_draft_edit_id);
             }
+            edit_timing_outcome_ = "no_changes";
             set_program_status("status.edit.no_changes");
         }
         return;

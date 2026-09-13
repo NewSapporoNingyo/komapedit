@@ -9,6 +9,7 @@
 #endif
 
 #include "canvas3D.h"
+#include "operation_timing.h"
 #include "numeric_safety.h"
 
 #include "repeater_linkage.h"
@@ -1665,6 +1666,7 @@ void sort_canvas3d_scene_markers(std::vector<Canvas3DSceneMarker>& markers) {
 }
 
 void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model) {
+    kme::timing::GuiTiming::Stage edit_timing("scene.marker_recipes");
     scene.markers.clear();
     const Canvas3DTrackPath* own_track = scene_own_track_path(scene);
     if (!own_track || own_track->points.empty()) return;
@@ -3189,6 +3191,7 @@ struct Canvas3D::Impl {
     }
 
     bool refresh_scene_dynamic_content(const MapModel& model, int station_index, std::string& error) {
+        kme::timing::GuiTiming::Stage edit_timing("scene.dynamic");
         error.clear();
         if (!scene_active) return true;
         if (!device || !context) {
@@ -3589,6 +3592,7 @@ struct Canvas3D::Impl {
     }
 
     std::map<std::string, SceneModelLoadRequest> collect_scene_model_load_requests() const {
+        kme::timing::GuiTiming::Stage edit_timing("scene.model_requests");
         std::map<std::string, SceneModelLoadRequest> requests;
         auto note_regular_model = [&](const std::string& path) {
             if (path.empty() || requests.find(path) != requests.end()) return;
@@ -4499,6 +4503,60 @@ struct Canvas3D::Impl {
         }
         return true;
     }
+
+#ifndef NDEBUG
+    bool debug_check_scene_edit_target(const Canvas3DPlacementEditTarget& target) const {
+        const auto equal_value = [](double a, double b) { return std::abs(a - b) <= 1e-9; };
+        const auto parameters_match = [&](const auto& source) {
+            const std::array<double, 8> actual = {source.x, source.y, source.z, source.rx,
+                source.ry, source.rz, source.tilt, source.span};
+            const std::array<double, 8> expected = {target.x, target.y, target.z, target.rx,
+                target.ry, target.rz, target.tilt, target.span};
+            return source.track_key == target.track_key &&
+                std::equal(actual.begin(), actual.end(), expected.begin(), equal_value);
+        };
+        const auto world_matches = [&](const double* actual, const double* expected) {
+            return std::equal(actual, actual + 16, expected, equal_value);
+        };
+        if (target.kind == Canvas3DSceneEditKind::Repeater) {
+            const auto found = scene_repeater_locations.find(target.edit_id);
+            if (found == scene_repeater_locations.end() || found->second >= scene_data.repeaters.size()) return false;
+            const auto& source = scene_data.repeaters[found->second];
+            if (!parameters_match(source) || !equal_value(source.begin_distance, target.distance) ||
+                (target.has_repeater_end_distance && !equal_value(source.end_distance, target.repeater_end_distance))) return false;
+            for (const auto& chunk : scene_chunks) {
+                if (!chunk.repeater_cache_prepared) continue;
+                for (size_t slot = 0; slot < chunk.repeater_indices.size(); ++slot) {
+                    if (chunk.repeater_indices[slot] != found->second) continue;
+                    if (slot >= chunk.repeater_cache.size()) return false;
+                    const auto& cache = chunk.repeater_cache[slot];
+                    for (size_t offset = 0; offset < cache.worlds.size(); ++offset) {
+                        const double distance = source.begin_distance + (scene_repeater_has_interval(source)
+                            ? static_cast<double>(cache.first_index + static_cast<long long>(offset)) * source.interval : 0.0);
+                        double expected[16]{};
+                        const bool valid = make_repeater_instance_world(source, distance, expected);
+                        if (valid != cache.worlds[offset].valid ||
+                            (valid && !world_matches(cache.worlds[offset].world.data(), expected))) return false;
+                    }
+                }
+            }
+            return true;
+        }
+        if (target.kind != Canvas3DSceneEditKind::Structure && target.kind != Canvas3DSceneEditKind::Signal) return false;
+        const auto found = scene_placement_locations.find(target.edit_id);
+        if (found == scene_placement_locations.end()) return false;
+        const auto& location = found->second;
+        if (location.source_index >= scene_data.instances.size() || location.chunk_index >= scene_chunks.size()) return false;
+        const auto& source = scene_data.instances[location.source_index];
+        const auto& instances = scene_chunks[location.chunk_index].instances;
+        if (!parameters_match(source) || !equal_value(source.distance, target.distance) ||
+            location.chunk_instance_index >= instances.size()) return false;
+        double expected[16]{};
+        return make_track_world(target.track_key, target.distance, target.x, target.y, target.z,
+            target.rx, target.ry, target.rz, target.tilt, target.span, expected) &&
+            world_matches(instances[location.chunk_instance_index].world, expected);
+    }
+#endif
 
     bool update_scene_placement_instance(const Canvas3DPlacementEditTarget& target) {
         if (!scene_active) return true;
@@ -7782,6 +7840,7 @@ struct Canvas3D::Impl {
     }
 
     bool build_scene_chunks(std::string& error) {
+        kme::timing::GuiTiming::Stage edit_timing("scene.chunks");
         scene_chunks.clear();
         scene_cached_repeater_world_count = 0;
         scene_placement_locations.clear();
@@ -8741,6 +8800,7 @@ struct Canvas3D::Impl {
     }
 
     bool build_scene_marker_chunks(std::string& error) {
+        kme::timing::GuiTiming::Stage edit_timing("scene.marker_gpu");
         error.clear();
         release_scene_marker_chunks();
         scene_marker_chunks.resize(scene_chunks.size());
@@ -11488,6 +11548,10 @@ void Canvas3D::process_scene_loading() {
 }
 
 #ifndef NDEBUG
+bool Canvas3D::debug_check_scene_edit_target(const Canvas3DPlacementEditTarget& target) const {
+    return impl_->debug_check_scene_edit_target(target);
+}
+
 void Canvas3D::set_debug_scene_loading_tuning(size_t worker_limit, bool texture_cache_enabled) {
     impl_->scene_model_worker_limit = worker_limit;
     impl_->scene_texture_cache_enabled = texture_cache_enabled;

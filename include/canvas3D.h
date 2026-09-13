@@ -537,6 +537,7 @@ public:
     Canvas3DSceneStats scene_stats() const;
     void process_scene_loading();
 #ifndef NDEBUG
+    bool debug_check_scene_edit_target(const Canvas3DPlacementEditTarget& target) const;
     void set_debug_scene_loading_tuning(size_t worker_limit, bool texture_cache_enabled);
     bool set_debug_scene_frame_profiling(bool enabled, std::string& error);
     Canvas3DSceneFrameProfile debug_scene_frame_profile() const;

@@ -245,6 +245,7 @@ LoadedText load_header_text(const std::filesystem::path& path,
     }
 
     ScopedTimer timer(g_active_timing ? &g_active_timing->read_decode_seconds : nullptr);
+    kme::timing::MapTiming::Stage edit_timing("source.read_decode_hash");
     std::string bytes = read_binary_file(path);
     std::string text;
     std::string encoding;

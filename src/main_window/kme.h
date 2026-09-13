@@ -8,6 +8,7 @@
 #pragma once
 
 #include "multilanguage.h"
+#include "operation_timing.h"
 #include "../canvas2d/canvas2d_view_state.h"
 
 #include "imgui.h"
@@ -59,6 +60,7 @@ inline void release_com(T*& pointer) {
 #ifndef NDEBUG
 extern std::ostream* g_debug_plan_benchmark_log;
 struct HeadlessOpenBenchmarkOptions;
+struct HeadlessEditBenchmarkOptions;
 struct HeadlessOwnTrackEditOptions;
 struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
@@ -1786,6 +1788,10 @@ struct RecentMapEntry {
 
 class App {
 public:
+    using GuiTiming = kme::timing::GuiTiming;
+#ifndef NDEBUG
+    static int run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& options);
+#endif
     explicit App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled, bool has_saved_layout);
     ~App();
 
@@ -1862,6 +1868,28 @@ public:
 #endif
 
 private:
+    class EditTimingScope {
+    public:
+        EditTimingScope(App& app, const char* operation)
+            : app_(app), activation_(app.begin_edit_timing(operation)) {}
+        ~EditTimingScope() { activation_.reset(); app_.end_edit_timing(); }
+    private:
+        App& app_;
+        GuiTiming::Activation activation_;
+    };
+    GuiTiming::Trace* begin_edit_timing(const char* operation) noexcept;
+    void end_edit_timing() noexcept;
+    void finish_edit_timing() noexcept;
+    std::unique_ptr<GuiTiming::Trace> edit_timing_;
+    GuiTiming::Trace last_edit_timing_;
+    double last_edit_seconds_ = 0.0;
+    unsigned edit_timing_depth_ = 0;
+    bool edit_timing_wait_scene_frame_ = false;
+    size_t edit_timing_change_count_ = 0;
+    std::uint64_t edit_timing_sequence_ = 0;
+    std::string edit_timing_operation_;
+    std::string edit_timing_outcome_;
+    const char* edit_timing_status_key_ = "status.ready";
     ID3D11Device* device_ = nullptr;
     float dpi_scale_ = 1.0f;
     bool viewports_enabled_ = false;
@@ -2465,6 +2493,7 @@ private:
     bool snapshot_local_preview_row(const std::string& edit_id, const std::string& row_kind);
     void refresh_local_preview_after_edit(const std::string& row_kind,
                                           const std::string& edit_id = {});
+    void refresh_local_preview_after_edits(const std::map<std::string, std::string>& targets);
     void request_element_inspector(const std::string& edit_id, const std::string& row_kind);
     void process_pending_element_inspector();
     void request_element_delete(const std::string& edit_id, const std::string& row_kind,

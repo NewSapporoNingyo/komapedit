@@ -289,6 +289,7 @@ add_executable(komapedit
     src/main_window/file_structure_diagram.cpp
     src/main_window/text_preview.cpp
     src/main_window/debug_headless.cpp
+    src/main_window/edit_benchmark.cpp
     src/main_window/touch_input.cpp
     src/main_window/map_marker_visuals.cpp
     src/main_window/route_value_sampling.cpp

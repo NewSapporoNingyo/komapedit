@@ -556,6 +556,14 @@ int main(int, char**) {
         return run_debug_headless_include_import_create(include_import_create);
     }
 
+    const auto edit_bench = parse_headless_edit_benchmark_options(args);
+    if (edit_bench.requested) {
+        if (!edit_bench.error.empty()) {
+            std::cerr << edit_bench.error << "\n";
+            return 2;
+        }
+        return App::run_debug_headless_edit_benchmark(edit_bench);
+    }
     HeadlessEditRoundtripOptions edit_roundtrip = parse_headless_edit_roundtrip_options(args);
     if (edit_roundtrip.requested) {
         if (!edit_roundtrip.error.empty()) {

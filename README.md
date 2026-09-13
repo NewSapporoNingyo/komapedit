@@ -234,6 +234,8 @@ The currently implemented global shortcuts are `F5` for Reload and `Ctrl+Shift+S
 
 The Console shows complete loading, parsing, model, and editing logs. Check it first when a map does not open, a model is missing, or saving fails.
 
+Apply, Save, and Delete report their total execution time in the status bar. English `edit timing:` console records show the operation, pending change count, 3D state, stage durations in milliseconds, and execution counts. The total includes required synchronous preview/Inspector/3D updates; time spent choosing a source location and subsequent asynchronous model loading is excluded. Stages are inclusive and must not be added together. Full reparse and source-write safety checks remain enabled, so editing a large route can still take more than a second.
+
 - **Clear**: Removes all log messages and resets the error and warning counts.
 - **Copy**: Copies the full log to the clipboard for use in a bug report.
 - New messages scroll into view automatically only when the log is already at the bottom. If you scroll up, the Console does not force you back to the bottom.

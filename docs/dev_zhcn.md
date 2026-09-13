@@ -553,6 +553,10 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 
 ### UI、表格与渲染
 
+编辑计时使用内部 C++17 `operation_timing.h` 中的稳态时钟作用域，GUI 与 maploader 分域记录，不修改 C ABI。App 持有事务计时，直到延迟 Inspector 处理和必要的首个场景帧完成。隐藏或折叠的场景窗口不会让计时等待用户重新打开。控制台阶段为包含嵌套工作的 `*_ms`、`*_count`，GUI 总用时包含 DLL 用时。`source.read_decode_hash` 记录调用线程上的源码处理，并行 Include 工作包含在 `parse.include_join_merge` 和 `parse.syntax_diagnostics` 中；模型加载继续使用独立异步日志。计时不代替语义验证，也不通过解析日志文本驱动应用状态。
+
+`refresh_local_preview_after_edits()` 合并 Apply 和回滚涉及的行类型刷新。完整模型转换覆盖局部轨道／列表转换；已安排完整场景重建时跳过旧场景更新。单个放置实例和 Repeater 坐标编辑继续保留稳定 ID 快速路径。`build_edit_report()` 仅在原有消费者首次使用时构建距离和物理锚点索引，同批次复用。Save 将编码后字节移动到事务请求，并保留长度／哈希元数据；完整重解析、变量／非目标证明、编码检查、磁盘基线检查、写入核验和回滚均不变。
+
 - 保持 Dear ImGui docking 布局及现有菜单/工具概念。
 - 普通应用 UI 的每一条用户可见文本都要同步加入简体中文、英语和日语，并保持工具栏/菜单措辞简短、语言切换时 ImGui ID 稳定。
 - 直接对应 BVE 地图语句参数的标签必须使用官方英文名称或缩写（例如 `distance`、`trackKey`、`x`、`ry`），不得通过本地化函数翻译。
@@ -603,6 +607,7 @@ build\komapedit.exe --debug-headless-source-anchors <map-path> --headless-output
 build\komapedit.exe --debug-headless-station-list-edit <map-path> --headless-output build\station-list-edit.txt
 build\komapedit.exe --debug-headless-station-put-margin-edit <map-path> --headless-output build\station-put-margin-edit.txt
 build\komapedit.exe --debug-headless-edit-roundtrip <map-path> --headless-output build\edit-roundtrip.txt
+build\komapedit.exe --debug-headless-edit-bench <map-path> --scene off|on --repeat 5 --unit-distance 25 --headless-output build\edit-bench.txt
 build\komapedit.exe --debug-headless-own-track-edit [map-path] --headless-output build\own-track-edit.txt
 build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --headless-output build\other-track-edit.txt
 build\komapedit.exe --debug-headless-distance-edit-batch [map-path] --headless-output build\distance-edit-batch.txt
@@ -628,6 +633,10 @@ build\komapedit.exe --debug-headless-settings-persistence --headless-output buil
 build\komapedit.exe --debug-headless-curve-parameter-edit <map-path> --headless-output build\curve-parameter-edit.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
+
+`--debug-headless-edit-bench` 直接执行正式 App 的 Apply／Save 和延迟 Delete 路径，不模拟点击。先在输入线路上仅内存应用、删除和撤销，并对全部已加载物理源文件执行前后字节及哈希核对。Save 只在独占临时根目录下的独立普通文件副本中执行，依赖保留相对目录布局，拒绝越出副本根目录的源码目标和重解析点，结束后清理夹具。线路须包含可编辑的 `Structure.Put`、`Repeater.Begin`、`Curve.SetGauge`；基准按源码顺序选择首个有效目标，采用固定坐标／轨距增量、1260×680 场景、向后 100 m／向前 1200 m 窗口，以及线路最小里程 + 500 m 的相机位置（由正常相机 API 限制范围）。
+
+`--scene` 默认 `off`，`--repeat` 默认 `5`（范围 1–100），`--unit-distance` 默认 `25`。每次重复恢复源码副本并创建新的 App；模型初始加载完成后开始测量，必要的首个场景帧计入操作用时，后续异步等待单独处理。输出包含工作量／目标身份、嵌套阶段次数和用时、各操作总体用时及中位数／p95／最大值、源码完整性检查、刷新和回滚合同。比较时每种 3D 状态各运行三个独立进程，每进程五次重复；保持相同 Debug 配置、线路和参数，按顺序执行，不并行构建或运行其他基准。性能、正确性与人工 GUI 检查应分别报告；完整验证仍可能超过一秒。
 
 `--debug-headless-resource-list-replace` 复现预览加载后再加载并合并编辑元数据的生命周期，随后为 `Structure.Load` 打开正式的 Win32 文件选择框。请手动选择不同且有效的 Structure List。它验证稳定 edit ID 已合并、内存 Apply 与完整重解析、布景模型列表缓存刷新、路径更新，以及重新从磁盘加载后的全部源哈希不变。该命令绝不调用 Save 或 Commit；取消、选择相同文件或无效列表都会报告 `FAIL`。
 

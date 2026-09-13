@@ -953,9 +953,15 @@ void App::rebind_other_editable_list_drafts(
 
 void App::apply_editable_list_drafts(EditableListEditState& edit,
                                      const EditableListSpec& spec) {
+    EditTimingScope operation(*this, "apply");
+    GuiTiming::Stage timing("list.prepare_apply");
     if (!edit_actions_available()) return;
     commit_editable_list_active_edit(edit, spec);
-    if (!has_editable_list_drafts(edit, spec)) return;
+    if (!has_editable_list_drafts(edit, spec)) {
+        edit_timing_outcome_ = "no_changes";
+        set_program_status("status.edit.no_changes");
+        return;
+    }
 
     std::map<std::string, MapElementPendingChange> candidate;
     std::string error;
@@ -966,14 +972,17 @@ void App::apply_editable_list_drafts(EditableListEditState& edit,
         set_program_status("status.edit.pending");
         return;
     }
+    timing.next("list.apply");
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
+        timing.next("list.finish");
         EditableListEditState* applied = &edit;
         edit = EditableListEditState{};
-        invalidate_table_cache();
         rebind_other_editable_list_drafts(applied);
         reset_editable_list_find_results(spec);
+        set_program_status("status.edit.applied_to_preview");
+    } else {
+        set_program_status("status.edit.pending");
     }
-    set_program_status("status.edit.pending");
 }
 
 std::string delete_expected_source_hash(

@@ -909,6 +909,7 @@ const KvMapSnapshot& build_map_snapshot(MapContext& ctx) {
     }
     const auto started_at = SteadyClock::now();
     auto storage = std::make_unique<MapSnapshotStorage>();
+    kme::timing::MapTiming::Stage edit_timing("typed.snapshot_build");
     MapSnapshotBuilder(ctx, *storage).build();
     const double elapsed = elapsed_seconds_since(started_at);
     storage->view.build_seconds = elapsed;

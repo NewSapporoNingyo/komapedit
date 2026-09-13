@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstddef>
 void App::invalidate_table_cache() {
+    GuiTiming::Stage edit_timing("table.invalidate");
     table_cache_ = TableUiCache{};
     reset_structure_model_find_results();
     reset_signal_aspect_find_results();

@@ -1345,6 +1345,8 @@ void App::rebuild_new_element_wizard_form() {
 }
 
 bool App::apply_new_element_insert() {
+    EditTimingScope operation(*this, "apply");
+    GuiTiming::Stage timing("insert.prepare_apply");
     if (!edit_actions_available()) return false;
     const std::vector<NewElementTemplate>& templates = new_element_templates();
     NewElementWizardState& wizard = new_element_wizard_;
@@ -1681,6 +1683,7 @@ bool App::apply_new_element_insert() {
         created_element_request
         ? created_element_request
         : wizard.return_inspector_request;
+    timing.next("insert.apply");
     if (!apply_edit_ledger_to_preview(candidate, reload_request, false)) {
         if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
             !distance_resolution_workflow_.retry_requested) {

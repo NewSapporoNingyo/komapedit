@@ -904,6 +904,33 @@ HeadlessEditRoundtripOptions parse_headless_edit_roundtrip_options(
         [](HeadlessEditRoundtripOptions&) {});
 }
 
+HeadlessEditBenchmarkOptions parse_headless_edit_benchmark_options(const std::vector<std::string>& args) {
+    HeadlessEditBenchmarkOptions options;
+    options.requested = std::find(args.begin(), args.end(), "--debug-headless-edit-bench") != args.end();
+    if (!options.requested) return options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-edit-bench" || arg == "--headless-output" || arg == "--scene") {
+            const std::string* value = take_option_value(args, i, arg, "a value", options.error);
+            if (!value) return options;
+            if (arg == "--debug-headless-edit-bench") options.path = *value;
+            else if (arg == "--headless-output") options.output_path = *value;
+            else if (*value == "on" || *value == "off") options.scene = *value == "on";
+            else options.error = "--scene must be off or on";
+        } else if (arg == "--repeat") {
+            if (!parse_integer_option(args, i, arg, 1, 100, "--repeat must be 1..100", options.repeat, options.error)) return options;
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a number", "--unit-distance must be positive and finite", options.unit_distance,
+                    options.error, [](double value) { return value > 0.0 && std::isfinite(value); })) return options;
+        } else {
+            options.error = "unsupported edit benchmark option: " + arg;
+        }
+        if (!options.error.empty()) return options;
+    }
+    if (options.path.empty()) options.error = "--debug-headless-edit-bench requires a map path";
+    return options;
+}
+
 HeadlessOwnTrackEditOptions parse_headless_own_track_edit_options(
     const std::vector<std::string>& args) {
     return parse_headless_optional_map_edit_options<HeadlessOwnTrackEditOptions>(

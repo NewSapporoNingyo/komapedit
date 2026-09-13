@@ -9,6 +9,7 @@
  */
 
 #pragma once
+#include "operation_timing.h"
 
 #include "maploader.h"
 

@@ -149,6 +149,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### User Interface and Utilities
 
+- [x] Add inclusive stage timing and operation totals to Apply/Save/Delete console diagnostics and the existing trilingual status messages, including required deferred Inspector/3D refreshes. Coalesce transaction refreshes, let full hydration/scene rebuilds supersede partial work, construct distance indices on demand, and move encoded Save bytes without weakening source validation or transactional writeback. Add a real-route Debug edit benchmark with 3D off/on, independent temporary Save copies, source-integrity checks, and refresh/rollback assertions. Large-route parsing and safety validation can still exceed one second; Save has no demonstrated overall speedup.
+
 - [x] Add the initial `File -> New...` and trilingual New File Wizard for header-only `BveTs Map 2.02` maps or Structure, Signal, Sound, Sound3D, and Station list files without overwriting existing files. A selected loaded map receives a preview-only typed `include`/`*.Load` reference that normal Save commits; Revert keeps the created file. Presets remain empty, and this initial scope did not create Scenario files or list rows; Scenario creation was added in the later item below.
 - [x] Add existing resource-list import/reuse to the five New File Wizard list templates and empty-state `New or Import File` entry points to their tables. Import fills editable path/name/suffix fields, existing regular files are referenced without modification, duplicate list references are disabled, and replacement remains the top-path `Change File...` action.
 - [x] Add a `Scenarios` category and a `BveTs Scenario 2.00` template to the New File Wizard. The scenario form drops `Import File` and `Reference in` and instead shows the same eight official fields as the Scenario File tab; Confirm writes the non-empty fields in official key order as a UTF-8/CRLF file with exclusive creation and reparse validation, `Confirm and Load` opens the created file through the normal document flow, and values containing weights, multi-candidates, or comment characters are rejected while weighted multi-candidate editing stays in the Scenario File tab.
@@ -324,6 +326,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 为 `Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 加入基于源码的编辑和延迟删除，并在三语“光照效果”界面加入固定里程 `0` 的“效果”向导模板。根地图及全部 Include 中每类仍只允许一条基础语法正确的语句；RGB 范围、Direction 里程、完整重解析/语义证明、原始表达式保持及内存 Apply/Save/Revert 行为均继续校验。不实现标记或 3D 光照模拟
 
 ### 用户界面与辅助功能
+
+- [x] 优化编辑时的应用／保存速度：为 Apply／Save／Delete 增加控制台分段计时、执行次数和总体用时，并在既有中／英／日状态文本后显示耗时，覆盖必要的延迟 Inspector／3D 刷新。合并事务内刷新，以完整模型／场景刷新覆盖局部工作，按需构造距离索引，并移动保存编码字节以避免复制，保留全部源码验证与事务写回保护。新增支持 3D 关闭／开启的真实线路 Debug 编辑基准，Save 使用独立临时副本，核对源文件完整性及刷新／回滚断言。大型线路的解析与安全验证仍可能超过一秒；尚未测得 Save 总体提速。
 
 - [x] 新增初版 `文件 -> 新建...` 及三语“新建文件向导”，可在不覆盖已有文件的前提下新建仅含文件头的 `BveTs Map 2.02` 地图或 Structure、Signal、Sound、Sound3D、Station 列表文件。选择已加载地图时，会暂存类型化 `include`/`*.Load` 引用，正常“保存”才提交；“撤销”会保留已创建文件。预设仍为空；该初始范围不新建场景文件或列表行，场景文件新建功能见下方后续事项。
 - [x] 为五种资源列表“新建文件向导”模板加入已有文件导入/复用，并在对应表格空态加入“新建或导入文件”入口。导入会填入仍可编辑的路径/文件名/后缀，已有普通文件只会被引用而不修改，重复资源列表引用会禁用，替换仍通过顶部路径的“更换文件...”。
