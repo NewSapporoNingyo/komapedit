@@ -404,7 +404,7 @@ Set the camera speed in `3D Canvas Settings`. Toolbar station and mileage jumps 
 
 The canvas shows the camera offset, height, and mileage; current curve radius and cant; gradient; speed limit; section signal speed; and next-station information. Inside a `Curve.Interpolate` interval, the curve line shows both endpoint radii and cants, each nonzero endpoint's curve direction, and a triangular arrow between them; when both evaluated endpoint radii are zero, it shows the localized `Straight` label instead. The bottom also shows scene chunks, instances, loaded models, and frame rate.
 
-The displayed FPS is a smoothed estimate from the intervals between scene-canvas render calls, not swap-chain Present completion or the monitor refresh rate. A brief above-refresh-rate reading when movement resumes remains an open issue tracked in [`TODO.md`](TODO.md).
+The displayed FPS is the average scene-canvas render-call rate over the most recent completed 0.2-second active window, not swap-chain Present completion or the monitor refresh rate. A gap longer than 0.1 seconds discards the unfinished window while preserving the last published value, so resuming movement does not publish a rate from only a few short submission intervals.
 
 `3D Canvas Settings` can immediately toggle fog, map-driven draw distance, and performance warnings, and can change the normal draw distance. Related marker visibility stays synchronized with `Auxiliary Info`.
 

@@ -273,8 +273,88 @@ bool Canvas3D::Impl::debug_check_repeater_cache() {
     return fixture.scene_cached_repeater_world_count == 0;
 }
 
+bool Canvas3D::Impl::debug_check_scene_fps_counter(std::string& error) {
+    using Clock = SceneFpsCounter::Clock;
+    SceneFpsCounter counter;
+    Clock::time_point now{};
+    const auto advance = [](SceneFpsCounter& target, Clock::time_point& time, double seconds) {
+        time += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(seconds));
+        target.update(time);
+    };
+    const auto check_steady_rate = [&](double fps) {
+        counter.reset();
+        now = {};
+        counter.update(now);
+        const size_t interval_count = static_cast<size_t>(std::ceil(fps * 0.3));
+        for (size_t i = 0; i < interval_count; ++i) advance(counter, now, 1.0 / fps);
+        return counter.value > 0.0f &&
+            std::abs(static_cast<double>(counter.value) - fps) <= fps * 0.01;
+    };
+    const auto fail = [&](const char* label) {
+        error = label;
+        return false;
+    };
+
+    counter.reset();
+    if (counter.last_frame_valid || counter.active_seconds != 0.0 ||
+        counter.interval_count != 0 || counter.value != 0.0f) {
+        return fail("fps-counter-reset");
+    }
+    counter.update(now);
+    if (!counter.last_frame_valid || counter.interval_count != 0 || counter.value != 0.0f) {
+        return fail("fps-counter-first-frame");
+    }
+    advance(counter, now, 0.05);
+    advance(counter, now, 0.05);
+    if (counter.interval_count != 2 || counter.value != 0.0f) {
+        return fail("fps-counter-partial-window");
+    }
+    const double active_before_nonpositive = counter.active_seconds;
+    counter.update(now);
+    if (counter.interval_count != 2 || counter.active_seconds != active_before_nonpositive) {
+        return fail("fps-counter-zero-interval");
+    }
+    counter.update(now - std::chrono::milliseconds(1));
+    if (counter.interval_count != 2 || counter.active_seconds != active_before_nonpositive) {
+        return fail("fps-counter-negative-interval");
+    }
+
+    for (double fps : {30.0, 60.0, 144.0}) {
+        if (!check_steady_rate(fps)) return fail("fps-counter-steady-rate");
+    }
+
+    counter.reset();
+    now = {};
+    counter.update(now);
+    for (size_t i = 0; i < 40; ++i) advance(counter, now, 1.0 / 60.0);
+    const float stable_value = counter.value;
+    if (std::abs(static_cast<double>(stable_value) - 60.0) > 0.6) {
+        return fail("fps-counter-stable-baseline");
+    }
+    advance(counter, now, 1.0);
+    if (counter.active_seconds != 0.0 || counter.interval_count != 0 || counter.value != stable_value) {
+        return fail("fps-counter-idle-gap");
+    }
+    for (size_t i = 0; i < 3; ++i) advance(counter, now, 0.001);
+    if (counter.value != stable_value || counter.interval_count != 3) {
+        return fail("fps-counter-queue-burst-hold");
+    }
+    for (size_t i = 0; i < 12; ++i) advance(counter, now, 1.0 / 60.0);
+    if (counter.value < 59.0f || counter.value > 80.0f || counter.value >= 100.0f) {
+        return fail("fps-counter-queue-burst-publish");
+    }
+    counter.reset();
+    if (counter.last_frame_valid || counter.active_seconds != 0.0 ||
+        counter.interval_count != 0 || counter.value != 0.0f) {
+        return fail("fps-counter-final-reset");
+    }
+    return true;
+}
+
 Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
     Canvas3DSceneRenderContractResult result;
+    std::string fps_error;
+    result.fps_counter = debug_check_scene_fps_counter(fps_error);
     const DVec3 saved_position = scene_camera_pos;
     const double saved_distance = scene_camera_distance;
     const float saved_yaw = scene_camera_yaw, saved_pitch = scene_camera_pitch;
@@ -391,6 +471,7 @@ Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
     scene_interaction_mode = saved_interaction;
     std::string restore_error;
     if (!set_scene_track_visibility(saved_visibility, restore_error)) result.error = restore_error;
+    if (!result.fps_counter && result.error.empty()) result.error = fps_error;
     return result;
 }
 

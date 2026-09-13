@@ -27,36 +27,52 @@ using namespace canvas3d_detail;
 
 namespace canvas3d_detail {
 
-constexpr float k_scene_fps_smoothing = 0.15f;
-
-} // namespace canvas3d_detail
-
-namespace canvas3d_detail {
-
 // The event-driven canvas stops repainting while idle, so preserve the last active FPS across long gaps.
-constexpr double k_scene_fps_idle_reset_seconds = 0.25;
+constexpr double k_scene_fps_idle_reset_seconds = 0.1;
+constexpr double k_scene_fps_publish_window_seconds = 0.2;
 
 } // namespace canvas3d_detail
+
+void Canvas3D::Impl::SceneFpsCounter::reset() {
+    last_frame_at = {};
+    last_frame_valid = false;
+    active_seconds = 0.0;
+    interval_count = 0;
+    value = 0.0f;
+}
+
+void Canvas3D::Impl::SceneFpsCounter::update(Clock::time_point now) {
+    if (!last_frame_valid) {
+        last_frame_at = now;
+        last_frame_valid = true;
+        return;
+    }
+
+    const double elapsed_seconds = std::chrono::duration<double>(now - last_frame_at).count();
+    last_frame_at = now;
+    if (elapsed_seconds <= 0.0) return;
+
+    if (elapsed_seconds > k_scene_fps_idle_reset_seconds) {
+        active_seconds = 0.0;
+        interval_count = 0;
+        return;
+    }
+
+    active_seconds += elapsed_seconds;
+    ++interval_count;
+    if (active_seconds >= k_scene_fps_publish_window_seconds) {
+        value = static_cast<float>(static_cast<double>(interval_count) / active_seconds);
+        active_seconds = 0.0;
+        interval_count = 0;
+    }
+}
 
 void Canvas3D::Impl::reset_scene_fps_counter() {
-    scene_fps_last_frame_valid = false;
-    scene_fps_value = 0.0f;
+    scene_fps_counter.reset();
 }
 
 void Canvas3D::Impl::update_scene_fps_counter() {
-    using Clock = std::chrono::steady_clock;
-    const Clock::time_point now = Clock::now();
-    if (scene_fps_last_frame_valid) {
-        const double elapsed_seconds = std::chrono::duration<double>(now - scene_fps_last_frame_at).count();
-        if (elapsed_seconds > 0.0 && elapsed_seconds <= k_scene_fps_idle_reset_seconds) {
-            const float sample = static_cast<float>(1.0 / elapsed_seconds);
-            scene_fps_value = scene_fps_value > 0.0f
-                ? scene_fps_value + (sample - scene_fps_value) * k_scene_fps_smoothing
-                : sample;
-        }
-    }
-    scene_fps_last_frame_at = now;
-    scene_fps_last_frame_valid = true;
+    scene_fps_counter.update(SceneFpsCounter::Clock::now());
 }
 
 SceneOverlayLabelLayout Canvas3D::Impl::scene_overlay_label_layout(
@@ -222,7 +238,7 @@ void Canvas3D::Impl::draw_scene_metrics_overlay(ImDrawList* draw, ImVec2 origin,
     std::snprintf(suffix, sizeof(suffix), "  models=%zu/%zu  %.1f fps",
                   stats.model_ready_count,
                   stats.model_path_count,
-                  static_cast<double>(scene_fps_value));
+                  static_cast<double>(scene_fps_counter.value));
     const ImVec2 prefix_size = ImGui::CalcTextSize(prefix);
     const ImVec2 instance_size = ImGui::CalcTextSize(instance);
     const ImVec2 suffix_size = ImGui::CalcTextSize(suffix);

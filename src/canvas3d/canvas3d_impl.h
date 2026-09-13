@@ -12,6 +12,7 @@
 #include "scene_track_sampling.h"
 #include "scene_frame_profile.h"
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -284,6 +285,7 @@ struct Canvas3D::Impl {
 #ifndef NDEBUG
     void debug_record_scene_world(const std::string& path, int object, double distance, const double* world);
     bool debug_check_repeater_cache();
+    bool debug_check_scene_fps_counter(std::string& error);
     Canvas3DSceneRenderContractResult debug_check_scene_render();
 
     Canvas3DSceneLoaderContractResult debug_run_scene_loader_contract(
@@ -783,6 +785,19 @@ struct Canvas3D::Impl {
                                      bool pick_enabled,
                                      bool mileage_pick_enabled);
 
+    struct SceneFpsCounter {
+        using Clock = std::chrono::steady_clock;
+
+        void reset();
+        void update(Clock::time_point now);
+
+        Clock::time_point last_frame_at{};
+        bool last_frame_valid = false;
+        double active_seconds = 0.0;
+        size_t interval_count = 0;
+        float value = 0.0f;
+    };
+
     void reset_scene_fps_counter();
 
     void update_scene_fps_counter();
@@ -1020,9 +1035,7 @@ struct Canvas3D::Impl {
     size_t scene_instance_critical_warning_threshold = 5000;
     std::string scene_last_error;
     Canvas3DSceneStats scene_stats_value;
-    std::chrono::steady_clock::time_point scene_fps_last_frame_at{};
-    bool scene_fps_last_frame_valid = false;
-    float scene_fps_value = 0.0f;
+    SceneFpsCounter scene_fps_counter;
 #ifndef NDEBUG
     std::atomic<int> debug_copy_cpu_model_throw_countdown{0};
     std::atomic<int> debug_texture_allocation_throw_countdown{0};

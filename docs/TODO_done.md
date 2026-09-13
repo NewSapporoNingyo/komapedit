@@ -115,6 +115,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 3D Canvas
 
+- [x] Stabilize the visible 3D scene FPS after idle by publishing scene-render-call cadence over completed 0.2-second active windows, discarding partial windows after gaps longer than 0.1 seconds while preserving the last published value; retain refresh-rate-independent behavior and keep Present/headless metrics separate.
 - [x] Restore the sustained scene CPU-frame budget to 16.67 ms through indexed placement-track lookup and bounded, double-precision Repeater transform reuse. On 2026-09-13, the same real-route Debug workload (unit distance 25, 300 frames, back/forward 100/1200 m, RTX 3060) improved from p95 22.782/28.616/26.453 ms to 1.721/1.619/1.641 ms with profiling disabled; all three runs passed with 531 loaded models and 2,613 drawn instances. Moving-camera runs passed at 2.778/3.211/2.714 ms. Draw distance, model count, precision, and Begin-relative placement semantics were preserved; no disk cache or renderer replacement was introduced.
 - [x] Add optional CPU/GPU frame diagnostics, deterministic camera motion, workload fingerprints, and cached/reference rendering checks. All seven CTests, scene-loader/cache contracts, camera transfer, and Fog checks passed. Twelve rendering cases per real-route run matched instance fingerprints, pixels and picking, including three actual pick hits and enabled track overlays; peak observed transform-cache storage was 707,824 bytes. Automatic UI clicks and manual GUI validation were not performed. The historical Fog probe failure and Repeater interval-grid semantic discrepancy remain separate tasks.
 
@@ -294,6 +295,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 3D画布
 
+- [x] 稳定 3D 场景在空闲后恢复移动时的可见 FPS：以完整的 `0.2` 秒活动窗口发布场景渲染调用速率，间隔超过 `0.1` 秒时丢弃未完成窗口但保留上次发布值；保持与刷新率无关，并继续区分 Present 与 headless 指标。
 - [x] 通过放置轨道索引和有界双精度 Repeater 变换复用，将持续场景 CPU 帧预算恢复为 16.67 ms。2026-09-13 同一真实线路 Debug 负载（unit distance 25、300 帧、后方/前方 100/1200 m、RTX 3060）关闭 profiling 后，三次 p95 从 22.782/28.616/26.453 ms 降至 1.721/1.619/1.641 ms，全部通过；保持加载 531 个模型、绘制 2,613 个实例。移动相机三次 p95 为 2.778/3.211/2.714 ms，均通过。描画距离、模型数量、精度和相对 Begin 起点的放置语义不变，未引入磁盘缓存或替换渲染架构。
 - [x] 增加可选 CPU/GPU 帧诊断、确定性相机移动、负载指纹及缓存/原路径渲染对比。七项 CTest、scene-loader/缓存合同、相机传递及 Fog 检查全部通过。每次真实线路测试的十二组渲染检查均保持实例指纹、像素和拾取一致，包含三组实际拾取命中和启用轨道辅助线；观测到的变换缓存存储峰值为 707,824 字节。未执行自动 UI 点击或人工 GUI 验证；历史 Fog 像素探针失败及 Repeater interval 网格语义差异仍独立跟踪。
 

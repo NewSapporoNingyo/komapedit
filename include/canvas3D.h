@@ -286,6 +286,7 @@ struct Canvas3DSceneRenderContractResult {
     bool pixels = true;
     bool picking = true;
     bool cache_budget = true;
+    bool fps_counter = true;
     size_t cases = 0;
     size_t peak_cached_worlds = 0;
     size_t peak_cache_bytes = 0;

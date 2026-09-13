@@ -9,7 +9,6 @@ This file is the active project progress and contains unfinished items only. Com
 ### 3D画布
 
 - [ ] 单独核查 Repeater 放置网格和模型循环的语义差异：官方 Map 文档按全局里程的 interval 整数倍描述放置与序列，当前 3D 实现按每段 Begin 起点累计 interval。
-- [ ] 检查3D画布帧率统计：在60Hz的显示器上，移动相机时帧率会短暂显示为上百fps，连续移动时才恢复正常60fps上限。
 - [ ] 支持通过3D操纵器编辑布景旋转
 
 ### 用户界面与辅助功能

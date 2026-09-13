@@ -441,7 +441,7 @@ ctest --test-dir build --output-on-failure
 
 `scene_frame_profile.h` 提供仅 Debug 启用的阶段计时。两份内部契约源文件通过 `NDEBUG` 条件保护编译到 EXE，继续由现有 scene benchmark/loader headless 模式显式执行，不注册为 CTest，也不使用 `.inl` 文本包含。保留现有所有者负责的模型 DLL 加载/释放配对、worker 取消/join 与唤醒/上传顺序、reversed-Z 与相机相对坐标、有界 Repeater 缓存，以及标记身份/可见性失效规则。
 
-场景画面上的 FPS 由 `canvas3d_scene_ui.cpp` 按稳态时钟的相邻渲染调用间隔计算，并以 `0.15` 系数做指数平滑；间隔超过 `0.25` 秒时不采样，从而在事件驱动画布空闲期间保留上一次活动值。该读数不是 Present 完成时间、显示器刷新率或 `--debug-headless-scene3d-bench` 的 `p95_fps`。主循环 Present 与渲染唤醒仍由 `win32_dx11_bootstrap.cpp` 负责。
+场景画面上的 FPS 由 `canvas3d_scene_ui.cpp` 在完整的 `0.2` 秒稳态时钟活动窗口内按 `interval_count / active_seconds` 计算。首次渲染只建立时间锚点；不超过 `0.1` 秒的正间隔计入当前窗口，超过该阈值的间隔会丢弃未完成窗口并保留上次发布值。reset 会同时清除时间锚点、窗口累计和已发布值。该读数表示场景渲染调用速率，不是 Present 完成时间、显示器刷新率、GPU 时间或 `--debug-headless-scene3d-bench` 的 `p95_fps`。主循环 Present 与渲染唤醒仍由 `win32_dx11_bootstrap.cpp` 负责。
 
 - **轨道与相机采样**：`scene_track_sampling.cpp`/`scene_track_sampling.h` 提供无 D3D 依赖的普通轨道采样、相机专用起点前外推及相机里程边界；普通几何/放置/标记路径不使用起点前外推。`canvas3d_scene_camera.cpp` 与几何模块复用该采样边界。
 - **线路信息格式化**：`scene_route_overlay.cpp`/`scene_route_overlay.h` 是无 D3D/ImGui 依赖的纯文本格式化边界；它复用共享线路值采样，在 `Curve.Interpolate` 区间显示两个端点的半径、超高、方向箭头和三角分隔符；两端都是显示意义上的零半径时复用本地化“直线”标签。

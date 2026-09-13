@@ -12491,12 +12491,14 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         const auto render_contract = app.scene_preview_canvas_->debug_check_scene_render();
         ImGui::EndFrame();
         const bool render_pass = render_contract.error.empty() && render_contract.cases > 0 &&
-            render_contract.instances && render_contract.pixels && render_contract.picking && render_contract.cache_budget;
+            render_contract.instances && render_contract.pixels && render_contract.picking &&
+            render_contract.cache_budget && render_contract.fps_counter;
         pass = pass && render_pass;
         *out << "scene3d_signature value=" << render_contract.signature << "\n"
              << "scene3d_render_contract cases=" << render_contract.cases
              << " instances=" << render_contract.instances << " pixels=" << render_contract.pixels
              << " picking=" << render_contract.picking << " cache_budget=" << render_contract.cache_budget
+             << " fps_counter=" << render_contract.fps_counter
              << " peak_cached_worlds=" << render_contract.peak_cached_worlds
              << " peak_cache_bytes=" << render_contract.peak_cache_bytes
              << " picked_cases=" << render_contract.picked_cases
