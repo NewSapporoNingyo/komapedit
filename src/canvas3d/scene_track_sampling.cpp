@@ -14,6 +14,40 @@
 
 namespace scene_track_sampling {
 
+void PlacementTrackLookup::rebuild(const Canvas3DScene& scene) {
+    own_index_ = scene.tracks.empty() ? static_cast<size_t>(-1) : 0;
+    other_indices_.clear();
+    other_indices_.reserve(scene.tracks.size());
+    for (size_t index = 0; index < scene.tracks.size(); ++index) {
+        const std::string& key = scene.tracks[index].key;
+        if (key == "own" || key.empty() || key == "0") {
+            own_index_ = index;
+            break;
+        }
+    }
+    for (size_t index = 0; index < scene.tracks.size(); ++index) {
+        if (index != own_index_) {
+            // Preserve the original first-match rule for normalized duplicates.
+            other_indices_.try_emplace(normalize_track_lookup_key(scene.tracks[index].key), index);
+        }
+    }
+}
+
+const Canvas3DTrackPath* PlacementTrackLookup::own(const Canvas3DScene& scene) const {
+    return own_index_ < scene.tracks.size() ? &scene.tracks[own_index_] : nullptr;
+}
+
+const Canvas3DTrackPath* PlacementTrackLookup::find(const Canvas3DScene& scene, const std::string& key) const {
+    const std::string normalized = normalize_track_lookup_key(key);
+    if (!is_own_track_placement_key(normalized)) {
+        const auto found = other_indices_.find(normalized);
+        if (found != other_indices_.end() && found->second < scene.tracks.size()) {
+            return &scene.tracks[found->second];
+        }
+    }
+    return own(scene);
+}
+
 bool has_ordered_finite_distances(const Canvas3DTrackPath& path) {
     double previous = -std::numeric_limits<double>::infinity();
     for (const Canvas3DTrackPoint& point : path.points) {

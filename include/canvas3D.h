@@ -269,7 +269,34 @@ struct Canvas3DSceneStats {
 };
 
 #ifndef NDEBUG
+enum class Canvas3DSceneFrameStage : size_t {
+    Loading, Instances, Repeaters, Upload, Models, Tracks, Markers, Picking, Highlight, Overlay, Count
+};
+
+struct Canvas3DSceneFrameProfile {
+    std::array<double, static_cast<size_t>(Canvas3DSceneFrameStage::Count)> cpu_ms{};
+    double gpu_ms = -1.0;
+    size_t draw_calls = 0;
+    size_t uploaded_bytes = 0;
+    size_t model_groups = 0;
+};
+
+struct Canvas3DSceneRenderContractResult {
+    bool instances = true;
+    bool pixels = true;
+    bool picking = true;
+    bool cache_budget = true;
+    size_t cases = 0;
+    size_t peak_cached_worlds = 0;
+    size_t peak_cache_bytes = 0;
+    size_t picked_cases = 0;
+    size_t track_draw_cases = 0;
+    std::uint64_t signature = 0;
+    std::string error;
+};
+
 struct Canvas3DSceneLoaderContractResult {
+    bool repeater_cache = false;
     bool normal_worker = false;
     bool copy_exception = false;
     bool put_between_exception = false;
@@ -511,6 +538,9 @@ public:
     void process_scene_loading();
 #ifndef NDEBUG
     void set_debug_scene_loading_tuning(size_t worker_limit, bool texture_cache_enabled);
+    bool set_debug_scene_frame_profiling(bool enabled, std::string& error);
+    Canvas3DSceneFrameProfile debug_scene_frame_profile() const;
+    Canvas3DSceneRenderContractResult debug_check_scene_render();
     Canvas3DSceneLoaderContractResult debug_run_scene_loader_contract(
         const std::string& valid_model_path,
         const std::string& valid_texture_path);

@@ -1813,6 +1813,8 @@ public:
                                                     double window_back_m, double window_forward_m,
                                                     int scene_model_workers,
                                                     bool disable_scene_texture_cache,
+                                                    bool profile_stages,
+                                                    const std::string& interaction,
                                                     const std::string& output_path);
     static int run_debug_headless_scene_camera_transfer(const std::string& path, double unit_distance,
                                                         bool has_camera_distance, double camera_distance,

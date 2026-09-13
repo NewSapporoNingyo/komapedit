@@ -305,6 +305,35 @@ void chunk_segment_range_contract() {
               << " optimized_p95_ms=" << optimized_ms.back() << '\n';
 }
 
+void placement_track_lookup_contract() {
+    scene_track_sampling::PlacementTrackLookup lookup;
+    Canvas3DScene scene;
+    const auto reset = [&](std::initializer_list<const char*> keys) {
+        scene.tracks.clear();
+        for (const char* key : keys) {
+            Canvas3DTrackPath path;
+            path.key = key;
+            scene.tracks.push_back(std::move(path));
+        }
+        lookup.rebuild(scene);
+    };
+    reset({"first", " 1 ", "1", "own", "OWN", "0"});
+    check(lookup.own(scene) == &scene.tracks[3], "own lookup preserves exact first alias selection");
+    for (const char* key : {"", "0", "''", "'0'", " \t0\r\n", "missing"}) {
+        check(lookup.find(scene, key) == &scene.tracks[3], "placement alias and missing key preserve own fallback");
+    }
+    check(lookup.find(scene, "1") == &scene.tracks[1], "track 1 remains an other track; duplicates keep first match");
+    check(lookup.find(scene, " OwN ") == &scene.tracks[4], "own text does not become a placement alias");
+    reset({"same", "SAME", " Right "});
+    check(lookup.own(scene) == &scene.tracks[0], "missing own key uses first path");
+    check(lookup.find(scene, "same") == &scene.tracks[1], "other lookup excludes the selected own path");
+    check(lookup.find(scene, "right") == &scene.tracks[2], "case and whitespace normalization are preserved");
+    reset({"0"});
+    check(lookup.find(scene, "right") == &scene.tracks[0], "rebuild removes stale other-track indices");
+    reset({});
+    check(!lookup.own(scene) && !lookup.find(scene, "0"), "empty replacement removes all cached indices");
+}
+
 } // namespace
 
 int main() {
@@ -313,6 +342,7 @@ int main() {
     camera_sampling_before_start_contract();
     camera_sampling_safety_contract();
     chunk_segment_range_contract();
+    placement_track_lookup_contract();
     std::cout << "canvas3d camera contract " << (failures ? "FAIL" : "PASS") << '\n';
     return failures == 0 ? 0 : 1;
 }

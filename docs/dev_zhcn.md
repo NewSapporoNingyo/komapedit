@@ -575,9 +575,17 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - 长时间解析/模型任务使用异步流程，并通过状态反馈保持界面响应。
 - 每个缓存都要有完整 key、准确的失效所有者与修订，并覆盖失效和命中路径。
 
+Canvas3D 在替换场景时构建放置轨道索引，保持原有自轨道别名、规范化后第一个他轨道匹配及缺失键回退规则。Repeater 变换保持双精度，仅缓存在当前里程窗口的 chunk 中。共用预算为 65,536 个变换；无法容纳的 chunk/段继续走原计算路径，实例枚举和绘制数量限制不变。Repeater 写入使原、新 chunk 范围的缓存失效，场景/chunk 替换重置缓存，离开窗口时释放缓存。轨道可见性不改变放置几何。模型分组、绘制顺序、材质、GPU 提交及加载状态统计保持既有路径。
+
 ## 验证
 
 按受影响组件选择检查，并准确报告实际运行内容；不得把未运行的手工检查写成已通过。
+
+scene benchmark 默认连续测量 300 个固定相机帧，unit distance 为 25 m，后方/前方窗口为 100 m/1200 m，CPU 帧耗时 p95 预算为 16.67 ms。`--interaction moving` 从初始相机里程开始，每帧前进 2 m，并沿用正常的末端钳制。等待加载完成及其后的五个预热帧仍在计时循环之外。持续帧验收以相同参数、关闭 profiling 的三个独立进程进行，不与构建或其他基准并行。输出适配器、负载数量、最慢帧及最终可见实例指纹，以标识实际测量负载。
+
+`--profile-stages` 启用可选 CPU 分段及异步 GPU 时间戳诊断。查询在计时前分配，跨帧读取，不强制提交或等待，跳过无效/未就绪样本。GPU 帧区间可能包含 CPU 提交命令造成的间隙，不代表 GPU 忙碌时间。CPU 阶段可能嵌套（轨道/高亮绘制包含 mesh 提交），不能直接相加当作互斥耗时。profiling 结果用于解释瓶颈，不替代原有 CPU 帧门槛。
+
+计时结束后，scene benchmark 比较原始与缓存放置路径的双精度实例指纹、像素、拾取，以及相机平移/旋转、chunk 跳转和返回、窗口/Fog 变化及启用轨道辅助线后的结果。这些检查不生成 UI 点击。scene-loader contract 另覆盖 Repeater 非零起点、模型循环、tilt/span、间距边界、无效间距、编辑/恢复失效、轨道替换、缓存预算回退及释放。本次性能修复保留现有相对 Begin 起点的 Repeater 放置序列，与官方全局 interval 网格描述的差异在 `TODO.md` 中独立跟踪。
 
 常用 Debug 无界面命令：
 
@@ -587,7 +595,7 @@ build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N
 build\komapedit.exe --debug-headless-scenario-lifecycle <scenario-path> [--scenario-index N] [--unit-distance M] --headless-output build\scenario-lifecycle.txt
 build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
-build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 --headless-output build\headless-scene3d-bench.txt
+build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 [--interaction stationary|moving] [--profile-stages] --headless-output build\headless-scene3d-bench.txt
 build\komapedit.exe --debug-headless-scene-loader-contract --headless-output build\scene-loader-contract.txt
 build\komapedit.exe --debug-headless-diagnostics-popup-bench --headless-output build\diagnostics-popup-bench.txt
 build\komapedit.exe --debug-headless-scene-camera-transfer <map-path> --headless-output build\scene-camera-transfer.txt

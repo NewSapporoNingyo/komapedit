@@ -9,6 +9,7 @@
 #include "canvas3D.h"
 
 #include <optional>
+#include <unordered_map>
 
 // Pure, CPU-only track sampling helpers shared by the Canvas3D scene.
 //
@@ -18,6 +19,18 @@
 // testable from the registered canvas3d_camera_contract CTest.
 
 namespace scene_track_sampling {
+
+// Indices, not pointers: the owner rebuilds after replacing scene.tracks.
+// Visibility and point-value changes do not change this key-to-path mapping.
+class PlacementTrackLookup {
+public:
+    void rebuild(const Canvas3DScene& scene);
+    const Canvas3DTrackPath* own(const Canvas3DScene& scene) const;
+    const Canvas3DTrackPath* find(const Canvas3DScene& scene, const std::string& key) const;
+private:
+    size_t own_index_ = static_cast<size_t>(-1);
+    std::unordered_map<std::string, size_t> other_indices_;
+};
 
 struct SegmentRange {
     size_t first = 1;

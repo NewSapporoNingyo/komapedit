@@ -15,6 +15,7 @@
 
 #include "scene_route_overlay.h"
 #include "scene_track_sampling.h"
+#include "scene_frame_profile.h"
 
 #include "kme.h"
 #include "maploader.h"
@@ -92,6 +93,9 @@ constexpr float k_scene_gizmo_center_radius_px = 4.0f;
 constexpr double k_scene_route_display_zero_epsilon = 0.0000005;
 constexpr size_t k_scene_model_max_workers = 8;
 constexpr size_t k_scene_chunk_count_limit = 100000;
+// Optional CPU reuse only. Exceeding this budget keeps the exact uncached
+// placement path, without changing the draw window or instance limits.
+constexpr size_t k_scene_repeater_cache_instance_limit = 65536;
 constexpr double k_default_scene_fog_density = 0.001;
 constexpr double k_default_scene_fog_color = 0.875;
 constexpr float k_scene_marker_board_width = 1.0f;
@@ -744,6 +748,17 @@ struct SceneChunk {
     DVec3 origin;
     std::vector<SceneInstance> instances;
     std::vector<size_t> repeater_indices;
+    struct RepeaterWorld {
+        std::array<double, 16> world{};
+        bool valid = false;
+    };
+    struct RepeaterCache {
+        long long first_index = 0;
+        std::vector<RepeaterWorld> worlds;
+    };
+    bool repeater_cache_prepared = false;
+    size_t cached_world_count = 0;
+    std::vector<RepeaterCache> repeater_cache;
 };
 
 struct ScenePlacementInstanceLocation {
@@ -3056,6 +3071,7 @@ struct Canvas3D::Impl {
         scene_placement_locations.clear();
         scene_repeater_locations.clear();
         scene_data = std::move(scene);
+        scene_placement_tracks.rebuild(scene_data);
         if (++scene_geometry_generation == 0) ++scene_geometry_generation;
         clear_scene_focus_highlight();
         std::sort(scene_data.backgrounds.begin(), scene_data.backgrounds.end(),
@@ -3321,6 +3337,7 @@ struct Canvas3D::Impl {
         stop_scene_loader();
         release_scene_resources();
         scene_data = {};
+        scene_placement_tracks.rebuild(scene_data);
         scene_active = false;
         scene_structure_edit = SceneStructureEditState{};
         scene_placement_locations.clear();
@@ -3521,6 +3538,7 @@ struct Canvas3D::Impl {
     }
 
     Canvas3DSceneStats scene_stats() const {
+        KME_SCENE_PROFILE(Loading);
         Canvas3DSceneStats stats = scene_stats_value;
         stats.active = scene_active;
         stats.camera_distance = scene_camera_distance;
@@ -4102,6 +4120,7 @@ struct Canvas3D::Impl {
         };
         if (old_range) {
             visit_range(*old_range, [&](size_t chunk_index) {
+                if (chunk_index < scene_chunks.size()) invalidate_scene_repeater_cache(scene_chunks[chunk_index]);
                 if (contains(new_range, chunk_index) ||
                     chunk_index >= scene_chunks.size()) {
                     return;
@@ -4116,6 +4135,7 @@ struct Canvas3D::Impl {
         }
         if (new_range) {
             visit_range(*new_range, [&](size_t chunk_index) {
+                if (chunk_index < scene_chunks.size()) invalidate_scene_repeater_cache(scene_chunks[chunk_index]);
                 if (contains(old_range, chunk_index) ||
                     chunk_index >= scene_chunks.size()) {
                     return;
@@ -5109,6 +5129,7 @@ struct Canvas3D::Impl {
         release_scene_track_chunks();
         release_scene_marker_chunks();
         scene_chunks.clear();
+        scene_cached_repeater_world_count = 0;
         scene_mileage_pick_points.clear();
         scene_hovered_mileage.reset();
         scene_context_mileage.reset();
@@ -5615,6 +5636,8 @@ struct Canvas3D::Impl {
     }
 
 #ifndef NDEBUG
+    #include "tests/scene_render_contract.inl"
+
     Canvas3DSceneLoaderContractResult debug_run_scene_loader_contract(
         const std::string& valid_model_path,
         const std::string& valid_texture_path) {
@@ -5648,6 +5671,7 @@ struct Canvas3D::Impl {
         };
 
         try {
+            result.repeater_cache = debug_check_repeater_cache();
             const auto number_text = [](double value) {
                 char text[64]{};
                 std::snprintf(text, sizeof(text), "%.0f", value);
@@ -6311,6 +6335,7 @@ struct Canvas3D::Impl {
     }
 
     void upload_pending_scene_models() {
+        KME_SCENE_PROFILE(Loading);
         scene_wake_pending.store(false);
         std::vector<CpuModelData> pending;
         {
@@ -6815,6 +6840,7 @@ struct Canvas3D::Impl {
     bool ensure_instance_buffer(ID3D11Buffer*& buffer, UINT& capacity,
                                 const std::vector<SceneInstanceData>& instances,
                                 std::string& error) {
+        KME_SCENE_PROFILE(Upload);
         if (instances.empty()) return true;
         if (instances.size() > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(SceneInstanceData))) {
             error = "too many scene instances for a Direct3D 11 buffer";
@@ -6844,6 +6870,9 @@ struct Canvas3D::Impl {
             return false;
         }
         std::memcpy(mapped.pData, instances.data(), instances.size() * sizeof(SceneInstanceData));
+#ifndef NDEBUG
+        scene_frame_profiler.upload(instances.size() * sizeof(SceneInstanceData));
+#endif
         context->Unmap(buffer, 0);
         return true;
     }
@@ -6935,6 +6964,7 @@ struct Canvas3D::Impl {
                          ID3D11RasterizerState* base_rasterizer,
                          bool mask_pass = false,
                          const SceneFogSample* fog = nullptr) {
+        KME_SCENE_PROFILE(Models);
         if (!vb || !ib || !instance_buffer || instance_count == 0) return;
 
         bind_scene_instanced_mesh(vb, ib, instance_buffer);
@@ -6976,6 +7006,7 @@ struct Canvas3D::Impl {
             context->PSSetShaderResources(0, 1, &texture);
             context->DrawIndexedInstanced(part.index_count, instance_count, part.start_index, 0, 0);
 #ifndef NDEBUG
+            scene_frame_profiler.draw();
             if (fog_active) ++debug_scene_fog_draw_part_count;
 #endif
         }
@@ -7074,6 +7105,9 @@ struct Canvas3D::Impl {
             ID3D11ShaderResourceView* texture = material && material->has_texture ? material->texture : nullptr;
             context->PSSetShaderResources(0, 1, &texture);
             context->DrawIndexedInstanced(part.index_count, static_cast<UINT>(instances.size()), part.start_index, 0, 0);
+#ifndef NDEBUG
+            scene_frame_profiler.draw();
+#endif
         }
 
         ID3D11ShaderResourceView* null_srv = nullptr;
@@ -7094,6 +7128,7 @@ struct Canvas3D::Impl {
         int height,
         ImVec2 mouse_local,
         std::string& error) {
+        KME_SCENE_PROFILE(Picking);
         const int pixel_x = static_cast<int>(std::floor(mouse_local.x));
         const int pixel_y = static_cast<int>(std::floor(mouse_local.y));
         if (pixel_x < 0 || pixel_y < 0 || pixel_x >= width || pixel_y >= height) return false;
@@ -7228,6 +7263,9 @@ struct Canvas3D::Impl {
         const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
         context->OMSetBlendState(blend_state, blend_factor, 0xffffffff);
         context->Draw(3, 0);
+#ifndef NDEBUG
+        scene_frame_profiler.draw();
+#endif
 
         ID3D11ShaderResourceView* null_srv = nullptr;
         context->PSSetShaderResources(0, 1, &null_srv);
@@ -7402,6 +7440,9 @@ struct Canvas3D::Impl {
         context->OMSetBlendState(
             blend_state, blend_factor, 0xffffffff);
         context->DrawIndexed(chunk.visible_index_count, 0, 0);
+#ifndef NDEBUG
+        scene_frame_profiler.draw();
+#endif
     }
 
     bool scene_marker_pick_ids_valid() const {
@@ -7435,6 +7476,9 @@ struct Canvas3D::Impl {
             0.0f, 0.0f, 0.0f, 0.0f};
         context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
         context->DrawIndexed(chunk.visible_pick_index_count, 0, 0);
+#ifndef NDEBUG
+        scene_frame_profiler.draw();
+#endif
         ID3D11Buffer* null_buffer = nullptr;
         context->PSSetConstantBuffers(1, 1, &null_buffer);
         return true;
@@ -7456,6 +7500,7 @@ struct Canvas3D::Impl {
                                     double visible_max,
                                     DVec3 render_origin,
                                     const Mat4& view_proj) {
+        KME_SCENE_PROFILE(Markers);
         if (scene_marker_chunks.empty()) return;
         size_t camera_chunk = 0;
         while (camera_chunk + 1 < scene_marker_chunks.size() &&
@@ -7581,6 +7626,9 @@ struct Canvas3D::Impl {
             0.0f, 0.0f, 0.0f, 0.0f};
         context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
         context->DrawIndexed(range.count, range.visible_first, 0);
+#ifndef NDEBUG
+        scene_frame_profiler.draw();
+#endif
 
         ImVec2 screen_min(
             static_cast<float>(width), static_cast<float>(height));
@@ -7735,6 +7783,7 @@ struct Canvas3D::Impl {
 
     bool build_scene_chunks(std::string& error) {
         scene_chunks.clear();
+        scene_cached_repeater_world_count = 0;
         scene_placement_locations.clear();
         scene_repeater_locations.clear();
         if (!std::isfinite(scene_chunk_m) || scene_chunk_m <= 0.0) {
@@ -9059,7 +9108,10 @@ struct Canvas3D::Impl {
     }
 
     const Canvas3DTrackPath* own_track_path() const {
-        return scene_own_track_path(scene_data);
+#ifndef NDEBUG
+        if (debug_scene_reference) return scene_own_track_path(scene_data);
+#endif
+        return scene_placement_tracks.own(scene_data);
     }
 
     bool sample_track_path(const Canvas3DTrackPath& path, double distance, Canvas3DTrackPoint& out) const {
@@ -9090,12 +9142,10 @@ struct Canvas3D::Impl {
     }
 
     const Canvas3DTrackPath* placement_track_path_for_key(const std::string& key) const {
-        return scene_placement_track_path_for_key(scene_data, key);
-    }
-
-    bool sample_scene_placement_track(const std::string& key, double distance, Canvas3DTrackPoint& out) const {
-        const Canvas3DTrackPath* path = placement_track_path_for_key(key);
-        return path && sample_track_path(*path, distance, out);
+#ifndef NDEBUG
+        if (debug_scene_reference) return scene_placement_track_path_for_key(scene_data, key);
+#endif
+        return scene_placement_tracks.find(scene_data, key);
     }
 
     bool make_track_placement_frame(const std::string& track_key,
@@ -9109,8 +9159,19 @@ struct Canvas3D::Impl {
                                     double tilt,
                                     double span,
                                     StructurePlacementFrame& frame) const {
+        const Canvas3DTrackPath* path = placement_track_path_for_key(track_key);
+        if (!path) return false;
+        const auto sample = [&](double sample_distance, Canvas3DTrackPoint& output) {
+#ifndef NDEBUG
+            if (debug_scene_reference) {
+                const auto* original_path = scene_placement_track_path_for_key(scene_data, track_key);
+                return original_path && sample_track_path(*original_path, sample_distance, output);
+            }
+#endif
+            return sample_track_path(*path, sample_distance, output);
+        };
         Canvas3DTrackPoint point;
-        if (!sample_scene_placement_track(track_key, distance, point)) return false;
+        if (!sample(distance, point)) return false;
 
         const int flags = scene_tilt_flags(tilt);
         const bool follow_gradient = (flags & 1) != 0;
@@ -9128,7 +9189,7 @@ struct Canvas3D::Impl {
 
         double effective_span = std::isfinite(span) && span >= 1.0 ? span : 1.0;
         Canvas3DTrackPoint span_point;
-        if (sample_scene_placement_track(track_key, distance + effective_span, span_point)) {
+        if (sample(distance + effective_span, span_point)) {
             DVec3 span_right = right_from_theta_d(span_point.theta);
             DVec3 span_forward = forward_from_theta_d(span_point.theta);
             DVec3 span_up = cross(span_right, span_forward);
@@ -9150,7 +9211,7 @@ struct Canvas3D::Impl {
         if (follow_cant) {
             double cant_angle = point.cant_angle;
             Canvas3DTrackPoint mid_point;
-            if (sample_scene_placement_track(track_key, distance + effective_span * 0.5, mid_point)) {
+            if (sample(distance + effective_span * 0.5, mid_point)) {
                 cant_angle = mid_point.cant_angle;
             }
             apply_track_cant(right, up, forward, cant_angle);
@@ -9228,7 +9289,52 @@ struct Canvas3D::Impl {
         screen_max.y = std::max(screen_max.y, ref.screen_max.y);
     }
 
-    void append_visible_repeater_instances(const SceneChunk& chunk,
+    void invalidate_scene_repeater_cache(SceneChunk& chunk) {
+        scene_cached_repeater_world_count -= chunk.cached_world_count;
+        chunk.cached_world_count = 0;
+        chunk.repeater_cache_prepared = false;
+        std::vector<SceneChunk::RepeaterCache>().swap(chunk.repeater_cache);
+    }
+
+    void prepare_scene_repeater_cache(SceneChunk& chunk) {
+        if (chunk.repeater_cache_prepared) return;
+        chunk.repeater_cache_prepared = true;
+        chunk.repeater_cache.resize(chunk.repeater_indices.size());
+        double chunk_max = chunk.d_max;
+        if (chunk.d_max < scene_data.max_distance) chunk_max -= k_scene_repeater_distance_epsilon;
+        for (size_t slot = 0; slot < chunk.repeater_indices.size(); ++slot) {
+            const size_t index = chunk.repeater_indices[slot];
+            if (index >= scene_data.repeaters.size()) continue;
+            const auto& repeater = scene_data.repeaters[index];
+            if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) continue;
+            SceneRepeaterIndexRange range{0, 0};
+            if (scene_repeater_has_interval(repeater)) {
+                if (!scene_repeater_index_range(repeater, chunk.d_min, chunk_max, range)) continue;
+            } else if (repeater.begin_distance < chunk.d_min - k_scene_repeater_distance_epsilon ||
+                       repeater.begin_distance > chunk_max + k_scene_repeater_distance_epsilon) {
+                continue;
+            }
+            const size_t remaining = k_scene_repeater_cache_instance_limit - scene_cached_repeater_world_count;
+            // Compare before adding one: the index range may end at LLONG_MAX.
+            if (static_cast<unsigned long long>(range.last - range.first) >= remaining) continue;
+            const size_t count = static_cast<size_t>(range.last - range.first) + 1;
+            auto& cache = chunk.repeater_cache[slot];
+            cache.first_index = range.first;
+            cache.worlds.resize(count);
+            for (size_t offset = 0; offset < count; ++offset) {
+                const long long instance_index = range.first + static_cast<long long>(offset);
+                const double distance = scene_repeater_has_interval(repeater)
+                    ? repeater.begin_distance + static_cast<double>(instance_index) * repeater.interval
+                    : repeater.begin_distance;
+                auto& world = cache.worlds[offset];
+                world.valid = make_repeater_instance_world(repeater, distance, world.world.data());
+            }
+            chunk.cached_world_count += count;
+            scene_cached_repeater_world_count += count;
+        }
+    }
+
+    void append_visible_repeater_instances(SceneChunk& chunk,
                                            double visible_min,
                                            double visible_max,
                                            DVec3 render_origin,
@@ -9237,14 +9343,21 @@ struct Canvas3D::Impl {
                                            int height,
                                            bool can_pick,
                                            std::map<std::string, std::vector<SceneInstanceData>>& visible_instances,
-                                           std::map<int, std::vector<SceneVisibleInstanceRef>>* object_refs) const {
+                                           std::map<int, std::vector<SceneVisibleInstanceRef>>* object_refs) {
+        KME_SCENE_PROFILE(Repeaters);
+        bool use_cache = true;
+#ifndef NDEBUG
+        use_cache = !debug_scene_reference;
+#endif
+        if (use_cache) prepare_scene_repeater_cache(chunk);
         double chunk_max = chunk.d_max;
         if (chunk.d_max < scene_data.max_distance) chunk_max -= k_scene_repeater_distance_epsilon;
         double range_min = std::max(visible_min, chunk.d_min);
         double range_max = std::min(visible_max, chunk_max);
         if (range_max < range_min) return;
 
-        for (size_t repeater_index : chunk.repeater_indices) {
+        for (size_t repeater_slot = 0; repeater_slot < chunk.repeater_indices.size(); ++repeater_slot) {
+            const size_t repeater_index = chunk.repeater_indices[repeater_slot];
             if (repeater_index >= scene_data.repeaters.size()) continue;
             const Canvas3DRepeaterSegment& repeater = scene_data.repeaters[repeater_index];
             if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) continue;
@@ -9256,8 +9369,17 @@ struct Canvas3D::Impl {
             auto emit = [&](double distance, size_t model_index) {
                 const std::string& path = repeater.model_paths[model_index % repeater.model_paths.size()];
                 if (path.empty()) return;
-                double world[16] = {};
-                if (!make_repeater_instance_world(repeater, distance, world)) return;
+                double computed_world[16] = {};
+                const double* world = computed_world;
+                const auto* cache = use_cache ? &chunk.repeater_cache[repeater_slot] : nullptr;
+                const size_t offset = cache ? model_index - static_cast<size_t>(cache->first_index) : 0;
+                if (cache && offset < cache->worlds.size()) {
+                    if (!cache->worlds[offset].valid) return;
+                    world = cache->worlds[offset].world.data();
+                } else if (!make_repeater_instance_world(repeater, distance, computed_world)) return;
+#ifndef NDEBUG
+                debug_record_scene_world(path, repeater.object_index, distance, world);
+#endif
                 SceneInstanceData data = make_instance_data_relative(world, render_origin);
 
                 SceneScreenBounds bounds;
@@ -10051,6 +10173,9 @@ struct Canvas3D::Impl {
     void render_scene_preview_target(int width, int height, ImVec2 mouse_local,
                                      bool pick_enabled,
                                      bool mileage_pick_enabled) {
+#ifndef NDEBUG
+        debug_scene_signature = 14695981039346656037ULL;
+#endif
         std::string error;
         scene_hovered_object_index = -1;
         scene_hovered_marker_index = -1;
@@ -10130,11 +10255,23 @@ struct Canvas3D::Impl {
         std::map<int, std::vector<SceneVisibleInstanceRef>> visible_object_instances;
         std::vector<SceneInstanceData> track_instance(1);
         const bool can_pick = pick_enabled && scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
+        // Evict the complete old window before preparing new chunks, so a
+        // backwards jump can use the same bounded budget as forward movement.
+        for (SceneChunk& chunk : scene_chunks) {
+            if (!scene_chunk_visible(chunk, visible_min, visible_max) && chunk.repeater_cache_prepared) {
+                invalidate_scene_repeater_cache(chunk);
+            }
+        }
         for (size_t i = 0; i < scene_chunks.size(); ++i) {
-            const SceneChunk& chunk = scene_chunks[i];
+            SceneChunk& chunk = scene_chunks[i];
             if (!scene_chunk_visible(chunk, visible_min, visible_max)) continue;
+            {
+            KME_SCENE_PROFILE(Instances);
             for (const SceneInstance& instance : chunk.instances) {
                 if (instance.distance < visible_min || instance.distance > visible_max) continue;
+#ifndef NDEBUG
+                debug_record_scene_world(instance.model_path, instance.object_index, instance.distance, instance.world);
+#endif
                 SceneInstanceData data = make_instance_data_relative(instance.world, render_origin);
                 SceneScreenBounds bounds;
                 SceneScreenBounds* bounds_ptr = nullptr;
@@ -10150,6 +10287,7 @@ struct Canvas3D::Impl {
                                               visible_instances,
                                               can_pick ? &visible_object_instances : nullptr);
             }
+            }
             append_visible_repeater_instances(chunk, visible_min, visible_max, render_origin,
                                               view_proj, width, height, can_pick,
                                               visible_instances,
@@ -10164,6 +10302,9 @@ struct Canvas3D::Impl {
                 scene_stats_value.drawn_instance_count += kv.second.size();
             }
         }
+#ifndef NDEBUG
+        scene_frame_profiler.result.model_groups = visible_instances.size();
+#endif
         const bool marker_pick_possible =
             can_pick && has_visible_scene_marker_picks(
                 visible_min, visible_max);
@@ -10179,6 +10320,7 @@ struct Canvas3D::Impl {
         context->OMSetDepthStencilState(scene_depth_state, 0);
         context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
         for (size_t i = 0; i < scene_chunks.size() && i < scene_track_chunks.size(); ++i) {
+            KME_SCENE_PROFILE(Tracks);
             if (!scene_chunk_visible(scene_chunks[i], visible_min, visible_max)) continue;
             draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj,
                                    track_instance, error, fog_ptr);
@@ -10187,6 +10329,7 @@ struct Canvas3D::Impl {
         if (!error.empty() && scene_last_error != error) scene_last_error = error;
         ScenePickTarget picked_target;
         if (scene_pick_active) {
+            KME_SCENE_PROFILE(Picking);
             ID3D11RenderTargetView* pick_target = scene_pick_rtv;
             context->OMSetRenderTargets(1, &pick_target, depth_dsv);
             context->RSSetViewports(1, &viewport);
@@ -10242,6 +10385,8 @@ struct Canvas3D::Impl {
             scene_hovered_marker_index = static_cast<int>(picked_target.index);
         }
         const bool focus_highlight_active = scene_focus_highlight_active_now();
+        {
+        KME_SCENE_PROFILE(Highlight);
         if (focus_highlight_active && scene_focus_highlight_marker_index >= 0 &&
             static_cast<size_t>(scene_focus_highlight_marker_index) < scene_data.markers.size()) {
             draw_scene_marker_highlight(
@@ -10257,6 +10402,7 @@ struct Canvas3D::Impl {
         }
         draw_scene_highlight_batch(scene_focus_highlight_batch, view_proj, width, height);
         draw_scene_highlight_batch(scene_hover_highlight_batch, view_proj, width, height);
+        }
 
         ID3D11ShaderResourceView* null_srv = nullptr;
         context->PSSetShaderResources(0, 1, &null_srv);
@@ -10744,6 +10890,9 @@ struct Canvas3D::Impl {
         ImVec2 requested_size,
         const Canvas3DSceneUiText& ui_text,
         const Canvas3DSceneContextMenuOptions& context_menu_options) {
+#ifndef NDEBUG
+        scene_frame_profiler.begin_frame(context);
+#endif
         Canvas3DSceneFrameResult result;
         ImVec2 avail = requested_size;
         if (avail.x <= 0.0f || avail.y <= 0.0f) avail = ImGui::GetContentRegionAvail();
@@ -10800,6 +10949,8 @@ struct Canvas3D::Impl {
             draw->AddRectFilled(origin, end, IM_COL32(0, 0, 0, 255));
         }
         const Canvas3DSceneStats stats = scene_stats();
+        {
+        KME_SCENE_PROFILE(Overlay);
         if (stats.loading) {
             draw_scene_loading_overlay(draw, origin, avail, ui_text.loading);
         } else {
@@ -10807,6 +10958,7 @@ struct Canvas3D::Impl {
             draw_scene_route_overlay(draw, origin, avail, ui_text);
             draw_scene_metrics_overlay(draw, origin, avail, stats);
             draw_scene_structure_gizmo(draw, origin, width, height);
+        }
         }
 
         const bool select_mode = scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
@@ -10859,6 +11011,9 @@ struct Canvas3D::Impl {
         }
         result.new_element_mileage =
             render_scene_mileage_context_popup(ui_text, context_menu_options);
+#ifndef NDEBUG
+        scene_frame_profiler.end_frame(context);
+#endif
         return result;
     }
 
@@ -11086,14 +11241,22 @@ struct Canvas3D::Impl {
     ImVec4 background_color_value = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
     std::string last_error;
     Canvas3DScene scene_data;
+    scene_track_sampling::PlacementTrackLookup scene_placement_tracks;
     size_t scene_geometry_generation = 0;
     bool scene_active = false;
     bool scene_fog_enabled = true;
     bool scene_map_draw_distance_enabled = true;
 #ifndef NDEBUG
     size_t debug_scene_fog_draw_part_count = 0;
+    mutable SceneFrameProfiler scene_frame_profiler;
+    bool debug_scene_reference = false;
+    bool debug_scene_capture = false;
+    std::uint64_t debug_scene_signature = 0;
 #endif
     std::vector<SceneChunk> scene_chunks;
+    // Cleared with chunks, invalidated by Repeater writes (both old/new ranges)
+    // and scene replacement. Tracks are replaced only through load_scene.
+    size_t scene_cached_repeater_world_count = 0;
     std::unordered_map<std::string, ScenePlacementInstanceLocation> scene_placement_locations;
     std::unordered_map<std::string, size_t> scene_repeater_locations;
     SceneStructureEditState scene_structure_edit;
@@ -11339,6 +11502,18 @@ Canvas3DSceneLoaderContractResult Canvas3D::debug_run_scene_loader_contract(
 
 Canvas3DSceneFogDebugState Canvas3D::debug_scene_fog_state() const {
     return impl_->debug_scene_fog_state();
+}
+
+bool Canvas3D::set_debug_scene_frame_profiling(bool enabled, std::string& error) {
+    return impl_->scene_frame_profiler.configure(impl_->device, enabled, error);
+}
+
+Canvas3DSceneFrameProfile Canvas3D::debug_scene_frame_profile() const {
+    return impl_->scene_frame_profiler.result;
+}
+
+Canvas3DSceneRenderContractResult Canvas3D::debug_check_scene_render() {
+    return impl_->debug_check_scene_render();
 }
 
 bool Canvas3D::debug_read_scene_render_pixels(std::vector<std::uint8_t>& rgba,

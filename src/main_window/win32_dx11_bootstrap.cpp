@@ -257,6 +257,7 @@ int main(int, char**) {
                       << "[--frames N] [--unit-distance M] [--max-frame-ms MS] "
                       << "[--window-back-m M] [--window-forward-m M] "
                       << "[--scene-model-workers N] [--disable-scene-texture-cache] "
+                      << "[--profile-stages] [--interaction stationary|moving] "
                       << "[--headless-output FILE]\n";
             return 1;
         }
@@ -266,6 +267,8 @@ int main(int, char**) {
                                                          scene3d_bench.window_forward_m,
                                                          scene3d_bench.scene_model_workers,
                                                          scene3d_bench.disable_scene_texture_cache,
+                                                         scene3d_bench.profile_stages,
+                                                         scene3d_bench.interaction,
                                                          scene3d_bench.output_path);
     }
 

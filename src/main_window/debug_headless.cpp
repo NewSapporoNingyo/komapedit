@@ -809,6 +809,16 @@ HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const s
                                       options.scene_model_workers, options.error)) return options;
         } else if (arg == "--disable-scene-texture-cache") {
             options.disable_scene_texture_cache = true;
+        } else if (arg == "--profile-stages") {
+            options.profile_stages = true;
+        } else if (arg == "--interaction") {
+            const std::string* value = take_option_value(args, i, arg, "stationary or moving", options.error);
+            if (!value) return options;
+            if (*value != "stationary" && *value != "moving") {
+                options.error = "--interaction must be stationary or moving";
+                return options;
+            }
+            options.interaction = *value;
         } else if (arg == "--headless-output") {
             const std::string* value = take_option_value(args, i, arg, "a path", options.error);
             if (!value) return options;
@@ -2525,7 +2535,7 @@ int run_debug_headless_scene_loader_contract(
     const HeadlessResourceSafetyContractResult resource_safety =
         run_debug_resource_safety_contract(
             image_path.u8string(), (temp.path / "missing.bmp").u8string());
-    const bool passed = contract.error.empty() && contract.normal_worker &&
+    const bool passed = contract.error.empty() && contract.repeater_cache && contract.normal_worker &&
         contract.copy_exception && contract.put_between_exception &&
         contract.subset_requeue && contract.removal_only_cancel &&
         contract.release_balance && contract.texture_allocation_cleanup &&
@@ -2535,6 +2545,7 @@ int run_debug_headless_scene_loader_contract(
         resource_safety.image_layout &&
         resource_safety.image_decode && resource_safety.numeric_conversion;
     *out << "stage=worker-contract-complete\n"
+         << "repeater_cache=" << (contract.repeater_cache ? "PASS" : "FAIL") << "\n"
          << "d3d_driver=" << driver << "\n"
          << "normal_worker=" << (contract.normal_worker ? "PASS" : "FAIL") << "\n"
          << "copy_exception=" << (contract.copy_exception ? "PASS" : "FAIL") << "\n"
@@ -12113,6 +12124,8 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
                                               double window_back_m, double window_forward_m,
                                               int scene_model_workers,
                                               bool disable_scene_texture_cache,
+                                              bool profile_stages,
+                                              const std::string& interaction,
                                               const std::string& output_path) {
     ScopedComApartment com_apartment;
     if (!com_apartment.ready()) {
@@ -12138,7 +12151,9 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
          << " window_back_m=" << format_double(window_back_m, 3)
          << " window_forward_m=" << format_double(window_forward_m, 3)
          << " scene_model_workers=" << scene_model_workers
-         << " texture_cache=" << (disable_scene_texture_cache ? "disabled" : "enabled") << "\n";
+         << " texture_cache=" << (disable_scene_texture_cache ? "disabled" : "enabled")
+         << " interaction=" << interaction << " profile_stages=" << profile_stages
+         << " build=Debug canvas=1260x680\n";
     *out << "stage=d3d-create-start\n";
     out->flush();
 
@@ -12228,6 +12243,19 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         interpolate_event_count == interpolate_row_count &&
         interpolate_marker_count == interpolate_row_count &&
         interpolate_event_sources_ok && interpolate_marker_targets_ok;
+    IDXGIDevice* dxgi_device = nullptr;
+    IDXGIAdapter* adapter = nullptr;
+    DXGI_ADAPTER_DESC adapter_desc{};
+    if (SUCCEEDED(device->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgi_device))) &&
+        SUCCEEDED(dxgi_device->GetAdapter(&adapter)) && SUCCEEDED(adapter->GetDesc(&adapter_desc))) {
+        *out << "scene3d_adapter name=\"" << wide_to_utf8(adapter_desc.Description)
+             << "\" vendor_id=" << adapter_desc.VendorId << " device_id=" << adapter_desc.DeviceId << "\n";
+    }
+    release_com(adapter);
+    release_com(dxgi_device);
+    *out << "scene3d_workload tracks=" << marker_contract_scene.scene.tracks.size()
+         << " repeaters=" << marker_contract_scene.scene.repeaters.size()
+         << " markers=" << marker_contract_scene.scene.markers.size() << "\n";
     *out << "scene3d_curve_interpolate_contract rows="
          << interpolate_row_count << " events=" << interpolate_event_count
          << " markers=" << interpolate_marker_count
@@ -12378,13 +12406,47 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
             *out << "inspector_row_cache_checks result=SKIP_NO_EDITABLE_PLACEMENT\n";
         }
 
+        std::string profile_error;
+        if (!app.scene_preview_canvas_->set_debug_scene_frame_profiling(profile_stages, profile_error)) {
+            throw std::runtime_error(profile_error);
+        }
+        const double motion_start = app.scene_preview_canvas_->scene_camera_pose().distance;
         std::vector<double> frame_ms;
+        std::vector<Canvas3DSceneFrameProfile> profiles;
         frame_ms.reserve(static_cast<size_t>(frames));
+        if (profile_stages) profiles.reserve(static_cast<size_t>(frames));
         for (int frame = 0; frame < frames; ++frame) {
             auto started_at = std::chrono::steady_clock::now();
+            if (interaction == "moving") {
+                app.scene_preview_canvas_->jump_scene_camera_to_distance(motion_start + 2.0 * frame);
+            }
             render_frame();
             auto finished_at = std::chrono::steady_clock::now();
             frame_ms.push_back(std::chrono::duration<double, std::milli>(finished_at - started_at).count());
+            if (profile_stages) profiles.push_back(app.scene_preview_canvas_->debug_scene_frame_profile());
+        }
+        app.scene_preview_canvas_->set_debug_scene_frame_profiling(false, profile_error);
+        if (profile_stages) {
+            constexpr std::array<const char*, static_cast<size_t>(Canvas3DSceneFrameStage::Count)> names{
+                "loading", "instances", "repeaters", "upload", "models", "tracks", "markers", "picking", "highlight", "overlay"};
+            for (size_t stage = 0; stage < names.size(); ++stage) {
+                std::vector<double> samples;
+                for (const auto& profile : profiles) samples.push_back(profile.cpu_ms[stage]);
+                const auto timing = calculate_frame_timing_stats(samples);
+                *out << "scene3d_profile stage=" << names[stage] << " median_ms=" << timing.median_ms
+                     << " p95_ms=" << timing.p95_ms << "\n";
+            }
+            std::vector<double> gpu_samples;
+            for (const auto& profile : profiles) if (profile.gpu_ms >= 0.0) gpu_samples.push_back(profile.gpu_ms);
+            const auto gpu = calculate_frame_timing_stats(gpu_samples);
+            *out << "scene3d_profile stage=gpu samples=" << gpu_samples.size()
+                 << " median_ms=" << gpu.median_ms << " p95_ms=" << gpu.p95_ms
+                 << " scope=frame_interval_including_submission_gaps\n";
+            if (!profiles.empty()) {
+                const auto& last = profiles.back();
+                *out << "scene3d_profile draw_calls=" << last.draw_calls
+                     << " uploaded_bytes=" << last.uploaded_bytes << " model_groups=" << last.model_groups << "\n";
+            }
         }
         *out << "stage=frames-complete\n";
         out->flush();
@@ -12394,6 +12456,26 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
             inspector_cache_checks_ok && interpolate_scene_contract_pass && interpolate_fixture_pass &&
             timing.p95_ms <= max_frame_ms;
         Canvas3DSceneStats final_stats = app.scene_preview_canvas_->scene_stats();
+        const size_t worst_frame = static_cast<size_t>(std::max_element(frame_ms.begin(), frame_ms.end()) - frame_ms.begin());
+        *out << "scene3d_worst_frame index=" << worst_frame << " elapsed_ms=" << frame_ms[worst_frame]
+             << " requested_distance=" << (motion_start + (interaction == "moving" ? 2.0 * worst_frame : 0.0)) << "\n";
+
+        ImGui::NewFrame();
+        const auto render_contract = app.scene_preview_canvas_->debug_check_scene_render();
+        ImGui::EndFrame();
+        const bool render_pass = render_contract.error.empty() && render_contract.cases > 0 &&
+            render_contract.instances && render_contract.pixels && render_contract.picking && render_contract.cache_budget;
+        pass = pass && render_pass;
+        *out << "scene3d_signature value=" << render_contract.signature << "\n"
+             << "scene3d_render_contract cases=" << render_contract.cases
+             << " instances=" << render_contract.instances << " pixels=" << render_contract.pixels
+             << " picking=" << render_contract.picking << " cache_budget=" << render_contract.cache_budget
+             << " peak_cached_worlds=" << render_contract.peak_cached_worlds
+             << " peak_cache_bytes=" << render_contract.peak_cache_bytes
+             << " picked_cases=" << render_contract.picked_cases
+             << " track_draw_cases=" << render_contract.track_draw_cases
+             << " result=" << (render_pass ? "PASS" : "FAIL")
+             << " error=\"" << render_contract.error << "\"\n";
 
         const size_t fog_row_count = app.model_.fogs.size();
         const Canvas3DSceneFogDebugState initial_fog_state =

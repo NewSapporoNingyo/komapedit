@@ -54,11 +54,13 @@ struct HeadlessScene3DBenchmarkOptions {
     std::string output_path;
     int frames = 300;
     double unit_distance = 25.0;
-    double max_frame_ms = 23.0;
+    double max_frame_ms = 16.67;
     double window_back_m = 100.0;
     double window_forward_m = 1200.0;
     int scene_model_workers = 0;
     bool disable_scene_texture_cache = false;
+    bool profile_stages = false;
+    std::string interaction = "stationary";
     std::string error;
 };
 

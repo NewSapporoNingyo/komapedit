@@ -182,9 +182,17 @@ When any Station List row uses a non-empty `arrivalSoundKey` or `depertureSoundK
 - Use asynchronous loading for long parser/model work and keep the UI responsive with status feedback.
 - Every cache needs a complete key, an exact invalidation owner and revision, and coverage for both invalidation and the intended hit path.
 
+Canvas3D builds a placement-track index when replacing the scene, preserving the original own-track aliases, first normalized other-track match, and missing-key fallback. Repeater transforms remain double precision and are cached only for chunks in the current mileage window. The shared budget is 65,536 transforms; a chunk/segment that cannot fit uses the original calculation path with unchanged instance enumeration and draw limits. Repeater writes invalidate both their old and new chunk ranges, scene/chunk replacement resets the cache, and leaving the window releases it. Track visibility does not change placement geometry. Model groups, render order, materials, GPU submission, and loading-state statistics retain their existing paths.
+
 ## Validation
 
 Choose checks by the affected component and report exactly what ran. Do not describe an unrun manual check as passed.
+
+The scene benchmark defaults to 300 stationary frames, unit distance 25 m, a 100 m back/1200 m forward window, and a 16.67 ms p95 CPU-frame budget. `--interaction moving` advances from the initial camera mileage by 2 m per frame with the normal end clamp. Loading completion and the five additional warmup frames remain outside the measured loop. Run three independent processes with identical parameters and profiling disabled for sustained-frame acceptance; do not overlap them with builds or other benchmarks. Adapter, workload counts, the worst frame, and the final visible-instance fingerprint identify the measured workload.
+
+`--profile-stages` enables optional CPU-stage and asynchronous GPU timestamp diagnostics. Queries are allocated before measurement, read across frames without flushing or waiting, and invalid/unready samples are omitted. GPU frame intervals can include gaps caused by CPU command submission and are not GPU-busy-time measurements. CPU stages can be nested (track/highlight drawing includes mesh submission), so do not sum them as exclusive costs. Profiling results explain bottlenecks; they do not replace the unchanged CPU-frame gate.
+
+After timing, the scene benchmark compares original and cached placement paths for double-precision instance fingerprints, pixels, picking, camera translation/rotation, chunk jumps/returns, window/Fog changes, and enabled track overlays. These checks do not generate UI clicks. The scene-loader contract additionally checks nonzero Repeater starts, cycling model paths, tilt/span, interval boundaries, invalid intervals, edit/restore invalidation, track replacement, cache-budget fallback, and eviction. The performance repair preserves the existing Begin-relative Repeater placement sequence; the difference from the official global interval-grid description is tracked separately in `TODO.md`.
 
 Useful Debug headless commands include:
 
@@ -194,7 +202,7 @@ build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N
 build\komapedit.exe --debug-headless-scenario-lifecycle <scenario-path> [--scenario-index N] [--unit-distance M] --headless-output build\scenario-lifecycle.txt
 build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
-build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 --headless-output build\headless-scene3d-bench.txt
+build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 [--interaction stationary|moving] [--profile-stages] --headless-output build\headless-scene3d-bench.txt
 build\komapedit.exe --debug-headless-scene-loader-contract --headless-output build\scene-loader-contract.txt
 build\komapedit.exe --debug-headless-diagnostics-popup-bench --headless-output build\diagnostics-popup-bench.txt
 build\komapedit.exe --debug-headless-scene-camera-transfer <map-path> --headless-output build\scene-camera-transfer.txt
