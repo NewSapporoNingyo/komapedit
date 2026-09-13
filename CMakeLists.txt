@@ -301,6 +301,21 @@ add_executable(komapedit
     src/canvas2d/canvas2d_view_state.cpp
     src/canvas2d/profile_plots.cpp
     src/canvas3d/canvas3D.cpp
+    src/canvas3d/canvas3d_scene_data.cpp
+    src/canvas3d/canvas3d_scene_lifecycle.cpp
+    src/canvas3d/canvas3d_model_loader.cpp
+    src/canvas3d/canvas3d_put_between.cpp
+    src/canvas3d/canvas3d_model_preview.cpp
+    src/canvas3d/canvas3d_d3d_resources.cpp
+    src/canvas3d/canvas3d_scene_geometry.cpp
+    src/canvas3d/canvas3d_scene_markers.cpp
+    src/canvas3d/canvas3d_scene_camera.cpp
+    src/canvas3d/canvas3d_scene_edit.cpp
+    src/canvas3d/canvas3d_scene_gizmo.cpp
+    src/canvas3d/canvas3d_scene_render.cpp
+    src/canvas3d/canvas3d_scene_ui.cpp
+    src/canvas3d/tests/scene_render_contract.cpp
+    src/canvas3d/tests/scene_loader_contract.cpp
     src/canvas3d/scene_route_overlay.cpp
     src/canvas3d/scene_track_sampling.cpp
     src/table/datatable.cpp

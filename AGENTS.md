@@ -129,7 +129,7 @@ Use `docs/dev.md` for the detailed source map. Start with these owners:
 | Model import | `src/model_loader/model_loader.cpp` |
 | Main GUI/settings/runtime loading | `src/main_window/` |
 | 2D plan/profile | `src/canvas2d/` |
-| 3D model/scene preview | `src/canvas3d/canvas3D.cpp`, `src/canvas3d/scene_track_sampling.cpp`, `src/canvas3d/scene_track_sampling.h`, `include/canvas3D.h` |
+| 3D model/scene preview | `include/canvas3D.h`, the private `src/canvas3d/canvas3d_impl.h` state owner, and functional `src/canvas3d/canvas3d_*.cpp` modules; see the 3D source map in `docs/dev.md` |
 | Tables/navigation | `src/table/` |
 | Shared marker/linkage rules | `include/map_marker_visuals.h`, linkage headers, corresponding sources |
 | Contract/headless validation | `src/maploader/tests/`, `src/main_window/debug_headless.*`, `src/main_window/headless_entrypoints.cpp` |

@@ -8,7 +8,7 @@ description: Add, diagnose, or repair komapedit 3D model/scene preview behavior.
 ## Locate the owning layer
 
 - Main-window scene/model window lifecycle: `src/main_window/scene_preview_lifecycle.cpp`; menu and dock visibility: `ui_elements.cpp`; Inspector/gizmo draft state: `element_inspector_data.cpp` and `element_inspector_render.cpp`; shared App state: `kme.h`. `gui_kme.cpp` now retains only App construction/destruction and log wiring.
-- Scene/model rendering, camera, picking, overlays, gizmos, caches: `src/canvas3d/canvas3D.cpp` and `include/canvas3D.h`.
+- Public preview API and thin delegates: `include/canvas3D.h` and `src/canvas3d/canvas3D.cpp`. Shared private state remains in `canvas3d_impl.h`; method definitions are independently compiled in the functional `canvas3d_*.cpp` modules. Use the 3D module table in `docs/dev.md` to select the owner for rendering/resources, loading, scene data/lifecycle, geometry/markers, camera, editing/gizmos, or preview UI. Do not put implementations back into the shared state header or include implementation fragments.
 - CPU-only camera range and track sampling shared with the scene: `src/canvas3d/scene_track_sampling.cpp` and `src/canvas3d/scene_track_sampling.h`.
 - Scene geometry generation and revisions: `src/maploader/maploader_geometry.cpp`, snapshot code, and `MapContext`.
 - Shared symbols: `src/main_window/map_marker_visuals.cpp` and `include/map_marker_visuals.h`.
@@ -41,6 +41,7 @@ Determine whether the defect is UI wiring, scene-cache data, geometry/placement 
 ## Validate
 
 1. Build Debug.
+   The existing render/cache and model-loader contracts live in `src/canvas3d/tests/scene_render_contract.cpp` and `scene_loader_contract.cpp`, guarded by `NDEBUG` and compiled into the EXE; the headless entry points remain explicit, outside CTest.
 2. Run `canvas3d_camera_contract` for camera-range/track-sampling changes, `route_value_sampling_contract` for route-overlay value/interval changes, `--debug-headless-scene3d-bench` for scene changes, and `--debug-headless-scene-camera-transfer` for camera/station transfer.
 3. Use the affected real route only when scale or resource layout matters; compare identical benchmark parameters and report strict budget failures honestly.
 4. Build Release and verify runtime DLLs only for packaging, dependency, or optimization-specific work.

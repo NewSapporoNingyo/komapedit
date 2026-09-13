@@ -1,9 +1,155 @@
 /*
  * Copyright (c) 2026 Sapporo_ningyo
+ *
  * Licensed under Apache License 2.0; see LICENSE and NOTICE.
- * Included inside Canvas3D::Impl in Debug only. No input files are written.
  */
-void debug_record_scene_world(const std::string& path, int object, double distance, const double* world) {
+
+#ifdef _MSC_VER
+#pragma execution_character_set("utf-8")
+#endif
+
+#ifndef NDEBUG
+#include "../canvas3d_impl.h"
+#include "../canvas3d_scene_data.h"
+#include "../canvas3d_scene_geometry.h"
+#include "kme.h"
+#include <d3d11.h>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <map>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
+
+using namespace canvas3d_detail;
+
+Canvas3DSceneFogDebugState Canvas3D::Impl::debug_scene_fog_state() const {
+    Canvas3DSceneFogDebugState state;
+    state.keyframe_count = scene_data.fog_keyframes.size();
+    state.fog_draw_part_count = debug_scene_fog_draw_part_count;
+    state.setting_enabled = scene_fog_enabled;
+    state.shader_ready = scene_fog_pixel_shader != nullptr;
+    state.camera_distance = scene_camera_distance;
+    const SceneFogSample sample = sample_canvas3d_scene_fog(
+        scene_data.fog_keyframes, scene_camera_distance, scene_fog_enabled);
+    state.sampled_enabled = sample.enabled;
+    state.density = sample.density;
+    state.color = sample.color;
+    for (const Canvas3DSceneFogKeyframe& keyframe : scene_data.fog_keyframes) {
+        if (keyframe.density > state.max_density) {
+            state.max_density = keyframe.density;
+            state.max_density_distance = keyframe.distance;
+        }
+    }
+    return state;
+}
+
+bool Canvas3D::Impl::debug_read_scene_render_pixels(std::vector<std::uint8_t>& rgba,
+                                    int& width, int& height,
+                                    std::string& error) {
+    rgba.clear();
+    width = 0;
+    height = 0;
+    if (!device || !context || !render_texture) {
+        error = "3D scene render target is not available";
+        return false;
+    }
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    render_texture->GetDesc(&desc);
+    D3D11_TEXTURE2D_DESC staging_desc = desc;
+    staging_desc.Usage = D3D11_USAGE_STAGING;
+    staging_desc.BindFlags = 0;
+    staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    staging_desc.MiscFlags = 0;
+    ID3D11Texture2D* staging = nullptr;
+    HRESULT hr = device->CreateTexture2D(&staging_desc, nullptr, &staging);
+    if (FAILED(hr)) {
+        error = hresult_text("CreateTexture2D(scene debug readback)", hr);
+        return false;
+    }
+
+    context->CopyResource(staging, render_texture);
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    hr = context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
+    if (FAILED(hr)) {
+        error = hresult_text("Map(scene debug readback)", hr);
+        release_com(staging);
+        return false;
+    }
+
+    width = static_cast<int>(desc.Width);
+    height = static_cast<int>(desc.Height);
+    const size_t row_bytes = static_cast<size_t>(desc.Width) * 4;
+    rgba.resize(row_bytes * static_cast<size_t>(desc.Height));
+    for (UINT y = 0; y < desc.Height; ++y) {
+        std::memcpy(rgba.data() + static_cast<size_t>(y) * row_bytes,
+                    static_cast<const std::uint8_t*>(mapped.pData) +
+                        static_cast<size_t>(y) * mapped.RowPitch,
+                    row_bytes);
+    }
+    context->Unmap(staging, 0);
+    release_com(staging);
+    return true;
+}
+
+bool Canvas3D::Impl::debug_check_scene_edit_target(const Canvas3DPlacementEditTarget& target) const {
+    const auto equal_value = [](double a, double b) { return std::abs(a - b) <= 1e-9; };
+    const auto parameters_match = [&](const auto& source) {
+        const std::array<double, 8> actual = {source.x, source.y, source.z, source.rx,
+            source.ry, source.rz, source.tilt, source.span};
+        const std::array<double, 8> expected = {target.x, target.y, target.z, target.rx,
+            target.ry, target.rz, target.tilt, target.span};
+        return source.track_key == target.track_key &&
+            std::equal(actual.begin(), actual.end(), expected.begin(), equal_value);
+    };
+    const auto world_matches = [&](const double* actual, const double* expected) {
+        return std::equal(actual, actual + 16, expected, equal_value);
+    };
+    if (target.kind == Canvas3DSceneEditKind::Repeater) {
+        const auto found = scene_repeater_locations.find(target.edit_id);
+        if (found == scene_repeater_locations.end() || found->second >= scene_data.repeaters.size()) return false;
+        const auto& source = scene_data.repeaters[found->second];
+        if (!parameters_match(source) || !equal_value(source.begin_distance, target.distance) ||
+            (target.has_repeater_end_distance && !equal_value(source.end_distance, target.repeater_end_distance))) return false;
+        for (const auto& chunk : scene_chunks) {
+            if (!chunk.repeater_cache_prepared) continue;
+            for (size_t slot = 0; slot < chunk.repeater_indices.size(); ++slot) {
+                if (chunk.repeater_indices[slot] != found->second) continue;
+                if (slot >= chunk.repeater_cache.size()) return false;
+                const auto& cache = chunk.repeater_cache[slot];
+                for (size_t offset = 0; offset < cache.worlds.size(); ++offset) {
+                    const double distance = source.begin_distance + (scene_repeater_has_interval(source)
+                        ? static_cast<double>(cache.first_index + static_cast<long long>(offset)) * source.interval : 0.0);
+                    double expected[16]{};
+                    const bool valid = make_repeater_instance_world(source, distance, expected);
+                    if (valid != cache.worlds[offset].valid ||
+                        (valid && !world_matches(cache.worlds[offset].world.data(), expected))) return false;
+                }
+            }
+        }
+        return true;
+    }
+    if (target.kind != Canvas3DSceneEditKind::Structure && target.kind != Canvas3DSceneEditKind::Signal) return false;
+    const auto found = scene_placement_locations.find(target.edit_id);
+    if (found == scene_placement_locations.end()) return false;
+    const auto& location = found->second;
+    if (location.source_index >= scene_data.instances.size() || location.chunk_index >= scene_chunks.size()) return false;
+    const auto& source = scene_data.instances[location.source_index];
+    const auto& instances = scene_chunks[location.chunk_index].instances;
+    if (!parameters_match(source) || !equal_value(source.distance, target.distance) ||
+        location.chunk_instance_index >= instances.size()) return false;
+    double expected[16]{};
+    return make_track_world(target.track_key, target.distance, target.x, target.y, target.z,
+        target.rx, target.ry, target.rz, target.tilt, target.span, expected) &&
+        world_matches(instances[location.chunk_instance_index].world, expected);
+}
+
+void Canvas3D::Impl::debug_record_scene_world(const std::string& path, int object, double distance, const double* world) {
     if (!debug_scene_capture) return;
     const auto append = [&](const void* data, size_t length) {
         const auto* bytes = static_cast<const unsigned char*>(data);
@@ -20,7 +166,7 @@ void debug_record_scene_world(const std::string& path, int object, double distan
     append(world, sizeof(double) * 16);
 }
 
-bool debug_check_repeater_cache() {
+bool Canvas3D::Impl::debug_check_repeater_cache() {
     Impl fixture(device, nullptr);
     auto& scene = fixture.scene_data;
     scene.min_distance = 0.0;
@@ -127,7 +273,7 @@ bool debug_check_repeater_cache() {
     return fixture.scene_cached_repeater_world_count == 0;
 }
 
-Canvas3DSceneRenderContractResult debug_check_scene_render() {
+Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
     Canvas3DSceneRenderContractResult result;
     const DVec3 saved_position = scene_camera_pos;
     const double saved_distance = scene_camera_distance;
@@ -247,3 +393,5 @@ Canvas3DSceneRenderContractResult debug_check_scene_render() {
     if (!set_scene_track_visibility(saved_visibility, restore_error)) result.error = restore_error;
     return result;
 }
+
+#endif

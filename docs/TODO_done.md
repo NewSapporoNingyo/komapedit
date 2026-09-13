@@ -8,6 +8,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### Source Fidelity and Maintenance
 
+- [x] Split Canvas3D into independently compiled functional modules while retaining the public API and single private Impl state owner; move the embedded Debug render contract into a `.cpp` and keep loader contracts in their own translation unit.
 - [x] Include existing `Legacy.Fog` rows in non-target semantic validation, retain the Include-subtree exemption, and locate Track arguments after the actual quoted/expression key boundary.
 - [x] Preserve Signal List indentation, trailing comments, and main/glare adjacency on append; replay pending inserts from the final typed row shape, including compact rows whose trailing empty fields were trimmed, across Apply, glare removal/re-addition, Revert, and Save/reload.
 - [x] Count Station arrival/departure sounds in ordinary unused-Sound searches, including active and pending list drafts; reject conflicting CSV output filenames before writing and report output failures; retain failed layout-save requests and retry independently of settings saves.
@@ -185,6 +186,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 源码忠实性与维护
 
+- [x] 将 Canvas3D 按职责拆为独立编译的功能模块，保留公共接口及单一私有 Impl 状态所有者；将嵌入式 Debug 渲染契约迁入 `.cpp`，加载契约使用独立编译单元。
 - [x] 将现有 `Legacy.Fog` 纳入非目标语义校验并保留 Include 子树豁免；在引号/表达式 Track key 的真实边界之后定位参数。
 - [x] Signal 列表尾部追加保留缩进、尾部注释及主行/glare 邻接；按最终 typed 行形状重放待保存插入，覆盖裁掉尾部空字段的紧凑行、多次 Apply、删除/重加 glare、Revert 和 Save/reload。
 - [x] 普通声音未使用搜索计入 Station 到达音、发车音及活动/待应用草稿；CSV 输出名冲突在写入前拒绝并报告输出失败；布局保存失败保留请求，与 settings 独立按期重试。

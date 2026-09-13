@@ -101,12 +101,35 @@ Do not commit build directories, cloned `third_party` source trees, settings fil
 | Source tools | `file_structure_diagram.cpp`, `text_preview.cpp`: Include graph, working-copy source preview, source actions (change included file, unlink Include), distance-boundary selection |
 | Debug validation | `debug_headless.cpp/.h`, `headless_entrypoints.cpp`, `touch_input.cpp/.h`: headless contracts, benchmarks, camera transfer, find, touch, edit, and file-creation checks |
 | 2D views | `src/canvas2d/canvas2D.cpp`: plan/profile data, cached `Curve.Interpolate` endpoint-marker hydration, and plan-render orchestration; `canvas2d_view_state.cpp/.h`: pan/zoom/rotation and coordinate conversion; `canvas2d_marker_cache.cpp/.h`: track sampling and marker/Repeater overlay caches; `canvas2d_interaction.cpp/.h`: measurement and marker hit tests, context targets/actions, and source mapping; `canvas2d_background.cpp/.h`: image coordinates, drawing, and two-point alignment; `canvas2d_primitives.cpp/.h`: screen transforms, clipped polylines, grids, scale bars, and marker drawing; `profile_plots.cpp`: profile and radius charts |
-| 3D views | `src/canvas3d/canvas3D.cpp`, `src/canvas3d/scene_track_sampling.cpp/.h`, `src/canvas3d/scene_route_overlay.cpp/.h`, `include/canvas3D.h`: model/scene rendering, CPU track/camera sampling, camera, picking, markers, pure route-overlay formatting, and gizmos |
+| 3D views | `include/canvas3D.h` and `src/canvas3d/canvas3D.cpp`: public preview API and thin delegates; private `canvas3d_impl.h` state and functional `canvas3d_*.cpp` implementations, detailed below; `scene_track_sampling.cpp/.h` and `scene_route_overlay.cpp/.h`: CPU sampling and pure route-overlay formatting |
 | Tables/navigation | `src/table/datatable.cpp`, `table_navigation.cpp`: cached tables, inline editing, find, row/plan/scene navigation |
 | Shared marker visuals | `include/map_marker_visuals.h`, `src/main_window/map_marker_visuals.cpp`: canonical 2D/3D marker recipes |
 | Localization | `include/multilanguage.h`: Simplified Chinese, English, and Japanese UI strings |
 
 Use existing boundaries and shared helpers. Do not duplicate source ownership, linkage, marker recipes, navigation, parsing, validation, or writeback logic inside a single UI path.
+
+### 3D preview modules
+
+All files below are under `src/canvas3d/`. `Canvas3D::Impl` remains the single state owner: the public API, member initialization, worker lifecycle, GPU ownership, and cache invalidation rules are unchanged. The private header contains declarations and state; functional `.cpp` files are listed explicitly in CMake and compiled independently. Short math operations and the Repeater visitor template remain in private headers so hot loops retain their local optimization opportunities.
+
+| Module | Responsibility |
+| --- | --- |
+| `canvas3D.cpp`, `canvas3d_impl.h` | Public delegates and shared private method/state declarations |
+| `canvas3d_math.h`, `canvas3d_types.h` | Inline vector/matrix operations, CPU/GPU records, shared constants and predicates |
+| `canvas3d_scene_data.cpp/.h` | Typed map/scene conversion, route values/stations, marker metadata, fog and draw distance |
+| `canvas3d_scene_lifecycle.cpp` | Scene replacement, dynamic/map/station refresh, visibility/settings, model requests and resource lifecycle |
+| `canvas3d_model_loader.cpp/.h` | Model-loader v2 client, WIC textures/cache, CPU model workers, upload queue and diagnostics |
+| `canvas3d_put_between.cpp/.h` | Source preparation/deformation, asynchronous PutBetween preview and sequence-checked publication |
+| `canvas3d_model_preview.cpp` | Single-model loading, resource cleanup and interactive preview |
+| `canvas3d_d3d_resources.cpp` | HLSL, shader pipelines, depth/blend/rasterizer state, targets and instance buffers |
+| `canvas3d_scene_geometry.cpp/.h` | Scene/track chunks, track placement frames and Repeater instance/cache operations |
+| `canvas3d_scene_markers.cpp` | Marker vertices, glyphs/icons, font cache, visibility indices and marker drawing |
+| `canvas3d_scene_camera.cpp` | Track sampling, camera movement/jumps and focus-target state |
+| `canvas3d_scene_edit.cpp`, `canvas3d_scene_gizmo.cpp` | Placement-preview updates and invalidation; gizmo projection, hit testing, drag and drawing |
+| `canvas3d_scene_render.cpp`, `canvas3d_scene_ui.cpp` | Render passes, picking/highlights and visible instances; ImGui orchestration, overlays, context menus and deferred actions |
+| `tests/scene_render_contract.cpp`, `tests/scene_loader_contract.cpp` | Existing Debug render/cache/pixel/picking and model-loader ownership/failure contracts |
+
+`scene_track_sampling.cpp/.h` remains the CPU-only ordinary/camera sampling boundary; only the camera sampler extrapolates before the route start. `scene_route_overlay.cpp/.h` remains independent of D3D/ImGui and formats the shared evaluated route events. `scene_frame_profile.h` supplies Debug-only stage instrumentation. The two internal contract files compile into the EXE under `NDEBUG` guards and run through the existing scene benchmark/loader headless modes, not through CTest or textual `.inl` inclusion. Keep model DLL load/free pairing, worker cancellation/join and wake/upload ordering, reversed-Z and camera-relative transforms, bounded Repeater caches, and marker identity/visibility invalidation in their existing owners.
 
 ## Core engineering rules
 

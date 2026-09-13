@@ -100,7 +100,7 @@ ctest --test-dir build --output-on-failure
 | 源码工具 | `file_structure_diagram.cpp`、`text_preview.cpp`：Include 图、工作副本预览、源码操作（更换 Include 文件、解除引用）与距离边界选择 |
 | Debug 验证 | `debug_headless.cpp/.h`、`headless_entrypoints.cpp`、`touch_input.cpp/.h`：无界面契约、基准、相机传递、查找、触摸、编辑与文件创建检查 |
 | 二维视图 | `src/canvas2d/canvas2D.cpp`：平面/profile 数据、缓存化的 `Curve.Interpolate` 端点标记水合与平面绘制编排；`canvas2d_view_state.cpp/.h`：平移/缩放/旋转和坐标转换；`canvas2d_marker_cache.cpp/.h`：轨道采样与 marker/Repeater 叠加缓存；`canvas2d_interaction.cpp/.h`：测量/marker 命中、上下文目标/动作和源码映射；`canvas2d_background.cpp/.h`：图片坐标、绘制和两点对齐；`canvas2d_primitives.cpp/.h`：屏幕变换、裁剪折线、网格、比例尺和标记绘制；`profile_plots.cpp`：纵断面与半径图表 |
-| 三维视图 | `src/canvas3d/canvas3D.cpp`、`src/canvas3d/scene_track_sampling.cpp`、`src/canvas3d/scene_track_sampling.h`、`include/canvas3D.h`：模型/场景渲染、CPU 轨道/相机采样、相机、拾取、标记、叠加层与操纵器 |
+| 三维视图 | `include/canvas3D.h` 与 `src/canvas3d/canvas3D.cpp`：公共预览接口和薄委托；私有 `canvas3d_impl.h` 状态及按职责划分的 `canvas3d_*.cpp` 实现，详见下文三维模块表；`scene_track_sampling.cpp/.h` 与 `scene_route_overlay.cpp/.h`：CPU 采样和纯线路信息格式化 |
 | 表格/导航 | `src/table/datatable.cpp`、`table_navigation.cpp`：缓存表格、行内编辑、查找与行/平面/场景导航 |
 | 共享标记 | `include/map_marker_visuals.h`、`map_marker_visuals.cpp`：二维/三维标记的唯一视觉配方 |
 | 本地化 | `include/multilanguage.h`：简体中文、英语和日语界面文本 |
@@ -410,9 +410,30 @@ ctest --test-dir build --output-on-failure
 
 ### 三维渲染与场景构建
 
-#### `src/canvas3d/scene_track_sampling.cpp/.h`、`scene_route_overlay.cpp/.h` 与 `canvas3D.cpp`
+#### 三维预览模块
 
-- **轨道与相机采样**：`scene_track_sampling.cpp`/`scene_track_sampling.h` 提供无 D3D 依赖的普通轨道采样、相机专用起点前外推及相机里程边界；普通几何/放置/标记路径不使用起点前外推。`canvas3D.cpp` 复用该采样结果处理渲染与相机。
+以下文件均位于 `src/canvas3d/`。`Canvas3D::Impl` 继续作为单一状态所有者：公共接口、成员初始化、worker 生命周期、GPU 所有权和缓存失效规则保持原样。私有头文件只保存声明与状态，功能 `.cpp` 在 CMake 中显式列出并独立编译。短小数学运算和 Repeater visitor 模板保留在私有头文件中，使高频循环继续具有局部优化机会。
+
+| 模块 | 职责 |
+| --- | --- |
+| `canvas3D.cpp`、`canvas3d_impl.h` | 公共薄委托、共享私有方法与状态声明 |
+| `canvas3d_math.h`、`canvas3d_types.h` | 内联向量/矩阵运算、CPU/GPU 记录、共享常量与判定函数 |
+| `canvas3d_scene_data.cpp/.h` | typed map/scene 转换、线路值与车站、标记元数据、雾和绘制距离 |
+| `canvas3d_scene_lifecycle.cpp` | 场景替换、动态/地图/车站刷新、可见性与设置、模型请求及资源生命周期 |
+| `canvas3d_model_loader.cpp/.h` | 模型加载器 v2 客户端、WIC 纹理与缓存、CPU 模型 worker、上传队列及诊断 |
+| `canvas3d_put_between.cpp/.h` | 源模型准备与变形、异步 PutBetween 预览及经过序号检查的结果发布 |
+| `canvas3d_model_preview.cpp` | 单模型加载、资源清理与交互预览 |
+| `canvas3d_d3d_resources.cpp` | HLSL、shader 管线、深度/混合/光栅化状态、渲染目标与实例缓冲 |
+| `canvas3d_scene_geometry.cpp/.h` | 场景/轨道分块、轨道放置坐标系及 Repeater 实例与缓存操作 |
+| `canvas3d_scene_markers.cpp` | 标记顶点、文字与图标、字体缓存、可见索引与标记绘制 |
+| `canvas3d_scene_camera.cpp` | 轨道采样、相机移动与跳转、聚焦目标状态 |
+| `canvas3d_scene_edit.cpp`、`canvas3d_scene_gizmo.cpp` | 放置预览更新与失效；操纵器投影、命中、拖动与绘制 |
+| `canvas3d_scene_render.cpp`、`canvas3d_scene_ui.cpp` | 渲染 pass、拾取/高亮及可见实例；ImGui 编排、叠加信息、右键菜单与延迟动作 |
+| `tests/scene_render_contract.cpp`、`tests/scene_loader_contract.cpp` | 既有 Debug 渲染/缓存/像素/拾取契约，以及模型加载器所有权与故障契约 |
+
+`scene_frame_profile.h` 提供仅 Debug 启用的阶段计时。两份内部契约源文件通过 `NDEBUG` 条件保护编译到 EXE，继续由现有 scene benchmark/loader headless 模式显式执行，不注册为 CTest，也不使用 `.inl` 文本包含。保留现有所有者负责的模型 DLL 加载/释放配对、worker 取消/join 与唤醒/上传顺序、reversed-Z 与相机相对坐标、有界 Repeater 缓存，以及标记身份/可见性失效规则。
+
+- **轨道与相机采样**：`scene_track_sampling.cpp`/`scene_track_sampling.h` 提供无 D3D 依赖的普通轨道采样、相机专用起点前外推及相机里程边界；普通几何/放置/标记路径不使用起点前外推。`canvas3d_scene_camera.cpp` 与几何模块复用该采样边界。
 - **线路信息格式化**：`scene_route_overlay.cpp`/`scene_route_overlay.h` 是无 D3D/ImGui 依赖的纯文本格式化边界；它复用共享线路值采样，在 `Curve.Interpolate` 区间显示两个端点的半径、超高、方向箭头和三角分隔符；两端都是显示意义上的零半径时复用本地化“直线”标签。
 - **数学与场景转换**：`Vec3/DVec3/Vec4/Mat4` 及矩阵、投影、包围盒帮助函数构建相机和 world transform；key 规范化与 Repeater 区间函数把 `Canvas3DScene` 转为可渲染数据。
 - **CPU/GPU 数据结构**：vertex、material、mesh part、texture cache、model、track/marker chunk、instance、highlight batch、pick target 和 placement lookup 结构明确 CPU 装载、GPU 资源、按里程 chunk 及反向定位所有权。
@@ -427,7 +448,7 @@ ctest --test-dir build --output-on-failure
 - **可见性、绘制和拾取**：visible range/chunk 筛选后批量绘制 track、model、marker；pick pass 写入 object/marker id 并回读单像素；highlight mask/batch 与 outline composite 绘制 hover、表格跳转和选择轮廓。
 - **placement/repeater 实时编辑**：设置 target 时查找源实例、Sound3D 标记或 Repeater 段并建立 edit state；update 函数只改对应 chunk/marker/segment 数据。gizmo projection、mouse ray、轴最近点和 drag handler 为普通放置生成毫米截断的 `Canvas3DPlacementDragUpdate`，Sound3D 将 X/Y 写回相对音源偏移并以整米 Z 拖动 distance，显式 Repeater End 也以整米 Z 操纵器更新段尾；`Structure.PutBetween` 只启用沿自轨前向的 Z 轴，并把拖动吸附为整米 `distance`。其顶点预览在线程中按最新目标合并重算，按模型纵向 slice 复用轨道采样，完成后通过可复用动态顶点缓冲原子替换。
 - **雾、背景和线路信息**：按相机距离采样 BVE fog、Map DrawDistance、背景模型和有效场景窗口；route overlay 采样 radius/cant、gradient、活动限速、Section signal speed 与下一站；位于 `Curve.Interpolate` 区间时显示求值后的两端 radius/cant，而不虚构线性当前半径，但两端均为显示零时改为显示本地化“直线”；metrics/loading overlay 显示性能和加载状态。
-- **`render_scene_preview()`**：每帧处理异步上传、相机输入、gizmo、可见实例收集、主 pass、pick/highlight、marker/object context popup，并返回导航、编辑、删除或 drag action。文件末 `Canvas3D::*` 公共方法都是到 Impl 的薄委托。
+- **`render_scene_preview()`**：`canvas3d_scene_ui.cpp` 编排每帧异步上传、相机输入、gizmo、可见实例收集、主 pass、pick/highlight、marker/object context popup，并返回导航、编辑、删除或 drag action；实际渲染由 `canvas3d_scene_render.cpp` 等模块负责。`canvas3D.cpp` 保留到 Impl 的 `Canvas3D::*` 公共薄委托。
 
 ### 数据表格与跨视图导航
 
