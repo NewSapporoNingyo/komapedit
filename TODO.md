@@ -8,11 +8,9 @@ This file is the active project progress and contains unfinished items only. Com
 
 ### 3D画布
 
-- [ ] 单独核查 Repeater 放置网格和模型循环的语义差异：官方 Map 文档按全局里程的 interval 整数倍描述放置与序列，当前 3D 实现按每段 Begin 起点累计 interval。2026-09-13 性能修复经确认保留现状；语义修复需要独立评估非对齐起点、连续 Begin/End 和多模型序列，不混入性能前后对比。
-
+- [ ] 单独核查 Repeater 放置网格和模型循环的语义差异：官方 Map 文档按全局里程的 interval 整数倍描述放置与序列，当前 3D 实现按每段 Begin 起点累计 interval。
 - [ ] 3D 场景画质设置：render scale、MSAA、纹理过滤和轮廓质量
 - [ ] 支持通过3D操纵器编辑布景旋转
-- [ ] 单独排查 Scene headless 的 fog 像素探针门槛失败：此前 Debug 测试中雾数据、着色器及像素变化均存在，但 `max_channel_diff=5` 低于 `min_visible_channel_diff=8`。2026-09-12 全量 slop-fix 的修复前后三次同参数测试均为 178，未复现该问题；尚未证明历史失败的根因或修复，保留原门槛及独立记录。
 
 ### 用户界面与辅助功能
 
