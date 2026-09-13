@@ -55,6 +55,21 @@ Release build:
 .\build_release.bat
 ```
 
+### Build completion notifications
+
+Both `build_dev.bat` and `build_release.bat` attempt a best-effort notification after configuration and compilation succeed, the expected runtime DLLs have been verified, and the notice-file copy step has run. A failed build exits before this notification step.
+
+For a Windows toast notification, open Windows PowerShell (`powershell.exe`) and install the optional [`BurntToast`](https://www.powershellgallery.com/packages/BurntToast) module for the current user:
+
+```powershell
+Install-Module -Name BurntToast -Scope CurrentUser
+Get-Module -ListAvailable -Name BurntToast
+```
+
+The next build detects the module and calls `New-BurntToastNotification -Text 'Build finished'`. Verify module availability from `powershell.exe`, because the scripts invoke `powershell` rather than `pwsh`.
+
+If `BurntToast` is unavailable, no additional setup is required: the scripts fall back to the built-in Windows [`msg.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/msg) command and show `build finished` to `%USERNAME%` for up to 10 seconds. A session or policy can prevent this fallback from appearing; its diagnostics are suppressed, and notification failure does not turn an otherwise successful build into a failed build.
+
 Run registered Debug tests:
 
 ```bat

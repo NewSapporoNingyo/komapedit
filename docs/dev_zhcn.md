@@ -55,6 +55,21 @@ Release 构建：
 .\build_release.bat
 ```
 
+### 构建完成通知
+
+`build_dev.bat` 和 `build_release.bat` 会在配置与编译成功、预期的运行时 DLL 已通过检查且许可声明文件复制步骤已执行后，尝试发送构建完成通知。构建失败时，脚本会在通知步骤之前退出。
+
+如需使用 Windows Toast 通知，请打开 Windows PowerShell（`powershell.exe`），为当前用户安装可选的 [`BurntToast`](https://www.powershellgallery.com/packages/BurntToast) 模块：
+
+```powershell
+Install-Module -Name BurntToast -Scope CurrentUser
+Get-Module -ListAvailable -Name BurntToast
+```
+
+下次构建时，脚本会探测该模块并调用 `New-BurntToastNotification -Text 'Build finished'`。由于脚本调用的是 `powershell` 而不是 `pwsh`，请从 `powershell.exe` 中确认该模块可被发现。
+
+如果 `BurntToast` 不可用，则无需额外配置：脚本会自动回退到 Windows 自带的 [`msg.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/msg)，向 `%USERNAME%` 显示 `build finished` 常规消息框，最长显示 10 秒。当前会话或权限策略可能使该回退通知无法显示；脚本会抑制其诊断信息，通知失败也不会使原本成功的构建变为失败。
+
 运行已注册的 Debug 测试：
 
 ```bat
