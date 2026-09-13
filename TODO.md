@@ -9,7 +9,6 @@ This file is the active project progress and contains unfinished items only. Com
 ### 3D画布
 
 - [ ] 单独核查 Repeater 放置网格和模型循环的语义差异：官方 Map 文档按全局里程的 interval 整数倍描述放置与序列，当前 3D 实现按每段 Begin 起点累计 interval。
-- [ ] 3D 场景画质设置：render scale、MSAA、纹理过滤和轮廓质量
 - [ ] 支持通过3D操纵器编辑布景旋转
 
 ### 用户界面与辅助功能
