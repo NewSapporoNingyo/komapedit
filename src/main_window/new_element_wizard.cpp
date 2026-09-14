@@ -1720,18 +1720,30 @@ void App::render_new_element_wizard() {
         new_element_template_display_order();
 
     const std::string title = tr("dialog.new_element_wizard") + "###NewElementWizard";
-    ImGui::SetNextWindowSize(ImVec2(980.0f, 660.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(980.0f, 660.0f), ImGuiCond_FirstUseEver);
     const bool operation_pending = edit_ui_operation_pending();
     bool* wizard_open = operation_pending ? nullptr : &wizard.open;
-    ImGuiWindowFlags wizard_flags = ImGuiWindowFlags_NoResize;
+    ImGuiWindowFlags wizard_flags = ImGuiWindowFlags_None;
     if (operation_pending) wizard_flags |= ImGuiWindowFlags_NoInputs;
     if (!ImGui::Begin(title.c_str(), wizard_open, wizard_flags)) {
         ImGui::End();
         return;
     }
 
-    ImGui::BeginChild("##NewElementTemplateList", ImVec2(360.0f, -ImGui::GetFrameHeightWithSpacing()),
-                      true);
+    constexpr ImGuiTableFlags pane_flags =
+        ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
+    if (!ImGui::BeginTable("##NewElementWizardPanes", 2, pane_flags)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TableSetupColumn("##NewElementTemplates",
+                            ImGuiTableColumnFlags_WidthStretch, 360.0f);
+    ImGui::TableSetupColumn("##NewElementFormPane",
+                            ImGuiTableColumnFlags_WidthStretch, 620.0f);
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::BeginChild("##NewElementTemplateList",
+                      ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), true);
     const ImVec4 dim_text = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
     const auto render_template = [&](size_t index) {
         const NewElementTemplate& tpl = templates[index];
@@ -1768,8 +1780,9 @@ void App::render_new_element_wizard() {
     }
     ImGui::EndChild();
 
-    ImGui::SameLine();
-    ImGui::BeginChild("##NewElementForm", ImVec2(-1.0f, -ImGui::GetFrameHeightWithSpacing()), true);
+    ImGui::TableSetColumnIndex(1);
+    ImGui::BeginChild("##NewElementForm",
+                      ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), true);
     ImGui::TextUnformatted(tr("label.new_element_target_file").c_str());
     ImGui::SetNextItemWidth(-1.0f);
     const std::string target_preview = wizard.target_file_path.empty()
@@ -1990,6 +2003,7 @@ void App::render_new_element_wizard() {
         wizard.open = false;
     }
     ImGui::EndChild();
+    ImGui::EndTable();
     ImGui::End();
 }
 
@@ -2025,18 +2039,30 @@ void App::render_new_file_wizard() {
     }
 
     const std::string title = tr("dialog.new_file_wizard") + "###NewFileWizard";
-    ImGui::SetNextWindowSize(ImVec2(980.0f, 660.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(980.0f, 660.0f), ImGuiCond_FirstUseEver);
     const bool operation_pending = edit_ui_operation_pending();
     bool* wizard_open = operation_pending ? nullptr : &wizard.open;
-    ImGuiWindowFlags wizard_flags = ImGuiWindowFlags_NoResize;
+    ImGuiWindowFlags wizard_flags = ImGuiWindowFlags_None;
     if (operation_pending) wizard_flags |= ImGuiWindowFlags_NoInputs;
     if (!ImGui::Begin(title.c_str(), wizard_open, wizard_flags)) {
         ImGui::End();
         return;
     }
 
-    ImGui::BeginChild("##NewFileTemplateList", ImVec2(360.0f, -ImGui::GetFrameHeightWithSpacing()),
-                      true);
+    constexpr ImGuiTableFlags pane_flags =
+        ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
+    if (!ImGui::BeginTable("##NewFileWizardPanes", 2, pane_flags)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TableSetupColumn("##NewFileTemplates",
+                            ImGuiTableColumnFlags_WidthStretch, 360.0f);
+    ImGui::TableSetupColumn("##NewFileFormPane",
+                            ImGuiTableColumnFlags_WidthStretch, 620.0f);
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::BeginChild("##NewFileTemplateList",
+                      ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), true);
     const ImVec4 dim_text = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
     for (const NewFileTemplateCategoryInfo& category : k_new_file_template_categories) {
         const std::string category_label = tr(category.label_key) +
@@ -2062,8 +2088,9 @@ void App::render_new_file_wizard() {
     }
     ImGui::EndChild();
 
-    ImGui::SameLine();
-    ImGui::BeginChild("##NewFileForm", ImVec2(-1.0f, -ImGui::GetFrameHeightWithSpacing()), true);
+    ImGui::TableSetColumnIndex(1);
+    ImGui::BeginChild("##NewFileForm",
+                      ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), true);
     const NewFileTemplate& tpl =
         k_new_file_templates[static_cast<size_t>(wizard.selected_template)];
     const ImGuiStyle& style = ImGui::GetStyle();
@@ -2249,5 +2276,6 @@ void App::render_new_file_wizard() {
         ImGui::TextWrapped("%s", message.c_str());
     }
     ImGui::EndChild();
+    ImGui::EndTable();
     ImGui::End();
 }

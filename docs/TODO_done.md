@@ -151,6 +151,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### User Interface and Utilities
 
+- [x] Make the New Map Element and New File wizards independently resizable in both axes while retaining their `980x660` first-use default; replace the fixed template/form split with a stretch-weighted, mouse-resizable two-column layout whose window geometry and per-wizard column weights are restored through the existing `settings/imgui.ini` lifecycle.
 - [x] Add inclusive stage timing and operation totals to Apply/Save/Delete console diagnostics and the existing trilingual status messages, including required deferred Inspector/3D refreshes. Coalesce transaction refreshes, let full hydration/scene rebuilds supersede partial work, construct distance indices on demand, and move encoded Save bytes without weakening source validation or transactional writeback. Add a real-route Debug edit benchmark with 3D off/on, independent temporary Save copies, source-integrity checks, and refresh/rollback assertions. Large-route parsing and safety validation can still exceed one second; Save has no demonstrated overall speedup.
 
 - [x] Add the initial `File -> New...` and trilingual New File Wizard for header-only `BveTs Map 2.02` maps or Structure, Signal, Sound, Sound3D, and Station list files without overwriting existing files. A selected loaded map receives a preview-only typed `include`/`*.Load` reference that normal Save commits; Revert keeps the created file. Presets remain empty, and this initial scope did not create Scenario files or list rows; Scenario creation was added in the later item below.
@@ -331,6 +332,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 用户界面与辅助功能
 
+- [x] 将“新建地图元素向导”和“新建文件向导”改为长宽均可调整，同时保留首次使用时的 `980x660` 默认尺寸；以按比例伸缩、可用鼠标左右拖动的双栏布局替换固定模板区/表单区，并通过现有 `settings/imgui.ini` 生命周期分别恢复窗口几何信息和各向导的分栏权重。
 - [x] 优化编辑时的应用／保存速度：为 Apply／Save／Delete 增加控制台分段计时、执行次数和总体用时，并在既有中／英／日状态文本后显示耗时，覆盖必要的延迟 Inspector／3D 刷新。合并事务内刷新，以完整模型／场景刷新覆盖局部工作，按需构造距离索引，并移动保存编码字节以避免复制，保留全部源码验证与事务写回保护。新增支持 3D 关闭／开启的真实线路 Debug 编辑基准，Save 使用独立临时副本，核对源文件完整性及刷新／回滚断言。大型线路的解析与安全验证仍可能超过一秒；尚未测得 Save 总体提速。
 
 - [x] 新增初版 `文件 -> 新建...` 及三语“新建文件向导”，可在不覆盖已有文件的前提下新建仅含文件头的 `BveTs Map 2.02` 地图或 Structure、Signal、Sound、Sound3D、Station 列表文件。选择已加载地图时，会暂存类型化 `include`/`*.Load` 引用，正常“保存”才提交；“撤销”会保留已创建文件。预设仍为空；该初始范围不新建场景文件或列表行，场景文件新建功能见下方后续事项。
