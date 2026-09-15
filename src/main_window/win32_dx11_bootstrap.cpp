@@ -324,6 +324,20 @@ int main(int, char**) {
         return run_debug_headless_distance_edit_batch(distance_edit_batch);
     }
 
+    HeadlessAutoInsertDiagnosticsOptions auto_insert_diagnostics =
+        parse_headless_auto_insert_diagnostics_options(args);
+    if (auto_insert_diagnostics.requested) {
+        if (!auto_insert_diagnostics.error.empty()) {
+            std::cerr << auto_insert_diagnostics.error << "\n"
+                      << "usage: komapedit.exe "
+                         "--debug-headless-auto-insert-diagnostics <fixture-directory> "
+                         "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_auto_insert_diagnostics(
+            auto_insert_diagnostics);
+    }
+
     HeadlessRepeaterEditBatchOptions repeater_edit_batch =
         parse_headless_repeater_edit_batch_options(args);
     if (repeater_edit_batch.requested) {

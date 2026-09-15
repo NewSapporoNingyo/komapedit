@@ -952,6 +952,45 @@ HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
         [](HeadlessDistanceEditBatchOptions& options) { options.commit = true; });
 }
 
+HeadlessAutoInsertDiagnosticsOptions parse_headless_auto_insert_diagnostics_options(
+    const std::vector<std::string>& args) {
+    HeadlessAutoInsertDiagnosticsOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-auto-insert-diagnostics") {
+            options.requested = true;
+            const std::string* value = take_option_value(
+                args, i, arg, "a fixture directory", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(
+                    args, i, arg, "a value",
+                    "--unit-distance must be a positive finite number",
+                    options.unit_distance, options.error,
+                    [](double value) {
+                        return value > 0.0 && std::isfinite(value);
+                    })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value = take_option_value(
+                args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.error =
+                "--debug-headless-auto-insert-diagnostics is memory-apply only";
+            return options;
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error =
+            "--debug-headless-auto-insert-diagnostics requires a fixture directory";
+    }
+    return options;
+}
+
 HeadlessStationListEditOptions parse_headless_station_list_edit_options(
     const std::vector<std::string>& args) {
     return parse_headless_required_map_edit_options<HeadlessStationListEditOptions>(

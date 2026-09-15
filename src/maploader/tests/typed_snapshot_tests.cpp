@@ -2758,6 +2758,18 @@ bool edit_report_has_error_containing(const KvEditReportSnapshot& report,
     return false;
 }
 
+bool edit_report_has_resolution_reason(const KvEditReportSnapshot& report,
+                                       std::string_view reason) {
+    if (!report.resolution_requests) return false;
+    for (std::uint64_t index = 0; index < report.resolution_request_count; ++index) {
+        if (arena_view(report.string_data, report.string_size,
+                       report.resolution_requests[index].reason) == reason) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const KvStationListRow* find_station_list_row(const KvMapSnapshot& snapshot,
                                               std::string_view edit_id) {
     for (std::uint64_t i = 0; i < snapshot.station_list_count; ++i) {
@@ -8816,7 +8828,186 @@ void signal_list_append_layout_contract() {
     if (source) kv_free_string(source);
 }
 
+void distance_resolution_reason_contract() {
+    struct ContractCase {
+        const char* name;
+        const char* map_source;
+        const char* child_source;
+        bool target_child;
+        int target_line;
+        double source_distance;
+        const char* target_distance;
+        const char* expected_reason;
+    };
+    const std::array<ContractCase, 7> cases{{
+        {
+            "ambiguous-source-section",
+            "BveTs Map 2.02:utf-8\n"
+            "DrawDistance.Change(500);\n"
+            "100;\n"
+            "200;\n",
+            nullptr, false, 2, 0.0, "50", "ambiguousSourceSection",
+        },
+        {
+            "multiple-equivalent-distance-blocks",
+            "BveTs Map 2.02:utf-8\n"
+            "0;\n"
+            "100;\n"
+            "100;\n"
+            "200;\n"
+            "DrawDistance.Change(500);\n"
+            "300;\n",
+            nullptr, false, 6, 200.0, "100", "multipleEquivalentDistanceBlocks",
+        },
+        {
+            "no-unique-distance-bracket",
+            "BveTs Map 2.02:utf-8\n"
+            "0;\n"
+            "100;\n"
+            "200;\n"
+            "DrawDistance.Change(500);\n"
+            "300;\n",
+            nullptr, false, 5, 200.0, "400", "noUniqueDistanceBracket",
+        },
+        {
+            "distance-expression-requires-manual-edit",
+            "BveTs Map 2.02:utf-8\n"
+            "0;\n"
+            "distance + 100;\n"
+            "DrawDistance.Change(500);\n"
+            "200;\n",
+            nullptr, false, 4, 100.0, "150", "distanceExpressionRequiresManualEdit",
+        },
+        {
+            "variable-has-multiple-context-values",
+            "BveTs Map 2.02:utf-8\n"
+            "0;\n"
+            "$value = 500;\n"
+            "DrawDistance.Change($value);\n"
+            "100;\n"
+            "$value = 600;\n"
+            "200;\n",
+            nullptr, false, 4, 0.0, "150", "variableHasMultipleContextValues",
+        },
+        {
+            "incompatible-evaluation-environment",
+            "BveTs Map 2.02:utf-8\n"
+            "0;\n"
+            "DrawDistance.Change(distance + 500);\n"
+            "100;\n",
+            nullptr, false, 3, 0.0, "50", "incompatibleEvaluationEnvironment",
+        },
+        {
+            "physical-source-has-incompatible-include-contexts",
+            "BveTs Map 2.02:utf-8\n"
+            "0;\n"
+            "$base = 0;\n"
+            "include 'child.txt';\n"
+            "100;\n"
+            "$base = 100;\n"
+            "include 'child.txt';\n"
+            "200;\n",
+            "BveTs Map 2.02:utf-8\n"
+            "# Parent Include contexts intentionally provide different $base values.\n"
+            "$base+10;\n"
+            "DrawDistance.Change(500);\n"
+            "$base+30;\n",
+            true, 4, 10.0, "15", "physicalSourceHasIncompatibleIncludeContexts",
+        },
+    }};
+
+    const auto read_bytes = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>());
+    };
+
+    for (const ContractCase& contract : cases) {
+        TempFixture fixture;
+        {
+            std::ofstream map(fixture.map_path,
+                              std::ios::binary | std::ios::trunc);
+            map << contract.map_source;
+        }
+        const std::filesystem::path child_path = fixture.directory / "child.txt";
+        if (contract.child_source) {
+            std::ofstream child(child_path,
+                                std::ios::binary | std::ios::trunc);
+            child << contract.child_source;
+        }
+        const std::string map_before = read_bytes(fixture.map_path);
+        const std::string child_before = contract.child_source
+            ? read_bytes(child_path)
+            : std::string{};
+
+        MapHandle handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 25.0,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        const std::string label = std::string("distance resolution ") + contract.name;
+        check(handle.value != nullptr, (label + " fixture loads").c_str());
+        if (!handle.value) continue;
+
+        KvMapSnapshot snapshot{};
+        const bool snapshot_ok = kv_get_map_snapshot(
+            handle.value, KV_MAP_SNAPSHOT_VERSION, &snapshot,
+            sizeof(snapshot)) != 0;
+        check(snapshot_ok, (label + " snapshot loads").c_str());
+        if (!snapshot_ok) continue;
+
+        const std::filesystem::path expected_source_path =
+            contract.target_child ? child_path : fixture.map_path;
+        KvRowMetadata target_metadata{};
+        bool target_found = false;
+        const auto consider_target = [&](double distance,
+                                         const KvRowMetadata& metadata) {
+            if (target_found ||
+                metadata.source_file_index >= snapshot.source_file_count) return;
+            const std::string source_path = map_string(
+                snapshot,
+                snapshot.source_files[metadata.source_file_index].file_path);
+            if (source_path == expected_source_path.u8string() &&
+                metadata.line == contract.target_line &&
+                nearly_equal(distance, contract.source_distance)) {
+                target_metadata = metadata;
+                target_found = true;
+            }
+        };
+        for (std::uint64_t index = 0; index < snapshot.draw_distance_count; ++index) {
+            consider_target(snapshot.draw_distances[index].distance,
+                            snapshot.draw_distances[index].metadata);
+        }
+        check(target_found, (label + " target resolves by source identity").c_str());
+        if (!target_found) continue;
+
+        const KvSourceFileRow& source_file =
+            snapshot.source_files[target_metadata.source_file_index];
+        const std::string edit_id = map_string(snapshot, target_metadata.edit_id);
+        const std::string source_hash = map_string(snapshot, source_file.source_hash);
+        check(!edit_id.empty() && !source_hash.empty(),
+              (label + " target has edit identity and source hash").c_str());
+        if (edit_id.empty() || source_hash.empty()) continue;
+
+        UpdateBatch update(edit_id, source_hash, contract.target_distance, "distance");
+        KvEditReportSnapshot report{};
+        const bool called = kv_edit_dry_run_typed(
+            handle.value, &update.batch, &report, sizeof(report)) != 0;
+        check(called, (label + " dry run returns a report").c_str());
+        if (called) validate_report(report);
+        check(called && !report.ok && report.blocking_error_count == 0 &&
+                  report.resolution_request_count != 0 &&
+                  edit_report_has_resolution_reason(report, contract.expected_reason),
+              (label + " returns the stable reason code").c_str());
+        check(called && report.changed_file_count == 0 &&
+                  report.preview_snippet_count == 0,
+              (label + " produces no changed files or preview patches").c_str());
+        check(read_bytes(fixture.map_path) == map_before &&
+                  (!contract.child_source || read_bytes(child_path) == child_before),
+              (label + " leaves source bytes unchanged").c_str());
+    }
+}
+
 int edit_contract() {
+    distance_resolution_reason_contract();
     legacy_fog_non_target_contract();
     other_track_key_argument_layout_contract();
     signal_list_append_layout_contract();

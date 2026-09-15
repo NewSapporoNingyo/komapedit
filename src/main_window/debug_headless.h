@@ -119,6 +119,14 @@ struct HeadlessDistanceEditBatchOptions {
     std::string error;
 };
 
+struct HeadlessAutoInsertDiagnosticsOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessOwnTrackEditOptions {
     bool requested = false;
     std::string path;
@@ -369,6 +377,8 @@ HeadlessOwnTrackEditOptions parse_headless_own_track_edit_options(
 HeadlessOtherTrackEditOptions parse_headless_other_track_edit_options(
     const std::vector<std::string>& args);
 HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
+    const std::vector<std::string>& args);
+HeadlessAutoInsertDiagnosticsOptions parse_headless_auto_insert_diagnostics_options(
     const std::vector<std::string>& args);
 HeadlessStationListEditOptions parse_headless_station_list_edit_options(
     const std::vector<std::string>& args);

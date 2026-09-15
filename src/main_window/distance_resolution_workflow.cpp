@@ -73,6 +73,89 @@
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+namespace {
+
+std::string distance_resolution_reason_description(std::string_view reason) {
+    if (reason == "ambiguousSourceSection") {
+        return "the surrounding distance anchors do not define one unambiguous monotonic source section";
+    }
+    if (reason == "multipleEquivalentDistanceBlocks") {
+        return "more than one distance block in the source section has the target distance";
+    }
+    if (reason == "noUniqueDistanceBracket") {
+        return "the target distance is neither one unique existing block nor inside one unique adjacent distance bracket";
+    }
+    if (reason == "distanceExpressionRequiresManualEdit") {
+        return "a safe common target-distance expression cannot be derived automatically";
+    }
+    if (reason == "variableHasMultipleContextValues") {
+        return "a referenced variable has multiple values or availability states in the candidate source section";
+    }
+    if (reason == "incompatibleEvaluationEnvironment") {
+        return "the statement or distance expression would be evaluated in an incompatible destination environment";
+    }
+    if (reason == "physicalSourceHasIncompatibleIncludeContexts") {
+        return "the same physical source statement is used by Include contexts that cannot share one safe placement";
+    }
+    if (reason == "staleDistanceResolution") {
+        return "the submitted manual resolution belongs to a different or recomputed distance-edit group";
+    }
+    if (reason == "conflictingManualBoundaries") {
+        return "members of the same distance-edit group specify different manual source boundaries";
+    }
+    if (reason == "conflictingManualDistanceExpressions") {
+        return "members of the same distance-edit group specify different manual distance expressions";
+    }
+    if (reason == "staleDistanceBoundary") {
+        return "the selected source boundary is no longer valid for the current parsed source";
+    }
+    if (reason == "multipleDistanceBrackets") {
+        return "more than one adjacent source-distance interval brackets the target distance";
+    }
+    if (reason == "destinationBoundaryUnavailable") {
+        return "the selected destination has no valid parser-approved insertion boundary";
+    }
+    return "the backend returned an unknown distance-resolution reason";
+}
+
+void append_distance_resolution_list(std::ostringstream& message,
+                                     std::string_view name,
+                                     const std::vector<std::string>& values) {
+    if (values.empty()) return;
+    message << "; " << name << '=';
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index != 0) message << " -> ";
+        message << values[index];
+    }
+}
+
+std::string format_distance_resolution_log(const DistanceResolutionRequest& request) {
+    std::ostringstream message;
+    message << "Automatic map-statement placement requires manual input: reason="
+            << (request.reason.empty() ? "<missing>" : request.reason)
+            << " (" << distance_resolution_reason_description(request.reason) << ')';
+    if (!request.source_file.empty()) message << "; source=" << request.source_file;
+    if (!request.target_distance.empty()) {
+        message << "; targetDistance=" << request.target_distance;
+    }
+    if (request.source_section_first_line > 0 &&
+        request.source_section_last_line >= request.source_section_first_line) {
+        message << "; sectionLines=" << request.source_section_first_line;
+        if (request.source_section_last_line != request.source_section_first_line) {
+            message << '-' << request.source_section_last_line;
+        }
+    }
+    if (!request.source_section_direction.empty()) {
+        message << "; direction=" << request.source_section_direction;
+    }
+    if (!request.variable_name.empty()) message << "; variable=" << request.variable_name;
+    append_distance_resolution_list(message, "includeStack", request.include_stack);
+    append_distance_resolution_list(message, "affectedEditIds", request.affected_edit_ids);
+    return message.str();
+}
+
+}  // namespace
+
 void App::begin_distance_resolution_workflow(
     const std::map<std::string, MapElementPendingChange>& changes,
     std::optional<MapElementInspectorRequest> reload_request,
@@ -176,6 +259,8 @@ void App::begin_distance_resolution_workflow(
         }
     }
 
+    KME_ADD_LOG(LogSeverity::Warning,
+                format_distance_resolution_log(distance_resolution_workflow_.request));
     const bool needs_expression =
         !distance_resolution_workflow_.request.variable_name.empty() ||
         distance_resolution_workflow_.request.reason ==

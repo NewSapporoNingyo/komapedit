@@ -1151,6 +1151,8 @@ DistanceResolutionRequest distance_resolution_request_from_typed(
     request.suggested_expression = edit_report_string(report, input.suggested_expression);
     request.insertion_preview = edit_report_string(report, input.insertion_preview);
     request.can_confirm_reuse = input.can_confirm_reuse != 0;
+    request.source_section_first_line = input.source_section_first_line;
+    request.source_section_last_line = input.source_section_last_line;
     request.source_section_direction = edit_report_string(
         report, input.source_section_direction);
     auto append_strings = [&](KvSpan span, std::vector<std::string>& output) {

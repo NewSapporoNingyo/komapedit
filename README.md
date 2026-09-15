@@ -477,7 +477,7 @@ Important rules:
 
 - The independent `Curve.Interpolate` template appears immediately after `Curve.*` in Track Geometry. Distance is required; radius and cant are included by default with value `0`. Uncheck cant for the radius-only form, or uncheck radius to disable cant too and create `Curve.Interpolate()`. New elements use the same 2D/3D markers, Properties/Edit, Delete, Apply/Revert, and global Save lifecycle.
 - Other-track templates generate only current `Track.*` forms. Optional trailing arguments must be enabled in order; for example, `radiusH` is required before `radiusV`. A new normalized trackKey creates another track. Numeric keys and quoted string keys remain distinct.
-- If the wizard cannot choose a safe source insertion point automatically, Text Preview highlights parser-approved boundaries for you to choose from.
+- If the wizard cannot choose a safe source insertion point automatically, Text Preview highlights parser-approved boundaries for you to choose from. When this manual workflow is actually required, the App Console records an English warning with the stable failure-reason code and the available source context; an automatically reused cached choice remains silent.
 
 #### New File Wizard
 

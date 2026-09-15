@@ -662,6 +662,7 @@ build\komapedit.exe --debug-headless-edit-bench <map-path> --scene off|on --repe
 build\komapedit.exe --debug-headless-own-track-edit [map-path] --headless-output build\own-track-edit.txt
 build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --headless-output build\other-track-edit.txt
 build\komapedit.exe --debug-headless-distance-edit-batch [map-path] --headless-output build\distance-edit-batch.txt
+build\komapedit.exe --debug-headless-auto-insert-diagnostics <fixture-directory> [--unit-distance M] --headless-output build\auto-insert-diagnostics.txt
 build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-output build\repeater-edit-batch.txt
 build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
 build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
@@ -720,6 +721,8 @@ plan、scene 和 `--debug-headless-own-track-edit` 共用临时 Map/Include 合�
 `--debug-headless-station-put-margin-edit` 要求地图在里程 `0` 含有可编辑的 `Station.Put`。它不模拟 ImGui 点击，检查 Inspector 对零值/错误符号停车容差的拒绝、新建地图元素默认值（`margin1=-5`、`margin2=5`）、向导对非法值的拒绝、合法内存新建和 Revert 清理。该命令仅进行内存 Apply。
 
 `--debug-headless-sparse-new-element` 要求显式传入地图路径：目标源文件中可有零或一条数值距离语句，或者数值距离锚点按源码顺序非递减且最后锚点小于 `866`。它直接驱动正式的 `DrawDistance.Change(500)` 向导表单；稀疏源使用里程 `25`，单调尾部情形使用 `866`。该命令验证目标仍可选择、插入不会请求距离解析、规范 EOF 距离块以新 typed 行结束，随后 Reset 并确认磁盘哈希不变。该命令仅执行内存 Apply，传入 `--commit` 会被拒绝。
+
+`--debug-headless-auto-insert-diagnostics <夹具目录>` 会加载 `testmap\auto_insert_failures` 中语法合法的地图，按物理源文件、源码行、row kind、求值里程和稳定 edit ID 选择源码目标，再驱动正式 App 的编辑账本、内存 Apply 与距离解析流程。报告逐案记录加载结果、预期/实际稳定原因、人工流程状态、应用控制台警告文本/上下文是否匹配，以及所有源文件是否逐字节不变。合法的首次请求夹具覆盖全部 7 个可达原因代码；构造的工作流请求覆盖全部 13 个稳定原因说明及未知代码保底。自动放置成功与缓存选择复用是无警告对照。该命令绝不调用 Save 或 Commit，拒绝 `--commit`，且仅在 `failed_cases=0`、`result=PASS` 时成功。
 
 `--debug-headless-other-track-key-edit` 要求显式传入地图路径。它会选择至少含两条语句的字符串键他轨道，验证整轨原子性与全地图重名保护，再执行 dry-run、内存 Apply、Reset、再次 Apply 和 Reload。`--commit` 会写入已验证工作副本，并按授权保留线路修改以检查物理 diff；报告包含原键/新键、全部目标、变更文件、依赖引用保持情况和源哈希。
 

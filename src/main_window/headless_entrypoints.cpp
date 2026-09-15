@@ -2841,6 +2841,475 @@ int App::run_debug_headless_sparse_new_element(
     return failed_cases == 0 ? 0 : 20;
 }
 
+int App::run_debug_headless_auto_insert_diagnostics(
+    const HeadlessAutoInsertDiagnosticsOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: "
+                      << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+
+    std::error_code path_error;
+    std::filesystem::path fixture_directory = std::filesystem::absolute(
+        std::filesystem::path(utf8_to_wide(options.path)), path_error);
+    if (!path_error) fixture_directory = fixture_directory.lexically_normal();
+    *out << "command=debug-headless-auto-insert-diagnostics\n"
+         << "fixture_directory="
+         << wide_to_utf8(fixture_directory.wstring()) << "\n"
+         << "memory_apply_only=1\n"
+         << "stage=fixture-preflight\n";
+    out->flush();
+
+    int failed_cases = 0;
+    auto check = [&](const std::string& name, bool value) {
+        *out << name << '=' << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+    if (!check("fixture_directory_valid",
+               !path_error && std::filesystem::is_directory(fixture_directory))) {
+        *out << "result=FAIL\n";
+        return 2;
+    }
+
+    struct TargetSpec {
+        const char* source_file;
+        int source_line;
+        double source_distance;
+    };
+    struct FixtureCase {
+        const char* name;
+        const char* map_file;
+        double target_distance;
+        const char* expected_reason;
+        const char* row_kind;
+        std::vector<TargetSpec> targets;
+        bool verify_cached_reuse = false;
+    };
+    const std::vector<FixtureCase> fixture_cases = {
+        {"ambiguous_no_preceding_anchor", "ambiguous_no_preceding_anchor.txt", 50.0,
+         "ambiguousSourceSection", "drawDistance.change",
+         {{"ambiguous_no_preceding_anchor.txt", 2, 0.0}}},
+        {"ambiguous_flat_section", "ambiguous_flat_section.txt", 25.0,
+         "ambiguousSourceSection", "drawDistance.change",
+         {{"ambiguous_flat_section.txt", 4, 0.0}}, true},
+        {"ambiguous_turning_section", "ambiguous_turning_section.txt", 75.0,
+         "ambiguousSourceSection", "drawDistance.change",
+         {{"ambiguous_turning_section.txt", 4, 100.0}}},
+        {"duplicate_target_blocks", "duplicate_target_blocks.txt", 100.0,
+         "multipleEquivalentDistanceBlocks", "drawDistance.change",
+         {{"duplicate_target_blocks.txt", 6, 200.0}}},
+        {"outside_unique_bracket", "outside_unique_bracket.txt", 400.0,
+         "noUniqueDistanceBracket", "drawDistance.change",
+         {{"outside_unique_bracket.txt", 5, 200.0}}},
+        {"relative_distance_expression", "relative_distance_expression.txt", 150.0,
+         "distanceExpressionRequiresManualEdit", "drawDistance.change",
+         {{"relative_distance_expression.txt", 4, 100.0}}},
+        {"multivalued_distance_variable", "multivalued_distance_variable.txt", 150.0,
+         "variableHasMultipleContextValues", "drawDistance.change",
+         {{"multivalued_distance_variable.txt", 6, 100.0}}},
+        {"multivalued_statement_variable", "multivalued_statement_variable.txt", 150.0,
+         "variableHasMultipleContextValues", "drawDistance.change",
+         {{"multivalued_statement_variable.txt", 4, 0.0}}},
+        {"incompatible_predefined_distance", "incompatible_predefined_distance.txt", 50.0,
+         "incompatibleEvaluationEnvironment", "drawDistance.change",
+         {{"incompatible_predefined_distance.txt", 3, 0.0}}},
+        {"conflicting_group_expressions", "conflicting_group_expressions.txt", 150.0,
+         "distanceExpressionRequiresManualEdit", "drawDistance.change",
+         {{"conflicting_group_expressions.txt", 3, 0.0},
+          {"conflicting_group_expressions.txt", 6, 100.0}}},
+        {"repeated_include_context", "repeated_include_root.txt", 15.0,
+         "physicalSourceHasIncompatibleIncludeContexts", "drawDistance.change",
+         {{"repeated_include_child.txt", 4, 10.0}}},
+        {"automatic_success_control", "automatic_success_control.txt", 150.0, "",
+         "drawDistance.change",
+         {{"automatic_success_control.txt", 4, 100.0}}},
+    };
+
+    const auto read_bytes = [](const std::string& path) {
+        std::ifstream input(std::filesystem::path(utf8_to_wide(path)),
+                            std::ios::binary);
+        if (!input) throw std::runtime_error("failed to read fixture source: " + path);
+        return std::string(std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>());
+    };
+    const auto byte_hash = [](std::string_view bytes) {
+        KmeByteHash64 hash;
+        hash.bytes(bytes);
+        std::ostringstream value;
+        value << std::hex << std::setw(16) << std::setfill('0') << hash.value;
+        return value.str();
+    };
+    const auto source_filename = [](const std::string& path) {
+        return ascii_lower(wide_to_utf8(
+            std::filesystem::path(utf8_to_wide(path)).filename().wstring()));
+    };
+    const auto row_distance = [](const TableRow& row) {
+        const std::string value = table_cell(row, "distance");
+        return value.empty() ? std::numeric_limits<double>::quiet_NaN()
+                             : std::stod(value);
+    };
+    const auto has_manual_resolution_warning = [](const App& app,
+                                                   std::string_view reason,
+                                                   std::string_view phrase = {}) {
+        return std::any_of(app.logs_.begin(), app.logs_.end(),
+            [&](const LogLine& line) {
+                if (line.severity != LogSeverity::Warning ||
+                    line.text.find("Automatic map-statement placement requires manual input") ==
+                        std::string::npos ||
+                    (!reason.empty() &&
+                     line.text.find("reason=" + std::string(reason)) == std::string::npos)) {
+                    return false;
+                }
+                return phrase.empty() || line.text.find(phrase) != std::string::npos;
+            });
+    };
+
+    std::set<std::string> reachable_reasons;
+    size_t loaded_fixture_count = 0;
+    size_t warning_fixture_count = 0;
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+
+    try {
+        for (const FixtureCase& fixture : fixture_cases) {
+            const int failures_before = failed_cases;
+            const std::filesystem::path map_path =
+                fixture_directory / utf8_to_wide(fixture.map_file);
+            const std::string map_path_utf8 = wide_to_utf8(map_path.wstring());
+            *out << "case=" << fixture.name << "\n"
+                 << "map_path=" << map_path_utf8 << "\n"
+                 << "expected_reason="
+                 << (fixture.expected_reason[0] ? fixture.expected_reason : "none")
+                 << "\n";
+            if (!check(std::string(fixture.name) + ".fixture_present",
+                       std::filesystem::is_regular_file(map_path))) {
+                *out << "case_result=FAIL\n";
+                continue;
+            }
+
+            LoadResult load = load_map_worker(
+                map_path_utf8, options.unit_distance, false, 0.0, 0.0,
+                options.unit_distance, LoadModelOptions{true});
+            check(std::string(fixture.name) + ".syntax_load_ok", load.ok);
+            if (!load.ok) {
+                *out << "load_error=" << load.error << "\ncase_result=FAIL\n";
+                if (load.handle) kv_free(load.handle);
+                continue;
+            }
+            ++loaded_fixture_count;
+
+            try {
+                UserSettings settings;
+                settings.language = Language::En;
+                App app(nullptr, settings, 1.0f, false, false);
+                app.handle_ = load.handle;
+                load.handle = nullptr;
+                app.model_ = std::move(load.model);
+                app.file_path_ = map_path_utf8;
+                app.has_model_ = true;
+                app.edit_mode_enabled_ = true;
+                app.edit_registry_loaded_ = true;
+                app.edit_memory_matches_pending_ledger_ = true;
+                app.dmin_ = app.model_.default_min;
+                app.dmax_ = app.model_.default_max;
+                app.unit_distance_ = options.unit_distance;
+
+                std::map<std::string, std::string> disk_baseline;
+                for (const EditSourceFileInfo& file : app.model_.edit_files) {
+                    disk_baseline.emplace(file.file_path, read_bytes(file.file_path));
+                }
+                check(std::string(fixture.name) + ".source_set_present",
+                      !disk_baseline.empty());
+
+                std::map<std::string, MapElementPendingChange> ledger;
+                const std::vector<TableRow>* target_rows =
+                    inspector_rows_for_kind(app.model_, fixture.row_kind);
+                check(std::string(fixture.name) + ".row_kind_available",
+                      target_rows != nullptr);
+                for (size_t target_index = 0;
+                     target_index < fixture.targets.size(); ++target_index) {
+                    const TargetSpec& target = fixture.targets[target_index];
+                    if (!target_rows) continue;
+                    const auto row = std::find_if(
+                        target_rows->begin(), target_rows->end(),
+                        [&](const TableRow& candidate) {
+                            return source_filename(candidate.source.file_path) ==
+                                    ascii_lower(target.source_file) &&
+                                candidate.source.line == target.source_line &&
+                                std::isfinite(row_distance(candidate)) &&
+                                std::fabs(row_distance(candidate) - target.source_distance) < 1e-8;
+                        });
+                    const bool target_found = row != target_rows->end() &&
+                        !row->edit_id.empty();
+                    check(std::string(fixture.name) + ".target_" +
+                              std::to_string(target_index) + "_found",
+                          target_found);
+                    if (!target_found) continue;
+
+                    const auto source = std::find_if(
+                        app.model_.edit_files.begin(), app.model_.edit_files.end(),
+                        [&](const EditSourceFileInfo& file) {
+                            return file.file_path == row->source.file_path;
+                        });
+                    const bool source_hash_found = source != app.model_.edit_files.end() &&
+                        !source->source_hash.empty();
+                    check(std::string(fixture.name) + ".target_" +
+                              std::to_string(target_index) + "_source_hash_found",
+                          source_hash_found);
+                    if (!source_hash_found) continue;
+
+                    MapElementPendingChange change;
+                    change.change_id = std::string("headless-auto-insert-") +
+                        fixture.name + '-' + std::to_string(target_index);
+                    change.edit_id = row->edit_id;
+                    change.row_kind = fixture.row_kind;
+                    change.expected_source_hash = source->source_hash;
+                    change.field_changes.emplace(
+                        "distance", format_double(fixture.target_distance, 6));
+                    ledger.emplace(change.edit_id, std::move(change));
+                }
+                const bool complete_ledger = ledger.size() == fixture.targets.size();
+                check(std::string(fixture.name) + ".complete_ledger", complete_ledger);
+
+                bool applied = false;
+                if (complete_ledger) {
+                    applied = app.apply_edit_ledger_to_preview(
+                        ledger, std::nullopt, false);
+                }
+                if (fixture.expected_reason[0] == '\0') {
+                    check(std::string(fixture.name) + ".automatic_apply_succeeded",
+                          applied);
+                    check(std::string(fixture.name) + ".manual_workflow_not_requested",
+                          app.distance_resolution_workflow_.phase ==
+                                  DistanceResolutionPhase::None &&
+                              !app.distance_resolution_workflow_.retry_requested);
+                    check(std::string(fixture.name) + ".warning_not_logged",
+                          !has_manual_resolution_warning(app, {}));
+                } else {
+                    check(std::string(fixture.name) + ".automatic_apply_deferred",
+                          !applied);
+                    const DistanceResolutionRequest request =
+                        app.distance_resolution_workflow_.request;
+                    *out << "actual_reason="
+                         << (request.reason.empty() ? "none" : request.reason) << "\n";
+                    const bool reason_matches = request.reason == fixture.expected_reason;
+                    check(std::string(fixture.name) + ".expected_reason_returned",
+                          reason_matches);
+                    if (reason_matches) reachable_reasons.insert(request.reason);
+                    check(std::string(fixture.name) + ".manual_workflow_requested",
+                          app.distance_resolution_workflow_.phase !=
+                                  DistanceResolutionPhase::None &&
+                              app.distance_resolution_workflow_.popup_requested);
+                    const bool warning_logged = has_manual_resolution_warning(
+                        app, fixture.expected_reason);
+                    check(std::string(fixture.name) + ".warning_logged",
+                          warning_logged);
+                    if (warning_logged) ++warning_fixture_count;
+                    const auto warning = std::find_if(
+                        app.logs_.begin(), app.logs_.end(),
+                        [&](const LogLine& line) {
+                            return line.severity == LogSeverity::Warning &&
+                                line.text.find("reason=" +
+                                    std::string(fixture.expected_reason)) !=
+                                    std::string::npos;
+                        });
+                    if (warning != app.logs_.end()) {
+                        *out << "console_warning=" << warning->text << "\n";
+                    }
+                    check(std::string(fixture.name) + ".warning_has_source_context",
+                          warning != app.logs_.end() &&
+                              warning->text.find("; source=") != std::string::npos &&
+                              warning->text.find("; targetDistance=") !=
+                                  std::string::npos &&
+                              warning->text.find("; sectionLines=") !=
+                                  std::string::npos &&
+                              warning->text.find("; affectedEditIds=") !=
+                                  std::string::npos);
+
+                    if (fixture.verify_cached_reuse && !request.allowed_boundaries.empty()) {
+                        const auto recommended = std::find_if(
+                            request.allowed_boundaries.begin(),
+                            request.allowed_boundaries.end(),
+                            [](const DistanceResolutionBoundary& boundary) {
+                                return boundary.recommended;
+                            });
+                        const std::string boundary_token = recommended !=
+                                request.allowed_boundaries.end()
+                            ? recommended->token
+                            : request.allowed_boundaries.front().token;
+                        check("cached_reuse.boundary_available", !boundary_token.empty());
+                        DistanceResolutionChoice choice;
+                        choice.boundary_token = boundary_token;
+                        app.distance_resolution_choices_[request.resolution_key] = choice;
+                        app.logs_.clear();
+                        app.distance_resolution_workflow_ =
+                            DistanceResolutionWorkflowState{};
+                        const bool outer_apply = app.apply_edit_ledger_to_preview(
+                            ledger, std::nullopt, false);
+                        check("cached_reuse.outer_apply_defers_retry", !outer_apply);
+                        check("cached_reuse.no_manual_warning_before_retry",
+                              !has_manual_resolution_warning(app, {}));
+                        check("cached_reuse.retry_requested_without_popup",
+                              app.distance_resolution_workflow_.retry_requested &&
+                                  app.distance_resolution_workflow_.phase ==
+                                      DistanceResolutionPhase::None &&
+                                  !app.distance_resolution_workflow_.popup_requested);
+                        app.process_distance_resolution_retry();
+                        check("cached_reuse.memory_apply_completed",
+                              app.pending_edit_changes_.size() == ledger.size() &&
+                                  app.distance_resolution_workflow_.phase ==
+                                      DistanceResolutionPhase::None &&
+                                  !app.distance_resolution_workflow_.retry_requested);
+                        check("cached_reuse.no_manual_warning_after_retry",
+                              !has_manual_resolution_warning(app, {}));
+                    } else if (fixture.verify_cached_reuse) {
+                        check("cached_reuse.boundary_available", false);
+                    }
+                }
+
+                bool disk_unchanged = true;
+                size_t source_index = 0;
+                for (const auto& source : disk_baseline) {
+                    const std::string after = read_bytes(source.first);
+                    const bool source_unchanged = after == source.second;
+                    *out << fixture.name << ".source_" << source_index
+                         << "_path=" << source.first << "\n"
+                         << fixture.name << ".source_" << source_index
+                         << "_hash_before=" << byte_hash(source.second) << "\n"
+                         << fixture.name << ".source_" << source_index
+                         << "_hash_after=" << byte_hash(after) << "\n";
+                    check(std::string(fixture.name) + ".source_" +
+                              std::to_string(source_index) + "_unchanged",
+                          source_unchanged);
+                    disk_unchanged = disk_unchanged && source_unchanged;
+                    ++source_index;
+                }
+                check(std::string(fixture.name) + ".disk_sources_unchanged",
+                      disk_unchanged);
+                check(std::string(fixture.name) + ".memory_reset_ok",
+                      kv_edit_reset_memory(app.handle_) != 0);
+                for (const LogLine& line : app.logs_) {
+                    if (line.severity == LogSeverity::Error) {
+                        *out << "app_error=" << line.text << "\n";
+                    }
+                }
+            } catch (const std::exception& e) {
+                *out << "case_exception=" << e.what() << "\n";
+                ++failed_cases;
+            }
+            if (load.handle) kv_free(load.handle);
+            *out << "case_result="
+                 << (failed_cases == failures_before ? "PASS" : "FAIL") << "\n";
+        }
+
+        static constexpr std::array<const char*, 7> k_reachable_reasons = {
+            "ambiguousSourceSection",
+            "multipleEquivalentDistanceBlocks",
+            "noUniqueDistanceBracket",
+            "distanceExpressionRequiresManualEdit",
+            "variableHasMultipleContextValues",
+            "incompatibleEvaluationEnvironment",
+            "physicalSourceHasIncompatibleIncludeContexts",
+        };
+        for (const char* reason : k_reachable_reasons) {
+            check(std::string("reachable_reason.") + reason,
+                  reachable_reasons.find(reason) != reachable_reasons.end());
+        }
+        *out << "loaded_fixture_count=" << loaded_fixture_count << "\n"
+             << "warning_fixture_count=" << warning_fixture_count << "\n"
+             << "reachable_reason_count=" << reachable_reasons.size() << "\n";
+        check("all_fixture_maps_loaded",
+              loaded_fixture_count == fixture_cases.size());
+        check("all_failure_fixtures_logged",
+              warning_fixture_count + 1 == fixture_cases.size());
+        check("all_reachable_reasons_observed",
+              reachable_reasons.size() == k_reachable_reasons.size());
+
+        const std::vector<std::pair<const char*, const char*>> reason_contract = {
+            {"ambiguousSourceSection", "do not define one unambiguous monotonic source section"},
+            {"multipleEquivalentDistanceBlocks", "more than one distance block"},
+            {"noUniqueDistanceBracket", "neither one unique existing block"},
+            {"distanceExpressionRequiresManualEdit", "safe common target-distance expression"},
+            {"variableHasMultipleContextValues", "multiple values or availability states"},
+            {"incompatibleEvaluationEnvironment", "incompatible destination environment"},
+            {"physicalSourceHasIncompatibleIncludeContexts", "Include contexts"},
+            {"staleDistanceResolution", "different or recomputed distance-edit group"},
+            {"conflictingManualBoundaries", "different manual source boundaries"},
+            {"conflictingManualDistanceExpressions", "different manual distance expressions"},
+            {"staleDistanceBoundary", "no longer valid for the current parsed source"},
+            {"multipleDistanceBrackets", "more than one adjacent source-distance interval"},
+            {"destinationBoundaryUnavailable", "no valid parser-approved insertion boundary"},
+        };
+        UserSettings synthetic_settings;
+        synthetic_settings.language = Language::En;
+        App synthetic_app(nullptr, synthetic_settings, 1.0f, false, false);
+        for (const auto& contract : reason_contract) {
+            synthetic_app.logs_.clear();
+            synthetic_app.distance_resolution_choices_.clear();
+            synthetic_app.distance_resolution_workflow_ =
+                DistanceResolutionWorkflowState{};
+            DistanceResolutionRequest request;
+            request.resolution_key = std::string("synthetic-") + contract.first;
+            request.reason = contract.first;
+            request.source_file = "synthetic-map.txt";
+            request.target_distance = "125";
+            request.source_section_first_line = 3;
+            request.source_section_last_line = 9;
+            request.source_section_direction = "increasing";
+            request.variable_name = "sample";
+            request.include_stack = {"root.txt", "synthetic-map.txt"};
+            request.affected_edit_ids = {"synthetic-edit"};
+            synthetic_app.begin_distance_resolution_workflow(
+                {}, std::nullopt, false, {}, {request});
+            check(std::string("reason_text.") + contract.first,
+                  has_manual_resolution_warning(
+                      synthetic_app, contract.first, contract.second));
+            check(std::string("reason_context.") + contract.first,
+                  has_manual_resolution_warning(
+                      synthetic_app, contract.first, "sectionLines=3-9"));
+        }
+        synthetic_app.logs_.clear();
+        synthetic_app.distance_resolution_workflow_ =
+            DistanceResolutionWorkflowState{};
+        DistanceResolutionRequest unknown_request;
+        unknown_request.resolution_key = "synthetic-unknown";
+        unknown_request.reason = "futureDistanceResolutionReason";
+        synthetic_app.begin_distance_resolution_workflow(
+            {}, std::nullopt, false, {}, {unknown_request});
+        check("reason_text.unknown_code_preserved",
+              has_manual_resolution_warning(
+                  synthetic_app, "futureDistanceResolutionReason",
+                  "unknown distance-resolution reason"));
+        *out << "stable_reason_text_count=" << reason_contract.size() << "\n";
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    *out << "failed_cases=" << failed_cases << "\n"
+         << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 20;
+}
+
 int App::run_debug_headless_resource_list_replace(
     const HeadlessResourceListReplaceOptions& options) {
     std::ofstream output_file;

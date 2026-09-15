@@ -69,6 +69,7 @@ struct HeadlessLightEditOptions;
 struct HeadlessCurveParameterEditOptions;
 struct HeadlessStationPutMarginEditOptions;
 struct HeadlessSparseNewElementOptions;
+struct HeadlessAutoInsertDiagnosticsOptions;
 struct HeadlessResourceListReplaceOptions;
 struct HeadlessResourceListInsertOptions;
 struct HeadlessNewFileWizardOptions;
@@ -394,6 +395,8 @@ struct DistanceResolutionRequest {
     std::string suggested_expression;
     std::string insertion_preview;
     bool can_confirm_reuse = false;
+    int source_section_first_line = 0;
+    int source_section_last_line = 0;
     std::string source_section_direction;
     std::vector<DistanceResolutionBoundary> allowed_boundaries;
     std::vector<std::string> affected_edit_ids;
@@ -1845,6 +1848,8 @@ public:
         const HeadlessStationPutMarginEditOptions& options);
     static int run_debug_headless_sparse_new_element(
         const HeadlessSparseNewElementOptions& options);
+    static int run_debug_headless_auto_insert_diagnostics(
+        const HeadlessAutoInsertDiagnosticsOptions& options);
     static int run_debug_headless_resource_list_replace(
         const HeadlessResourceListReplaceOptions& options);
     static int run_debug_headless_resource_list_insert(
