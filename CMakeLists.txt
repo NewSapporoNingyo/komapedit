@@ -319,6 +319,13 @@ add_executable(komapedit
     src/canvas3d/scene_route_overlay.cpp
     src/canvas3d/scene_track_sampling.cpp
     src/table/datatable.cpp
+    src/table/datatable_benchmark.cpp
+    src/table/datatable_cache.cpp
+    src/table/datatable_effect_tables.cpp
+    src/table/datatable_find.cpp
+    src/table/datatable_resource_lists.cpp
+    src/table/datatable_route_tables.cpp
+    src/table/datatable_scenario.cpp
     src/table/table_navigation.cpp
 )
 add_dependencies(komapedit maploader model_loader)

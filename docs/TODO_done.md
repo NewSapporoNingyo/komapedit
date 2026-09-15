@@ -91,6 +91,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### Map Data Tables
 
+- [x] Split the former monolithic data-table implementation into independently compiled cache, find, editable resource-list, route, effect, Scenario, benchmark, shared-internal, and navigation modules while preserving the single `TableUiCache` publication path, editing lifecycle, column/ImGui identity, and cross-view behavior; add a read-only Debug real-map cache/render benchmark with stable cache and physical-source fingerprints.
 - [x] Load the station list specified by `Station.Load`.
 - [x] Display `Station.Put` position rows separately from `Station.Load` definition rows.
 - [x] Display the other-track list, with controls for visibility, range, and color.
@@ -273,6 +274,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 地图信息表示
 
+- [x] 将原巨型数据表实现按缓存、查找、可编辑资源列表、线路、效果、Scenario、基准、共享内部设施和导航拆为独立编译模块，同时保留单一 `TableUiCache` 发布路径、编辑生命周期、列/ImGui 身份与跨视图行为；新增只读的 Debug 真实地图缓存/绘制基准，并校验稳定缓存及全部物理源码指纹。
 - [x] 读取 `Station.Load` 指定的车站列表 CSV
 - [x] 分别显示 `Station.Put` 位置行和 `Station.Load` 定义行
 - [x] 显示他轨道列表，可切换显示、设置范围和颜色

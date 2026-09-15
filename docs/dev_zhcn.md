@@ -115,10 +115,10 @@ ctest --test-dir build --output-on-failure
 | 主窗口 | `gui_kme.cpp`、`kme.h` 及职责明确的 `src/main_window/` 模块：App 状态协调、Win32/D3D11 启动、通用工具/背景图、快照水合/加载、编辑/距离/Inspector/列表草稿/新建文件/新建元素工作流、对话框/UI、场景预览与无头入口。新建文件渲染位于 `new_element_wizard.cpp`，正文/对话框辅助位于 `app_dialogs.cpp`，延迟创建位于 `element_inspector_data.cpp`，工作流契约位于 `headless_entrypoints.cpp` |
 | 运行时/设置 | `app_settings.cpp/.h`、`runtime_paths.cpp/.h`、`maploader_runtime.cpp`：INI、相对可执行文件路径、DLL 加载、精确 API 检查 |
 | 源码工具 | `file_structure_diagram.cpp`、`text_preview.cpp`：Include 图、工作副本预览、源码操作（更换 Include 文件、解除引用）与距离边界选择 |
-| Debug 验证 | `debug_headless.cpp/.h`、`headless_entrypoints.cpp`、`edit_benchmark.cpp`、`touch_input.cpp/.h`：参数解析、无界面契约、正式工作流与编辑基准、相机传递、查找、触摸、编辑与文件创建检查 |
+| Debug 验证 | `debug_headless.cpp/.h`、`headless_entrypoints.cpp`、`edit_benchmark.cpp`、`src/table/datatable_benchmark.cpp`、`touch_input.cpp/.h`：参数解析、无界面契约、正式工作流、编辑与表格缓存基准、相机传递、查找、触摸、编辑与文件创建检查 |
 | 二维视图 | `src/canvas2d/canvas2D.cpp`：平面/profile 数据、缓存化的 `Curve.Interpolate` 端点标记水合与平面绘制编排；`canvas2d_view_state.cpp/.h`：平移/缩放/旋转和坐标转换；`canvas2d_marker_cache.cpp/.h`：轨道采样与 marker/Repeater 叠加缓存；`canvas2d_interaction.cpp/.h`：测量/marker 命中、上下文目标/动作和源码映射；`canvas2d_background.cpp/.h`：图片坐标、绘制和两点对齐；`canvas2d_primitives.cpp/.h`：屏幕变换、裁剪折线、网格、比例尺和标记绘制；`profile_plots.cpp`：纵断面与半径图表 |
 | 三维视图 | `include/canvas3D.h` 与 `src/canvas3d/canvas3D.cpp`：公共预览接口和薄委托；私有 `canvas3d_impl.h` 状态及按职责划分的 `canvas3d_*.cpp` 实现，详见下文三维模块表；`scene_track_sampling.cpp/.h` 与 `scene_route_overlay.cpp/.h`：CPU 采样和纯线路信息格式化 |
-| 表格/导航 | `src/table/datatable.cpp`、`table_navigation.cpp`：缓存表格、行内编辑、查找与行/平面/场景导航 |
+| 表格/导航 | 按功能划分的 `src/table/datatable*.cpp`、`datatable_internal.h` 与 `table_navigation.cpp`：共享单元格/列、单一缓存水合、查找、资源列表行内编辑、线路/效果/Scenario 窗口、Debug 基准及行/平面/场景导航 |
 | 共享标记 | `include/map_marker_visuals.h`、`map_marker_visuals.cpp`：二维/三维标记的唯一视觉配方 |
 | 本地化 | `include/multilanguage.h`：简体中文、英语和日语界面文本 |
 
@@ -477,17 +477,22 @@ ctest --test-dir build --output-on-failure
 
 ### 数据表格与跨视图导航
 
-#### `src/table/datatable.cpp`
+所有下列文件都位于 `src/table/`，并在 CMake 中作为独立翻译单元编译。`TableUiCache` 仍是 App 唯一持有的表格缓存：`datatable_cache.cpp` 先构造局部缓存，再以最后一次 move 发布；`table_navigation.cpp` 仍独立负责缓存失效后的状态复位和跨视图导航。此次拆分不增加逐帧水合、源码读取、共享状态或第二条编辑路径。
 
-- **通用单元格与菜单**：文本 cell、tooltip、源码/文件/编辑 context action 帮助函数统一普通行、Repeater 双源码行和资源路径行行为；大小写折叠、query match 与状态格式函数实现共享查找。
-- **查找面板**：`TableFindRowsView`、result reset/step/exact-query 函数维护匹配索引；布局帮助函数在窄窗口动态换行并保持按钮宽度，unused search 以引用 key 集合反查定义表。
-- **行内编辑控件**：`EditableCellInteraction` 及输入、clear、browse、move、delete 渲染块写入 `EditableListDraftRow`，校验字段是否可表达于原编码/列形状，并在 Apply 前保持源行 ID 和未显示 signal aspect 列。
-- **通用表格绘制**：固定表头、选择/高亮色、all/range flag 和缓存 row metadata 帮助函数，避免每个窗口重复 ImGui table 样板。
-- **模型到缓存**：`ensure_table_cache()` 以 model content revision 建立 Station、Structure、Repeater、Signal、Section、Train、Sound、变量和效果表；`merged_repeater_rows()` 使用共享 linkage 把 Begin/End/变化边界组合成显示行；Section 可变参数和 Signal 可变 key 列保持动态形状。
-- **语义标注**：track key 检查函数标记 3D 场景不存在/非法轨道引用；source path/range formatter 为双端 Repeater 和 Include 行生成显示与 tooltip；`refresh_speed_limit_table_cache()` 处理运行态有效限速。
-- **专用 find API**：Structure model、Signal aspect、Sound/Sound3D 的 reset/run/unused/find-for-key/step/status 函数组合，供表格内搜索及从放置行反查资源定义。
-- **窗口函数**：`render_othertracks_window()` 管理轨道可见性/颜色/范围；Station、Structure Put/Between、Structure Model、Other Train、Sound list/3D list、Repeater、Signal aspect/put、Section、Variable、Beacon、Irregularity、各 noise/sound/environment、SpeedLimit 和 Scenario File 的 `render_*_window()` 分别定义列、排序、行选择、定位、源码菜单和适用的编辑入口；Scenario 路径输入在编辑模式下提供右键文件选择，始终提供资源管理器入口。
-- 每个专用窗口只读取 `TableUiCache` 与轻量 visibility 状态；修改 draft、选择或导航时调用 App 的共享编辑/定位方法，不直接拼接源码或重建场景。
+| 模块 | 职责 |
+| --- | --- |
+| `datatable.cpp` | 共享单元格/数值转换、表格 UI 基础帮助函数及场景轨道 key 语义标注 |
+| `datatable_internal.h` | 私有 inline 列定义及内部 action/view/helper 声明；完整窗口和缓存构建不进入头文件，模板保留在其唯一归属的 `.cpp` 中 |
+| `datatable_cache.cpp` | 完整 `TableUiCache` 水合、动态 Section/Signal 列、Repeater 显示行合并、列宽测量与运行态限速缓存刷新 |
+| `datatable_find.cpp` | 不区分大小写的 find/reset/step、unused-key 搜索，以及 Structure/Signal/Sound 专用 App 查找 API |
+| `datatable_resource_lists.cpp` | 通用可编辑列表渲染，以及 Station、Structure model、Signal aspect、Sound、Sound3D 资源列表窗口 |
+| `datatable_route_tables.cpp` | 他轨道、Station.Put、Structure、他列车、Repeater、Signal.Put、Section 与 Variable 窗口 |
+| `datatable_effect_tables.cpp` | Beacon、Irregularity、声音/噪声、Background、Adhesion、CabIlluminance、Fog、Lighting、DrawDistance 与 SpeedLimit 窗口 |
+| `datatable_scenario.cpp` | Scenario File 表格及既有路径/候选 UI 编排 |
+| `datatable_benchmark.cpp` | 仅 Debug 的真实地图缓存重建、热命中与无输入表格帧基准，并校验缓存摘要和源码完整性 |
+| `table_navigation.cpp` | 缓存失效状态复位及 table/plan/scene 跨视图导航 |
+
+每个专用窗口继续只读取 `TableUiCache` 与轻量 visibility 状态；修改 draft、选择或导航时仍调用 App 的共享编辑/定位方法，不直接拼接源码或重建场景。
 
 #### `src/table/table_navigation.cpp`
 
@@ -500,12 +505,12 @@ ctest --test-dir build --output-on-failure
 
 #### `src/main_window/debug_headless.h`
 
-- 每个 `*Options` 结构对应一个命令行模式：Map/Scenario 加载、plan/scene/open/edit benchmark、场景 loader/相机传递、diagnostics popup、source anchor、roundtrip、distance/own/other track、Station/资源列表、Repeater、Section、Include、新建文件/元素、table find、touch 和 settings persistence。
+- 每个 `*Options` 结构对应一个命令行模式：Map/Scenario 加载、plan/scene/open/edit/table-cache benchmark、场景 loader/相机传递、diagnostics popup、source anchor、roundtrip、distance/own/other track、Station/资源列表、Repeater、Section、Include、新建文件/元素、table find、touch 和 settings persistence。
 - 头文件声明各 `run_debug_headless_*()` 入口，生产 Release 可不启用这些路径；参数结构使 `main()` 的命令行解析与具体测试实现解耦。
 
 #### `src/main_window/debug_headless.cpp`
 
-- **公共设施与参数**：COM RAII、UTF 路径、输出文件、耗时统计、hash、快照 matrix 汇总、日志捕获和 fixture 查找函数为无界面模式提供确定输出；该文件也解析各模式参数。独立拆分的编辑基准实现在 `edit_benchmark.cpp`。
+- **公共设施与参数**：COM RAII、UTF 路径、输出文件、耗时统计、hash、快照 matrix 汇总、日志捕获和 fixture 查找函数为无界面模式提供确定输出；该文件也解析各模式参数。独立拆分的编辑基准实现在 `edit_benchmark.cpp`，表格缓存/绘制基准实现在 `src/table/datatable_benchmark.cpp`。
 - **加载/几何/场景检查**：基础 Map load 验证 snapshot 结构和矩阵，Scenario load 验证 v2 快照、编辑 roundtrip、候选选择及解析后地图；plan/scene benchmark 重复构建缓存并输出分阶段时间、数量和 hash；camera-transfer 检查 rebuild 前后姿态；scene 调试读取像素与 fog 状态验证渲染结果。
 - **`typed_edit_headless`**：`Field/Change/Batch/Report` 是公共编辑 ABI 的 RAII 包装，负责字符串 view 生命周期、dry-run/apply/commit 报告复制和失败信息。
 - **距离/自轨道/他轨道批次**：`distance_batch_headless` 的 MapHandle、edit 选择、resolution choice 和 report facts 驱动多文件/Include/变量环境用例；own/other track 模式验证方法不转换、参数形状、Apply/Reset/Commit 和几何变化。
@@ -650,6 +655,7 @@ build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N
 build\komapedit.exe --debug-headless-scenario-lifecycle <scenario-path> [--scenario-index N] [--unit-distance M] --headless-output build\scenario-lifecycle.txt
 build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
+build\komapedit.exe --debug-headless-table-cache-bench <map-path> --repeat 5 --unit-distance 25 --headless-output build\table-cache-bench.txt
 build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 [--interaction stationary|moving] [--profile-stages] --headless-output build\headless-scene3d-bench.txt
 build\komapedit.exe --debug-headless-scene-loader-contract --headless-output build\scene-loader-contract.txt
 build\komapedit.exe --debug-headless-diagnostics-popup-bench --headless-output build\diagnostics-popup-bench.txt
@@ -685,6 +691,8 @@ build\komapedit.exe --debug-headless-settings-persistence --headless-output buil
 build\komapedit.exe --debug-headless-curve-parameter-edit <map-path> --headless-output build\curve-parameter-edit.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
+
+`--debug-headless-table-cache-bench` 使用正式 edit profile 加载器和完整编辑 metadata，创建关闭 INI 持久化的 ImGui/ImPlot context，且不生成鼠标或键盘事件。一次不计时的缓存/窗口预热后，每轮分别测量冷态 `invalidate_table_cache()` 加 `ensure_table_cache()`、一批热缓存命中折算的单次耗时，以及直接调用全部数据表窗口的一帧。报告会对每个缓存行、cell、源码/编辑身份、动态标题/宽度及相关 metadata 生成指纹，所有轮次必须一致；根地图与 `model.edit_files` 中每个物理源文件在计时区间外逐字节读取并校验哈希，必须保持不变。默认重复 5 次、unit distance 25 m，repeat 范围为 1–100。该显式 Debug 命令不注册为 CTest；性能比较应在改动前后各顺序运行三个独立进程，且不得与构建或其他基准重叠。
 
 `--debug-headless-edit-bench` 直接执行正式 App 的 Apply／Save 和延迟 Delete 路径，不模拟点击。先在输入线路上仅内存应用、删除和撤销，并对全部已加载物理源文件执行前后字节及哈希核对。Save 只在独占临时根目录下的独立普通文件副本中执行，依赖保留相对目录布局，拒绝越出副本根目录的源码目标和重解析点，结束后清理夹具。线路须包含可编辑的 `Structure.Put`、`Repeater.Begin`、`Curve.SetGauge`；基准按源码顺序选择首个有效目标，采用固定坐标／轨距增量、1260×680 场景、向后 100 m／向前 1200 m 窗口，以及线路最小里程 + 500 m 的相机位置（由正常相机 API 限制范围）。
 

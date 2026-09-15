@@ -227,6 +227,20 @@ int main(int, char**) {
         return App::run_debug_headless_table_find(table_find.output_path);
     }
 
+    HeadlessTableCacheBenchmarkOptions table_cache_bench =
+        parse_headless_table_cache_benchmark_options(args);
+    if (table_cache_bench.requested) {
+        if (!table_cache_bench.error.empty()) {
+            std::cerr << table_cache_bench.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-table-cache-bench "
+                         "<map-path> [--repeat N] [--unit-distance M] "
+                         "[--headless-output FILE]\n";
+            return 1;
+        }
+        return App::run_debug_headless_table_cache_benchmark(
+            table_cache_bench);
+    }
+
     HeadlessSettingsPersistenceOptions settings_persistence =
         parse_headless_settings_persistence_options(args);
     if (settings_persistence.requested) {

@@ -762,6 +762,47 @@ HeadlessOpenBenchmarkOptions parse_headless_open_benchmark_options(
     return options;
 }
 
+HeadlessTableCacheBenchmarkOptions parse_headless_table_cache_benchmark_options(
+    const std::vector<std::string>& args) {
+    HeadlessTableCacheBenchmarkOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-table-cache-bench") {
+            options.requested = true;
+            const std::string* value = take_option_value(
+                args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--repeat") {
+            if (!parse_integer_option(args, i, arg, 1, 100,
+                                      "--repeat must be between 1 and 100",
+                                      options.repeat, options.error)) {
+                return options;
+            }
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(
+                    args, i, arg, "a number",
+                    "--unit-distance must be a positive number",
+                    options.unit_distance, options.error,
+                    [](double value) {
+                        return value > 0.0 && std::isfinite(value);
+                    })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value = take_option_value(
+                args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error =
+            "--debug-headless-table-cache-bench requires a map path";
+    }
+    return options;
+}
+
 HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const std::vector<std::string>& args) {
     HeadlessScene3DBenchmarkOptions options;
     for (size_t i = 1; i < args.size(); ++i) {

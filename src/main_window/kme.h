@@ -60,6 +60,7 @@ inline void release_com(T*& pointer) {
 #ifndef NDEBUG
 extern std::ostream* g_debug_plan_benchmark_log;
 struct HeadlessOpenBenchmarkOptions;
+struct HeadlessTableCacheBenchmarkOptions;
 struct HeadlessEditBenchmarkOptions;
 struct HeadlessOwnTrackEditOptions;
 struct HeadlessOtherTrackEditOptions;
@@ -1815,6 +1816,8 @@ public:
                                                  bool profile_stages,
                                                  const std::string& interaction);
     static int run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& options);
+    static int run_debug_headless_table_cache_benchmark(
+        const HeadlessTableCacheBenchmarkOptions& options);
     static int run_debug_headless_diagnostics_popup_benchmark(
         const HeadlessDiagnosticsPopupBenchOptions& options);
     static int run_debug_headless_scene3d_benchmark(const std::string& path, int frames,

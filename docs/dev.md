@@ -115,10 +115,10 @@ Do not commit build directories, cloned `third_party` source trees, settings fil
 | Main window | `src/main_window/gui_kme.cpp`, `kme.h`, and focused `src/main_window/` modules: App-state coordination; Win32/D3D11 bootstrap; shared GUI utilities/backgrounds; snapshot hydration/loading; edit, distance, Inspector, list-draft, new-file, and new-element workflows; dialogs/UI; scene previews; headless entry points. New-file rendering is in `new_element_wizard.cpp`, content/dialog helpers in `app_dialogs.cpp`, deferred creation in `element_inspector_data.cpp`, and workflow contracts in `headless_entrypoints.cpp` |
 | Runtime/settings | `app_settings.cpp/.h`, `runtime_paths.cpp/.h`, `maploader_runtime.cpp`: INI persistence, executable-relative paths, DLL loading, exact API checks |
 | Source tools | `file_structure_diagram.cpp`, `text_preview.cpp`: Include graph, working-copy source preview, source actions (change included file, unlink Include), distance-boundary selection |
-| Debug validation | `debug_headless.cpp/.h`, `headless_entrypoints.cpp`, `edit_benchmark.cpp`, `touch_input.cpp/.h`: option parsing, headless contracts, production-workflow and edit benchmarks, camera transfer, find, touch, edit, and file-creation checks |
+| Debug validation | `debug_headless.cpp/.h`, `headless_entrypoints.cpp`, `edit_benchmark.cpp`, `src/table/datatable_benchmark.cpp`, `touch_input.cpp/.h`: option parsing, headless contracts, production-workflow, edit, and table-cache benchmarks, camera transfer, find, touch, edit, and file-creation checks |
 | 2D views | `src/canvas2d/canvas2D.cpp`: plan/profile data, cached `Curve.Interpolate` endpoint-marker hydration, and plan-render orchestration; `canvas2d_view_state.cpp/.h`: pan/zoom/rotation and coordinate conversion; `canvas2d_marker_cache.cpp/.h`: track sampling and marker/Repeater overlay caches; `canvas2d_interaction.cpp/.h`: measurement and marker hit tests, context targets/actions, and source mapping; `canvas2d_background.cpp/.h`: image coordinates, drawing, and two-point alignment; `canvas2d_primitives.cpp/.h`: screen transforms, clipped polylines, grids, scale bars, and marker drawing; `profile_plots.cpp`: profile and radius charts |
 | 3D views | `include/canvas3D.h` and `src/canvas3d/canvas3D.cpp`: public preview API and thin delegates; private `canvas3d_impl.h` state and functional `canvas3d_*.cpp` implementations, detailed below; `scene_track_sampling.cpp/.h` and `scene_route_overlay.cpp/.h`: CPU sampling and pure route-overlay formatting |
-| Tables/navigation | `src/table/datatable.cpp`, `table_navigation.cpp`: cached tables, inline editing, find, row/plan/scene navigation |
+| Tables/navigation | Functional `src/table/datatable*.cpp` modules plus `datatable_internal.h` and `table_navigation.cpp`: shared cells/columns, single-cache hydration, find, inline resource lists, route/effect/Scenario windows, Debug benchmarking, and row/plan/scene navigation |
 | Shared marker visuals | `include/map_marker_visuals.h`, `src/main_window/map_marker_visuals.cpp`: canonical 2D/3D marker recipes |
 | Localization | `include/multilanguage.h`: Simplified Chinese, English, and Japanese UI strings |
 
@@ -148,6 +148,23 @@ All files below are under `src/canvas3d/`. `Canvas3D::Impl` remains the single s
 `scene_track_sampling.cpp/.h` remains the CPU-only ordinary/camera sampling boundary; only the camera sampler extrapolates before the route start. `scene_route_overlay.cpp/.h` remains independent of D3D/ImGui and formats the shared evaluated route events. `scene_frame_profile.h` supplies Debug-only stage instrumentation. The two internal contract files compile into the EXE under `NDEBUG` guards and run through the existing scene benchmark/loader headless modes, not through CTest or textual `.inl` inclusion. Keep model DLL load/free pairing, worker cancellation/join and wake/upload ordering, reversed-Z and camera-relative transforms, bounded Repeater caches, and marker identity/visibility invalidation in their existing owners.
 
 The visible scene FPS is maintained by `canvas3d_scene_ui.cpp` as `interval_count / active_seconds` over completed 0.2-second steady-clock activity windows. The first render only establishes the time anchor; positive intervals no longer than 0.1 seconds contribute to the current window, while longer gaps discard that partial window and preserve the last published value. Reset clears the anchor, partial window, and published value. This overlay value is scene-render-call cadence, not Present-completion, refresh-rate, GPU timing, or `--debug-headless-scene3d-bench` `p95_fps` telemetry. Main-loop Present and render wakeups remain owned by `win32_dx11_bootstrap.cpp`.
+
+### Table modules
+
+All files below are under `src/table/` and are listed as independent translation units in CMake. `TableUiCache` remains the single App-owned table cache: `datatable_cache.cpp` builds a local cache and publishes it with one final move, while `table_navigation.cpp` remains the invalidation and cross-view navigation owner. The split does not add per-frame hydration, source reads, shared state, or another editing path.
+
+| Module | Responsibility |
+| --- | --- |
+| `datatable.cpp` | Shared cell/value conversion, table UI primitives, column-independent helpers, and scene track-key annotations |
+| `datatable_internal.h` | Private inline column definitions plus internal action/view/helper declarations; complete windows and cache construction stay out of the header, while templates remain in their single owning `.cpp` |
+| `datatable_cache.cpp` | Full `TableUiCache` hydration, dynamic Section/Signal columns, Repeater display-row merging, measured widths, and speed-limit cache refresh |
+| `datatable_find.cpp` | Case-insensitive find/reset/step, unused-key searches, and Structure/Signal/Sound-specific App find APIs |
+| `datatable_resource_lists.cpp` | Generic editable-list rendering and Station, Structure model, Signal aspect, Sound, and Sound3D list windows |
+| `datatable_route_tables.cpp` | Other-track, Station.Put, Structure, other-train, Repeater, Signal.Put, Section, and Variable windows |
+| `datatable_effect_tables.cpp` | Beacon, irregularity, sound/noise, background, adhesion, cab-illuminance, fog, lighting, draw-distance, and speed-limit windows |
+| `datatable_scenario.cpp` | Scenario File table and existing path/candidate UI orchestration |
+| `datatable_benchmark.cpp` | Debug-only real-map cache rebuild, hot-hit, and no-input table-frame benchmark with cache/source integrity checks |
+| `table_navigation.cpp` | Cache invalidation state reset and table-to-plan-to-scene navigation |
 
 ## Core engineering rules
 
@@ -247,6 +264,7 @@ build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N
 build\komapedit.exe --debug-headless-scenario-lifecycle <scenario-path> [--scenario-index N] [--unit-distance M] --headless-output build\scenario-lifecycle.txt
 build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
+build\komapedit.exe --debug-headless-table-cache-bench <map-path> --repeat 5 --unit-distance 25 --headless-output build\table-cache-bench.txt
 build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 [--interaction stationary|moving] [--profile-stages] --headless-output build\headless-scene3d-bench.txt
 build\komapedit.exe --debug-headless-scene-loader-contract --headless-output build\scene-loader-contract.txt
 build\komapedit.exe --debug-headless-diagnostics-popup-bench --headless-output build\diagnostics-popup-bench.txt
@@ -282,6 +300,8 @@ build\komapedit.exe --debug-headless-settings-persistence --headless-output buil
 build\komapedit.exe --debug-headless-curve-parameter-edit <map-path> --headless-output build\curve-parameter-edit.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
+
+`--debug-headless-table-cache-bench` uses the production edit-profile loader and complete edit metadata, creates ImGui/ImPlot contexts with INI persistence disabled, and issues no mouse or keyboard events. After one unmeasured cache/window warmup, each repeat measures a cold `invalidate_table_cache()` plus `ensure_table_cache()`, a batch of hot cache hits reported per call, and one frame that directly invokes every data-table window. The report fingerprints every cached row, cell, source/edit identity, dynamic heading/width, and related metadata; every repeat must match. The root map and every physical source in `model.edit_files` are read and byte-hashed outside the timed regions and must remain unchanged. Defaults are five repeats and 25 m, with repeat range 1–100. This explicit Debug command is not registered with CTest; performance comparisons use three sequential processes before and after a change, with no overlapping build or benchmark.
 
 `--debug-headless-edit-bench` directly exercises the production App Apply/Save and deferred Delete paths without clicking. It first applies/deletes/reverts in memory on the input and protects every loaded physical source with before/after byte and hash checks. Save runs only on independent regular-file copies below an exclusive temporary root; dependencies retain their relative directory layout, escaped source targets and reparse points are rejected, and the fixture is removed afterward. Use a route containing editable `Structure.Put`, `Repeater.Begin`, and `Curve.SetGauge` rows. The benchmark selects the first valid targets in source order, uses fixed coordinate/gauge deltas, a 1260×680 scene, a 100 m / 1200 m window, and a camera at the route minimum + 500 m (clamped by the normal camera API).
 

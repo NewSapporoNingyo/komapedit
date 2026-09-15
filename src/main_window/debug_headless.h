@@ -73,6 +73,15 @@ struct HeadlessOpenBenchmarkOptions {
     std::string error;
 };
 
+struct HeadlessTableCacheBenchmarkOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    int repeat = 5;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessSceneCameraTransferOptions {
     bool requested = false;
     std::string path;
@@ -368,6 +377,8 @@ HeadlessLoadScenarioOptions parse_headless_load_scenario_options(
     const std::vector<std::string>& args);
 HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args);
 HeadlessOpenBenchmarkOptions parse_headless_open_benchmark_options(const std::vector<std::string>& args);
+HeadlessTableCacheBenchmarkOptions parse_headless_table_cache_benchmark_options(
+    const std::vector<std::string>& args);
 HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const std::vector<std::string>& args);
 HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(const std::vector<std::string>& args);
 HeadlessSourceAnchorOptions parse_headless_source_anchor_options(const std::vector<std::string>& args);
