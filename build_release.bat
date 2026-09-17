@@ -17,7 +17,7 @@ for %%F in ("build_release\*.dll") do (
     )
 )
 
-set CMAKE_ARGS=-S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release
+set CMAKE_ARGS=-S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 if defined NINJA_EXE (
     set CMAKE_ARGS=!CMAKE_ARGS! -DCMAKE_MAKE_PROGRAM=%NINJA_EXE%
 )
@@ -50,6 +50,13 @@ if not exist "build_release\bin\maploader.dll" (
 if not exist "build_release\bin\model_loader.dll" (
     echo model_loader.dll was not generated in build_release\bin.
     exit /b 1
+)
+for /r "build_release" %%F in (*_tests.exe) do (
+    if exist "%%~fF" (
+        echo Unexpected test executable in Release output: %%~fF
+        echo Remove the stale test executable manually before packaging this build.
+        exit /b 1
+    )
 )
 if not exist "build_release\settings\" mkdir "build_release\settings"
 

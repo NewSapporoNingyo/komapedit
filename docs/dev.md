@@ -84,7 +84,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-`KOMAPEDIT_STRICT_WARNINGS` is off in the normal scripts. Seven non-headless contracts are registered: `multilanguage_contract`, `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, `canvas3d_camera_contract`, and `route_value_sampling_contract`. Headless validation must be run explicitly and is not registered with CTest. The diagnostics test requires the ignored local fixtures under `tests/`; confirm that they exist before interpreting a clean-checkout failure.
+`KOMAPEDIT_STRICT_WARNINGS` is off in the normal scripts. Seven non-headless contracts are registered: `multilanguage_contract`, `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, `canvas3d_camera_contract`, and `route_value_sampling_contract`. The registered test executables and built-in headless entry points are compiled only in Debug: `build_dev.bat` explicitly enables `BUILD_TESTING`, while `build_release.bat` disables it, omits the headless implementation sources, and rejects stale `*_tests.exe` files in the Release output. Headless validation must be run explicitly and is not registered with CTest. The diagnostics test requires the ignored local fixtures under `tests/`; confirm that they exist before interpreting a clean-checkout failure.
 
 Runtime output is organized as follows:
 

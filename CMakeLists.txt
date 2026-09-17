@@ -8,7 +8,11 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include(CTest)
+set(KOMAPEDIT_DEBUG_BUILD OFF)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(KOMAPEDIT_DEBUG_BUILD ON)
+    include(CTest)
+endif()
 
 option(KOMAPEDIT_STRICT_WARNINGS
     "Treat high-value warnings in komapedit-owned targets as errors"
@@ -104,7 +108,7 @@ set_target_properties(maploader PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 
-if(BUILD_TESTING)
+if(KOMAPEDIT_DEBUG_BUILD AND BUILD_TESTING)
     add_executable(multilanguage_tests
         src/main_window/tests/multilanguage_tests.cpp
     )
@@ -282,14 +286,11 @@ add_executable(komapedit
     src/main_window/app_dialogs.cpp
     src/main_window/ui_elements.cpp
     src/main_window/scene_preview_lifecycle.cpp
-    src/main_window/headless_entrypoints.cpp
     src/main_window/app_settings.cpp
     src/main_window/runtime_paths.cpp
     src/main_window/maploader_runtime.cpp
     src/main_window/file_structure_diagram.cpp
     src/main_window/text_preview.cpp
-    src/main_window/debug_headless.cpp
-    src/main_window/edit_benchmark.cpp
     src/main_window/touch_input.cpp
     src/main_window/map_marker_visuals.cpp
     src/main_window/route_value_sampling.cpp
@@ -314,12 +315,9 @@ add_executable(komapedit
     src/canvas3d/canvas3d_scene_gizmo.cpp
     src/canvas3d/canvas3d_scene_render.cpp
     src/canvas3d/canvas3d_scene_ui.cpp
-    src/canvas3d/tests/scene_render_contract.cpp
-    src/canvas3d/tests/scene_loader_contract.cpp
     src/canvas3d/scene_route_overlay.cpp
     src/canvas3d/scene_track_sampling.cpp
     src/table/datatable.cpp
-    src/table/datatable_benchmark.cpp
     src/table/datatable_cache.cpp
     src/table/datatable_effect_tables.cpp
     src/table/datatable_find.cpp
@@ -328,6 +326,16 @@ add_executable(komapedit
     src/table/datatable_scenario.cpp
     src/table/table_navigation.cpp
 )
+if(KOMAPEDIT_DEBUG_BUILD)
+    target_sources(komapedit PRIVATE
+        src/main_window/debug_headless.cpp
+        src/main_window/headless_entrypoints.cpp
+        src/main_window/edit_benchmark.cpp
+        src/canvas3d/tests/scene_render_contract.cpp
+        src/canvas3d/tests/scene_loader_contract.cpp
+        src/table/datatable_benchmark.cpp
+    )
+endif()
 add_dependencies(komapedit maploader model_loader)
 set_target_properties(komapedit PROPERTIES
     WIN32_EXECUTABLE TRUE

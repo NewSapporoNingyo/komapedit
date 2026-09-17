@@ -17,7 +17,7 @@ for %%F in ("build\*.dll") do (
     )
 )
 
-set CMAKE_ARGS=-S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+set CMAKE_ARGS=-S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 if defined NINJA_EXE (
     set CMAKE_ARGS=!CMAKE_ARGS! -DCMAKE_MAKE_PROGRAM=%NINJA_EXE%
 )
@@ -50,6 +50,17 @@ if not exist "build\bin\maploader.dll" (
 if not exist "build\bin\model_loader.dll" (
     echo model_loader.dll was not generated in build\bin.
     exit /b 1
+)
+for %%F in (
+    "build\multilanguage_tests.exe"
+    "build\bin\typed_snapshot_tests.exe"
+    "build\canvas3d_camera_tests.exe"
+    "build\route_value_sampling_tests.exe"
+) do (
+    if not exist "%%~fF" (
+        echo Debug test executable was not generated: %%~fF
+        exit /b 1
+    )
 )
 if not exist "build\settings\" mkdir "build\settings"
 

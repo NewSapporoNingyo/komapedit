@@ -84,7 +84,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。当前注册了 `multilanguage_contract`、`typed_snapshot_contract`、`maploader_gradient_projection_contract`、`typed_edit_contract`、`maploader_diagnostics_contract`、`canvas3d_camera_contract` 和 `route_value_sampling_contract` 七项非 headless 契约；headless 验证必须显式运行，不得注册为 CTest。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
+普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。当前注册了 `multilanguage_contract`、`typed_snapshot_contract`、`maploader_gradient_projection_contract`、`typed_edit_contract`、`maploader_diagnostics_contract`、`canvas3d_camera_contract` 和 `route_value_sampling_contract` 七项非 headless 契约。已注册的测试程序与内置 headless 入口仅在 Debug 中编译：`build_dev.bat` 显式启用 `BUILD_TESTING`，`build_release.bat` 则将其关闭、排除 headless 实现源码，并拒绝 Release 输出中遗留的 `*_tests.exe`。headless 验证必须显式运行，不得注册为 CTest。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
 
 运行时输出布局如下：
 
