@@ -441,7 +441,8 @@ ctest --test-dir build --output-on-failure
 | --- | --- |
 | `canvas3D.cpp`、`canvas3d_impl.h` | 公共薄委托、共享私有方法与状态声明 |
 | `canvas3d_math.h`、`canvas3d_types.h` | 内联向量/矩阵运算、CPU/GPU 记录、共享常量与判定函数 |
-| `canvas3d_scene_data.cpp/.h` | typed map/scene 转换、线路值与车站、标记元数据、雾和绘制距离 |
+| `canvas3d_scene_data.cpp/.h` | typed map/scene 转换、线路值与车站、标记元数据、雾输入转换和绘制距离 |
+| `scene_fog.cpp/.h`、`scene_shader_source.h` | CPU 雾关键帧构建/采样与共用场景 HLSL，由 `route_value_sampling_contract` 在不创建渲染设备的情况下验证 |
 | `canvas3d_scene_lifecycle.cpp` | 场景替换、动态/地图/车站刷新、可见性与设置、模型请求及资源生命周期 |
 | `canvas3d_model_loader.cpp/.h` | 模型加载器 v2 客户端、WIC 纹理与缓存、CPU 模型 worker、上传队列及诊断 |
 | `canvas3d_put_between.cpp/.h` | 源模型准备与变形、异步 PutBetween 预览及经过序号检查的结果发布 |
@@ -473,6 +474,12 @@ ctest --test-dir build --output-on-failure
 - **可见性、绘制和拾取**：visible range/chunk 筛选后批量绘制 track、model、marker；pick pass 写入 object/marker id 并回读单像素；highlight mask/batch 与 outline composite 绘制 hover、表格跳转和选择轮廓。
 - **placement/repeater 实时编辑**：设置 target 时查找源实例、Sound3D 标记或 Repeater 段并建立 edit state；update 函数只改对应 chunk/marker/segment 数据。gizmo projection、mouse ray、轴最近点和 drag handler 为普通放置生成毫米截断的 `Canvas3DPlacementDragUpdate`，Sound3D 将 X/Y 写回相对音源偏移并以整米 Z 拖动 distance，显式 Repeater End 也以整米 Z 操纵器更新段尾；`Structure.PutBetween` 只启用沿自轨前向的 Z 轴，并把拖动吸附为整米 `distance`。其顶点预览在线程中按最新目标合并重算，按模型纵向 slice 复用轨道采样，完成后通过可复用动态顶点缓冲原子替换。
 - **雾、背景和线路信息**：按相机距离采样 BVE fog、Map DrawDistance、背景模型和有效场景窗口；route overlay 采样 radius/cant、gradient、活动限速、Section signal speed 与下一站；位于 `Curve.Interpolate` 区间时显示求值后的两端 radius/cant，而不虚构线性当前半径，但两端均为显示零时改为显示本地化“直线”；metrics/loading overlay 显示性能和加载状态。
+
+雾输入转换消费既有水合后的 `Fog` 与 `Legacy.Fog` 行，不改变 maploader ABI 或源语法。`scene_fog` 按里程和全局源顺序排列已求值事件，将非零里程 Legacy 语句展开为旧状态节点与 `distance + 25` 的目标节点，然后对合并节点做一次稳定排序。同里程节点保持独立：第一个是到达该里程前的插值目标，最后一个在该里程处生效。Fog 省略参数继承已插入的最远节点，包括尚未抵达的 Legacy 目标。采样通过二分查找定位，仅在相同模式间以 double 插值 density、RGB、start 和 end；跨模式保持前节点状态。序列重建由场景刷新负责。
+
+共用像素着色器以相机空间深度（投影 `w`）计算指数雾或线性公式 `clamp((end-depth)/(end-start), 0, 1)`，保留既有背景/模型/轨道渲染路径，UI、标记和高亮 mask 不加雾。零宽线性区间在 `end` 处作阶跃处理；有限的反向区间保留原公式。排序前过滤无效里程/区间值，限制着色器距离范围以确保 float 运算有限，并继续将颜色钳制至 0–1。保留没有雾语句时的无雾行为及首个省略值的安全默认；本功能提供显示支持，不复刻 BVE 解析异常或逐字节匹配 D3D9 颜色量化。官方 Map 页面文档化了 `Fog.Interpolate`/`Fog.Set`，`Legacy.Fog` 按未文档化的兼容命令处理。公式与深度依据见 Microsoft [雾公式](https://learn.microsoft.com/en-us/windows/win32/direct3d9/fog-formulas)和[像素雾深度](https://learn.microsoft.com/en-us/windows/win32/direct3d9/pixel-fog)。
+
+`src/canvas3d/tests/scene_fog_tests.cpp` 纳入既有 `route_value_sampling_contract`，覆盖 Legacy 与混合模式序列、近距离/同里程边界、继承、开关和数值保护，并用 `D3DCompile` 编译生产环境共用的顶点/普通像素/雾像素 HLSL 入口。它不创建窗口或渲染设备，也不启动 `komapedit.exe`；实际显示像素仍需人工验收。
 - **`render_scene_preview()`**：`canvas3d_scene_ui.cpp` 编排每帧异步上传、相机输入、gizmo、可见实例收集、主 pass、pick/highlight、marker/object context popup，并返回导航、编辑、删除或 drag action；实际渲染由 `canvas3d_scene_render.cpp` 等模块负责。`canvas3D.cpp` 保留到 Impl 的 `Canvas3D::*` 公共薄委托。
 
 ### 数据表格与跨视图导航

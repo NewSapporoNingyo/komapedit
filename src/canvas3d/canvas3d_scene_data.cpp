@@ -36,18 +36,6 @@ using namespace canvas3d_detail;
 
 namespace canvas3d_detail {
 
-constexpr double k_default_scene_fog_color = 0.875;
-
-} // namespace canvas3d_detail
-
-namespace canvas3d_detail {
-
-constexpr double k_default_scene_fog_density = 0.001;
-
-} // namespace canvas3d_detail
-
-namespace canvas3d_detail {
-
 struct SceneTrackBufferView {
     const double* data = nullptr;
     size_t rows = 0;
@@ -730,54 +718,30 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
     sort_canvas3d_scene_markers(scene.markers);
 }
 
-static double resolve_canvas3d_scene_fog_component(const TableRow& row,
-                                            const char* key,
-                                            double previous_value) {
-    if (table_cell(row, key).empty()) return previous_value;
-    const double value = table_cell_number(row, key);
-    if (std::isnan(value)) return previous_value;
-    return std::clamp(value, 0.0, 1.0);
-}
-
 void populate_canvas3d_scene_fog(Canvas3DScene& scene, const MapModel& model) {
-    scene.fog_keyframes.clear();
-    if (model.fogs.empty()) return;
-
-    std::vector<const TableRow*> rows;
-    rows.reserve(model.fogs.size());
-    for (const TableRow& row : model.fogs) {
-        if (std::isfinite(table_cell_number(row, "distance"))) rows.push_back(&row);
-    }
-    std::stable_sort(rows.begin(), rows.end(), [](const TableRow* a, const TableRow* b) {
-        const double a_distance = table_cell_number(*a, "distance");
-        const double b_distance = table_cell_number(*b, "distance");
-        if (a_distance != b_distance) return a_distance < b_distance;
-        return table_cell_number(*a, "order") < table_cell_number(*b, "order");
-    });
-
-    scene.fog_keyframes.reserve(rows.size());
-    double density = k_default_scene_fog_density;
-    double red = k_default_scene_fog_color;
-    double green = k_default_scene_fog_color;
-    double blue = k_default_scene_fog_color;
-    for (const TableRow* row : rows) {
-        density = resolve_canvas3d_scene_fog_component(*row, "density", density);
-        red = resolve_canvas3d_scene_fog_component(*row, "red", red);
-        green = resolve_canvas3d_scene_fog_component(*row, "green", green);
-        blue = resolve_canvas3d_scene_fog_component(*row, "blue", blue);
-
-        Canvas3DSceneFogKeyframe keyframe;
-        keyframe.distance = table_cell_number(*row, "distance");
-        keyframe.density = static_cast<float>(density);
-        keyframe.color = ImVec4(static_cast<float>(red), static_cast<float>(green),
-                                static_cast<float>(blue), 1.0f);
-        if (!scene.fog_keyframes.empty() &&
-            scene.fog_keyframes.back().distance == keyframe.distance) {
-            scene.fog_keyframes.back() = keyframe;
-        } else {
-            scene.fog_keyframes.push_back(keyframe);
+    std::vector<SceneFogEvent> events;
+    events.reserve(model.fogs.size() + model.legacy_fogs.size());
+    const auto append = [&](const std::vector<TableRow>& rows, Canvas3DSceneFogMode mode) {
+        for (const TableRow& row : rows) {
+            SceneFogEvent event;
+            event.distance = table_cell_number(row, "distance");
+            event.order = table_cell_number(row, "order");
+            event.mode = mode;
+            if (!table_cell(row, "density").empty()) event.density = table_cell_number(row, "density");
+            const char* colors[] = {"red", "green", "blue"};
+            for (size_t i = 0; i < event.color.size(); ++i) {
+                if (!table_cell(row, colors[i]).empty()) event.color[i] = table_cell_number(row, colors[i]);
+            }
+            if (mode == Canvas3DSceneFogMode::Linear) {
+                event.start = table_cell_number(row, "start");
+                event.end = table_cell_number(row, "end");
+            }
+            events.push_back(event);
         }
-    }
+    };
+    append(model.fogs, Canvas3DSceneFogMode::Exponential);
+    append(model.legacy_fogs, Canvas3DSceneFogMode::Linear);
+    scene.fog_keyframes = build_canvas3d_scene_fog_keyframes(std::move(events));
 }
 
 void populate_canvas3d_scene_draw_distances(Canvas3DScene& scene, const MapModel& model) {
@@ -814,41 +778,6 @@ void populate_canvas3d_scene_draw_distances(Canvas3DScene& scene, const MapModel
         }
     }
 }
-SceneFogSample sample_canvas3d_scene_fog(
-    const std::vector<Canvas3DSceneFogKeyframe>& keyframes,
-    double distance,
-    bool enabled) {
-    SceneFogSample sample;
-    if (!enabled || keyframes.empty()) return sample;
-
-    auto next = std::upper_bound(
-        keyframes.begin(), keyframes.end(), distance,
-        [](double value, const Canvas3DSceneFogKeyframe& keyframe) {
-            return value < keyframe.distance;
-        });
-    if (next == keyframes.begin()) {
-        sample.density = next->density;
-        sample.color = next->color;
-    } else if (next == keyframes.end()) {
-        sample.density = keyframes.back().density;
-        sample.color = keyframes.back().color;
-    } else {
-        const Canvas3DSceneFogKeyframe& previous = *(next - 1);
-        const double interval = next->distance - previous.distance;
-        const float ratio = interval > 0.0
-            ? static_cast<float>(std::clamp((distance - previous.distance) / interval, 0.0, 1.0))
-            : 1.0f;
-        sample.density = previous.density + (next->density - previous.density) * ratio;
-        sample.color = ImVec4(
-            previous.color.x + (next->color.x - previous.color.x) * ratio,
-            previous.color.y + (next->color.y - previous.color.y) * ratio,
-            previous.color.z + (next->color.z - previous.color.z) * ratio,
-            1.0f);
-    }
-    sample.enabled = sample.density > 0.0f;
-    return sample;
-}
-
 bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
                                              const MapModel& model,
                                              int station_index) {

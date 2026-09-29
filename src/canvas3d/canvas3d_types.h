@@ -7,6 +7,7 @@
 #pragma once
 
 #include "canvas3d_math.h"
+#include "scene_fog.h"
 #include <d3d11.h>
 #include <array>
 #include <chrono>
@@ -136,6 +137,7 @@ struct SceneViewConstants {
     float material_color[4];
     float use_texture[4];
     float fog_color_density[4];
+    float fog_linear[4]; // start, end, linear-mode flag, reserved
 };
 
 struct SceneOutlineConstants {
@@ -426,11 +428,6 @@ struct SceneHighlightBatch {
 struct SceneRepeaterIndexRange {
     long long first = 0;
     long long last = -1;
-};
-struct SceneFogSample {
-    bool enabled = false;
-    float density = 0.0f;
-    ImVec4 color = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
 };
 
 } // namespace canvas3d_detail

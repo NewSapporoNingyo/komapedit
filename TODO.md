@@ -30,6 +30,5 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 自定义工作区：保存多种UI布局作为预设，根据不同使用场景切换UI布局
 - [ ] 线路发行版导出：展开 Include、可选常量化距离/变量表达式、只复制实际使用资源、输出报告，并保护开发线路目录不被覆盖（这是项目中的功能，与仓库中的release构建没有直接关系）
 - [ ] Legacy.Fog 语句编辑与新建
-- [ ] 3D 场景预览应用 Legacy.Fog 线性雾效果
 - [ ] 根据曲线半径、轨距、限速等参数自动计算缓和曲线长度与超高
 - [ ] 根据坡度变化点前后坡度自动计算纵曲线长度

@@ -205,7 +205,10 @@ void curve_overlay_contract() {
 
 } // namespace
 
+int canvas3d_scene_fog_contract();
+
 int main() {
+    failures += canvas3d_scene_fog_contract();
     interpolation_contract();
     omitted_value_contract();
     source_provenance_contract();

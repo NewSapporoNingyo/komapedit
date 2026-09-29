@@ -91,7 +91,7 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 | `PreTrain.Pass(time)` / `PreTrain.Pass(second)`                                                                                                                                             |   √   |    ✕     |    ✕     |     ✕      | 进入只读列表及地图标记；不支持基于源码的编辑或新建                                                             |
 | `Light.Ambient(...)`、`Light.Diffuse(...)`、`Light.Direction(...)`                                                                                                                          |   √   |    √     |    √     |     ✕      | “光照效果”标签页支持基于源码的 RGB/pitch/yaw 编辑与删除。“效果”向导会在用户选定源文件的里程 `0` 新建每种官方形式（不显示里程输入框）。RGB 必须在 `[0, 1]`；Direction 必须位于里程 `0`；根地图及全部 Include 中同类语句重复时，该类全部无效并报告所有源码位置。不实现标记或 3D 光照模拟 |
 | `Fog.Interpolate(density, red, green, blue)` / `Fog.Interpolate(density)` / `Fog.Interpolate()` / `[旧式] Fog.Set(density, red, green, blue)`                                               |   √   |    √     |    √     |     ✕      | 官方 0/1/4 参数 Interpolate 及旧式 Set 均支持编辑、新建和删除；3D 显示插值指数雾                               |
-| `[旧式] Legacy.Fog(start, end, red, green, blue)`                                                                                                                                            |   √   |    ✕     |    ✕     |     ✕      | BVE 仍接受的旧式线性雾语句，只读；在独立列表及平面图/3D 标牌中按源值显示；编辑、新建与 3D 雾效果暂未实现      |
+| `[兼容] Legacy.Fog(start, end, red, green, blue)`                                                                                                                                            |   √   |    ✕     |    ✕     |     ✕      | 未文档化的 BVE 兼容语句；只读列表及平面图/3D 标牌保留源值；3D 显示线性雾，支持过渡及与 Fog 混用；不支持编辑、新建和删除 |
 | `DrawDistance.Change(value)`                                                                                                                                                                |   √   |    √     |    √     |     ✕      | 距离/数值支持编辑、新建和删除；可选地控制场景绘制距离                                                          |
 | `CabIlluminance.Interpolate(value)` / `CabIlluminance.Interpolate()` / `[旧式] CabIlluminance.Set(value)`                                                                                     |   √   |    √     |    √     |     ✕      | 距离/数值支持编辑、新建和删除；留空写为 `Interpolate()`，表格及 3D 标牌继承上一条带值 CabIlluminance（此前没有带值时保持空显示）；不模拟实际驾驶台亮度 |
 | `Irregularity.Change(x, y, r, lx, ly, lr)`                                                                                                                                                  |   √   |    √     |    √     |     ✕      | 距离及全部 6 个数值支持编辑、新建和删除；不模拟车辆振动                                                        |
@@ -402,6 +402,8 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 显示的 FPS 是最近一个完整 `0.2` 秒活动窗口内 3D 场景画布渲染调用速率的平均值，并不测量交换链 Present 完成时间或显示器刷新率。间隔超过 `0.1` 秒时会丢弃未完成窗口并保留上次发布值，因此恢复移动时不会根据少量极短的提交间隔发布帧率。
 
 `3D画布设置` 可即时切换雾效果、地图语句驱动的绘制距离和性能警告，并可调整普通绘制距离。相关标记的显示状态与 `辅助信息` 菜单同步。
+
+雾效果开关同时控制 `Fog.Interpolate`/`Fog.Set` 指数雾与 `Legacy.Fog` 线性雾。Legacy 的 start/end 是以米为单位的相机深度距离，RGB 输入范围为 0–255。零里程的 Legacy 语句立即生效；后续语句在前后均为线性雾时，从旧状态在接下来的 25 米内过渡到新状态。相邻节点的雾模式不同时，保持前一状态，抵达后一节点后立即切换；两类语句混用时也遵循此规则。没有雾语句的地图继续保持原有的无雾预览。
 
 #### 场景标牌
 

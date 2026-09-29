@@ -40,8 +40,8 @@ Canvas3DSceneFogDebugState Canvas3D::Impl::debug_scene_fog_state() const {
     state.density = sample.density;
     state.color = sample.color;
     for (const Canvas3DSceneFogKeyframe& keyframe : scene_data.fog_keyframes) {
-        if (keyframe.density > state.max_density) {
-            state.max_density = keyframe.density;
+        if (keyframe.mode == Canvas3DSceneFogMode::Exponential && keyframe.density > state.max_density) {
+            state.max_density = static_cast<float>(keyframe.density);
             state.max_density_distance = keyframe.distance;
         }
     }

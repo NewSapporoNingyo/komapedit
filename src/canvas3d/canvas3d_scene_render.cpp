@@ -171,6 +171,9 @@ void Canvas3D::Impl::draw_scene_mesh(ID3D11Buffer* vb, ID3D11Buffer* ib, ID3D11B
             constants.fog_color_density[1] = fog->color.y;
             constants.fog_color_density[2] = fog->color.z;
             constants.fog_color_density[3] = fog->density;
+            constants.fog_linear[0] = fog->start;
+            constants.fog_linear[1] = fog->end;
+            constants.fog_linear[2] = fog->mode == Canvas3DSceneFogMode::Linear ? 1.0f : 0.0f;
         }
         context->UpdateSubresource(scene_constant_buffer, 0, nullptr, &constants, 0, 0);
         ID3D11ShaderResourceView* texture = material && material->has_texture ? material->texture : nullptr;

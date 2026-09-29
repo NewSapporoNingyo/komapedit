@@ -117,6 +117,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 3D Canvas
 
+- [x] Apply `Legacy.Fog` linear fog through the existing scene fog toggle and shader, sharing mileage keyframes with exponential fog, including 25-meter Legacy transitions, same-mileage order, and hard mode switches. Keep Legacy editing, creation, and deletion unsupported; visual acceptance remains manual.
+
 - [x] Stabilize the visible 3D scene FPS after idle by publishing scene-render-call cadence over completed 0.2-second active windows, discarding partial windows after gaps longer than 0.1 seconds while preserving the last published value; retain refresh-rate-independent behavior and keep Present/headless metrics separate.
 - [x] Restore the sustained scene CPU-frame budget to 16.67 ms through indexed placement-track lookup and bounded, double-precision Repeater transform reuse. On 2026-09-13, the same real-route Debug workload (unit distance 25, 300 frames, back/forward 100/1200 m, RTX 3060) improved from p95 22.782/28.616/26.453 ms to 1.721/1.619/1.641 ms with profiling disabled; all three runs passed with 531 loaded models and 2,613 drawn instances. Moving-camera runs passed at 2.778/3.211/2.714 ms. Draw distance, model count, precision, and Begin-relative placement semantics were preserved; no disk cache or renderer replacement was introduced.
 - [x] Add optional CPU/GPU frame diagnostics, deterministic camera motion, workload fingerprints, and cached/reference rendering checks. All seven CTests, scene-loader/cache contracts, camera transfer, and Fog checks passed. Twelve rendering cases per real-route run matched instance fingerprints, pixels and picking, including three actual pick hits and enabled track overlays; peak observed transform-cache storage was 707,824 bytes. Automatic UI clicks and manual GUI validation were not performed. The historical Fog probe failure and Repeater interval-grid semantic discrepancy remain separate tasks.
@@ -148,7 +150,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Edit or delete existing `Sound.Play`/`Sound3D.Put` placements and rolling/flange/joint-noise events; station definition announcement sound keys are editable, but audio playback remains unsupported.
 - [x] Edit or delete existing cab-illuminance setting positions.
 - [x] Edit or delete existing fog effects.
-- [x] Parse the read-only legacy linear-fog statement `Legacy.Fog(start, end, red, green, blue)` into typed snapshot rows and show them in a dedicated table list plus plan/scene markers with their source values; editing, creation, and the 3D fog effect are not implemented.
+- [x] Parse the read-only legacy linear-fog statement `Legacy.Fog(start, end, red, green, blue)` into typed snapshot rows and show them in a dedicated table list plus plan/scene markers with their source values; editing and creation are not implemented.
 - [x] Add source-backed edit and deferred deletion for `Light.Ambient`, `Light.Diffuse`, and `Light.Direction`, and add fixed-distance-0 Effects wizard templates in the trilingual Lighting Effects UI. Each kind remains unique across the root map and all Includes; RGB bounds, Direction distance, full reparse/semantic proof, expression preservation, and memory Apply/Save/Revert behavior remain enforced. Markers and 3D lighting simulation are not implemented.
 
 ### User Interface and Utilities
@@ -300,6 +302,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 3D画布
 
+- [x] 通过现有场景雾开关与着色器显示 `Legacy.Fog` 线性雾，与指数雾共用里程关键帧，支持 Legacy 的 25 米过渡、同里程顺序及模式硬切换。Legacy 的编辑、新建与删除仍不支持；实际画面留待人工验收。
+
 - [x] 稳定 3D 场景在空闲后恢复移动时的可见 FPS：以完整的 `0.2` 秒活动窗口发布场景渲染调用速率，间隔超过 `0.1` 秒时丢弃未完成窗口但保留上次发布值；保持与刷新率无关，并继续区分 Present 与 headless 指标。
 - [x] 通过放置轨道索引和有界双精度 Repeater 变换复用，将持续场景 CPU 帧预算恢复为 16.67 ms。2026-09-13 同一真实线路 Debug 负载（unit distance 25、300 帧、后方/前方 100/1200 m、RTX 3060）关闭 profiling 后，三次 p95 从 22.782/28.616/26.453 ms 降至 1.721/1.619/1.641 ms，全部通过；保持加载 531 个模型、绘制 2,613 个实例。移动相机三次 p95 为 2.778/3.211/2.714 ms，均通过。描画距离、模型数量、精度和相对 Begin 起点的放置语义不变，未引入磁盘缓存或替换渲染架构。
 - [x] 增加可选 CPU/GPU 帧诊断、确定性相机移动、负载指纹及缓存/原路径渲染对比。七项 CTest、scene-loader/缓存合同、相机传递及 Fog 检查全部通过。每次真实线路测试的十二组渲染检查均保持实例指纹、像素和拾取一致，包含三组实际拾取命中和启用轨道辅助线；观测到的变换缓存存储峰值为 707,824 字节。未执行自动 UI 点击或人工 GUI 验证；历史 Fog 像素探针失败及 Repeater interval 网格语义差异仍独立跟踪。
@@ -331,7 +335,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 编辑或删除已有 `Sound.Play`/`Sound3D.Put` 放置和走行音/轮缘摩擦音/道岔音事件；车站定义中的报站音 key 可编辑，程序不播放音频
 - [x] 编辑或删除已有驾驶台亮度设定位置
 - [x] 编辑或删除已有雾效果
-- [x] 将只读旧式线性雾语句 `Legacy.Fog(start, end, red, green, blue)` 解析为类型化快照行，并在独立列表及平面图/3D 标牌中按源值显示；编辑、新建与 3D 雾效果未实现
+- [x] 将只读旧式线性雾语句 `Legacy.Fog(start, end, red, green, blue)` 解析为类型化快照行，并在独立列表及平面图/3D 标牌中按源值显示；编辑与新建未实现
 - [x] 为 `Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 加入基于源码的编辑和延迟删除，并在三语“光照效果”界面加入固定里程 `0` 的“效果”向导模板。根地图及全部 Include 中每类仍只允许一条基础语法正确的语句；RGB 范围、Direction 里程、完整重解析/语义证明、原始表达式保持及内存 Apply/Save/Revert 行为均继续校验。不实现标记或 3D 光照模拟
 
 ### 用户界面与辅助功能

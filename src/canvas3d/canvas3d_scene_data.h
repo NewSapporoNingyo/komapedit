@@ -24,10 +24,6 @@ void sort_canvas3d_scene_markers(std::vector<Canvas3DSceneMarker>& markers);
 void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model);
 void populate_canvas3d_scene_fog(Canvas3DScene& scene, const MapModel& model);
 void populate_canvas3d_scene_draw_distances(Canvas3DScene& scene, const MapModel& model);
-SceneFogSample sample_canvas3d_scene_fog(
-    const std::vector<Canvas3DSceneFogKeyframe>& keyframes,
-    double distance,
-    bool enabled);
 bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
                                              const MapModel& model,
                                              int station_index);

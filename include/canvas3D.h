@@ -148,10 +148,18 @@ struct Canvas3DBackgroundChange {
     std::string model_path;
 };
 
+enum class Canvas3DSceneFogMode {
+    Exponential,
+    Linear,
+};
+
 struct Canvas3DSceneFogKeyframe {
     double distance = 0.0;
-    float density = 0.001f;
-    ImVec4 color = ImVec4(0.875f, 0.875f, 0.875f, 1.0f);
+    Canvas3DSceneFogMode mode = Canvas3DSceneFogMode::Exponential;
+    double density = 0.001;
+    std::array<double, 3> color = {0.875, 0.875, 0.875};
+    double start = 0.0;
+    double end = 2400.0;
 };
 
 struct Canvas3DSceneDrawDistanceChange {

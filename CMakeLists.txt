@@ -164,12 +164,16 @@ if(KOMAPEDIT_DEBUG_BUILD AND BUILD_TESTING)
         src/main_window/tests/route_value_sampling_tests.cpp
         src/main_window/route_value_sampling.cpp
         src/canvas3d/scene_route_overlay.cpp
+        src/canvas3d/scene_fog.cpp
+        src/canvas3d/tests/scene_fog_tests.cpp
     )
     target_compile_features(route_value_sampling_tests PRIVATE cxx_std_17)
     target_include_directories(route_value_sampling_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/canvas3d
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
     )
+    target_link_libraries(route_value_sampling_tests PRIVATE d3dcompiler)
     add_test(NAME route_value_sampling_contract
         COMMAND $<TARGET_FILE:route_value_sampling_tests>
     )
@@ -316,6 +320,7 @@ add_executable(komapedit
     src/canvas3d/canvas3d_scene_render.cpp
     src/canvas3d/canvas3d_scene_ui.cpp
     src/canvas3d/scene_route_overlay.cpp
+    src/canvas3d/scene_fog.cpp
     src/canvas3d/scene_track_sampling.cpp
     src/table/datatable.cpp
     src/table/datatable_cache.cpp
