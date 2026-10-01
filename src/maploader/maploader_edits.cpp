@@ -5042,6 +5042,57 @@ repeater_linkage::Linkage repeater_linkage_state(
     return repeater_linkage::pair_linkage(std::move(events));
 }
 
+bool validate_repeater_boundaries_after_edit(
+    MapContext& baseline, MapContext& candidate,
+    const std::set<std::string>& target_ids,
+    const std::vector<MapEditChange>& changes, std::string& error) {
+    bool has_repeater_edit = std::any_of(baseline.repeaters.begin(), baseline.repeaters.end(),
+        [&](const RepeaterEvent& row) {
+            return target_ids.count(element_edit_id(baseline, row.edit_ref, "repeater")) != 0;
+        });
+    std::set<std::string> inserted_boundaries;
+    for (const MapEditChange& change : changes) {
+        if (change.row_kind != "repeater") continue;
+        has_repeater_edit = true;
+        if (ascii_lower(change.operation) == "insert" &&
+            (change.confirm_repeater_change_point ||
+             ascii_lower(insert_method_or_default(change, "Begin")) == "end")) {
+            inserted_boundaries.insert(change.edit_id);
+        }
+    }
+    if (!has_repeater_edit) return true;
+    std::vector<std::string> before_ids, after_ids;
+    const auto before = repeater_linkage_state(baseline, &before_ids);
+    const auto after = repeater_linkage_state(candidate, &after_ids);
+    std::map<std::string, const repeater_linkage::Segment*> after_segments;
+    for (const auto& segment : after.segments) {
+        after_segments.emplace(after_ids[segment.begin_source_index], &segment);
+    }
+    for (const auto& segment : before.segments) {
+        const auto& begin_id = before_ids[segment.begin_source_index];
+        const std::string boundary_id = segment.boundary_source_index
+            ? before_ids[*segment.boundary_source_index] : std::string{};
+        // Editing/deleting an existing boundary intentionally changes the
+        // preceding segment. An explicit inserted End or confirmed change
+        // point similarly owns its new boundary.
+        if (target_ids.count(begin_id) || target_ids.count(boundary_id)) continue;
+        const auto found = after_segments.find(begin_id);
+        if (found != after_segments.end()) {
+            const auto& current = *found->second;
+            const std::string current_boundary = current.boundary_source_index
+                ? after_ids[*current.boundary_source_index] : std::string{};
+            if (inserted_boundaries.count(current_boundary)) continue;
+            if (segment.boundary_kind == current.boundary_kind &&
+                boundary_id == current_boundary &&
+                segment.begin_distance == current.begin_distance &&
+                segment.end_distance == current.end_distance) continue;
+        }
+        error = "full reparse changed a non-target Repeater boundary: " + begin_id;
+        return false;
+    }
+    return true;
+}
+
 std::string repeater_interval_text(const repeater_linkage::Chain& chain) {
     return "[" + canonical_number(chain.begin_distance) + "," +
         (chain.end_distance ? canonical_number(*chain.end_distance)
@@ -5327,6 +5378,7 @@ void validate_repeater_key_renames(
             value != value_to_edit_text(ctx.repeaters[source_index].repeater_key);
     }
 
+    if (requests.empty()) return;
     std::vector<std::string> final_keys;
     final_keys.reserve(linkage.chains.size());
     for (const repeater_linkage::Chain& chain : linkage.chains) {
@@ -5384,7 +5436,33 @@ void validate_repeater_key_renames(
     for (size_t index = 0; index < linkage.chains.size(); ++index) {
         intervals.push_back({linkage.chains[index], final_keys[index], renamed[index]});
     }
-    (void)validate_repeater_interval_conflicts(intervals, report);
+    if (!validate_repeater_interval_conflicts(intervals, report)) return;
+
+    // Disjoint distance intervals alone are insufficient at a shared distance:
+    // renaming can make a later End consume another chain's earlier Begin.
+    std::vector<repeater_linkage::Event> projected_events;
+    projected_events.reserve(ctx.repeaters.size());
+    for (size_t index = 0; index < ctx.repeaters.size(); ++index) {
+        const RepeaterEvent& row = ctx.repeaters[index];
+        const std::string method = ascii_lower(row.method);
+        projected_events.push_back({index, row.distance, static_cast<double>(row.order),
+            chain_by_source_index[index] ? final_keys[*chain_by_source_index[index]]
+                                        : value_to_edit_text(row.repeater_key),
+            method == "end" ? repeater_linkage::EventKind::End
+                            : repeater_linkage::EventKind::Begin});
+    }
+    const auto projected = repeater_linkage::pair_linkage(std::move(projected_events));
+    for (size_t index = 0; index < linkage.segments.size(); ++index) {
+        const auto& before = linkage.segments[index];
+        const auto& after = projected.segments[index];
+        if (before.boundary_source_index != after.boundary_source_index ||
+            before.previous_begin_source_index != after.previous_begin_source_index ||
+            before.boundary_kind != after.boundary_kind) {
+            report.blocking_errors.push_back(
+                "Repeater key rename changes chain ownership at a shared distance");
+            return;
+        }
+    }
 }
 
 void validate_repeater_insert_key_overlaps(
@@ -5517,6 +5595,13 @@ void validate_repeater_insert_key_overlaps(
         }
         for (const InsertEvent& other : inserted_events) {
             if (&other == &inserted || other.key != inserted.key) continue;
+            if (other.distance == inserted.distance && other.method == "end" &&
+                !inserted.change->repeater_pair_id.empty() &&
+                other.change->repeater_pair_id == inserted.change->repeater_pair_id) {
+                requested.end_distance = inserted.distance;
+                has_explicit_end = true;
+                continue;
+            }
             consider_boundary(other.distance, other.method);
         }
         intervals.push_back({std::move(requested), inserted.key, true,
@@ -6562,6 +6647,12 @@ void validate_edit_report(MapContext& baseline,
 
     timing.next("validation.derived_variables");
     std::string derived_error;
+    if (!validate_repeater_boundaries_after_edit(
+            baseline, *candidate, excluded_before, changes, derived_error)) {
+        report.non_target_changed_count = 1;
+        report.blocking_errors.push_back(std::move(derived_error));
+        return;
+    }
     if (!validate_non_target_derived_state(
             baseline, *candidate, excluded_before, derived_error)) {
         report.non_target_changed_count = 1;
@@ -7173,6 +7264,29 @@ MapEditReport build_edit_report(MapContext& ctx,
     if (!report.blocking_errors.empty()) return report;
     validate_repeater_insert_key_overlaps(ctx, effective_changes, report);
     if (!report.blocking_errors.empty()) return report;
+
+    // A paired zero-length creation emits Begin then End even when the caller
+    // supplied the pair in reverse order. Only new paired statements move.
+    std::map<std::string, std::vector<size_t>> repeater_insert_pairs;
+    for (size_t index = 0; index < effective_changes.size(); ++index) {
+        const auto& change = *effective_changes[index];
+        if (!change.repeater_pair_id.empty()) {
+            repeater_insert_pairs[change.repeater_pair_id].push_back(index);
+        }
+    }
+    for (const auto& pair : repeater_insert_pairs) {
+        if (pair.second.size() != 2) continue;
+        const size_t first = pair.second[0], second = pair.second[1];
+        const auto& left = *effective_changes[first];
+        const auto& right = *effective_changes[second];
+        double left_distance = 0.0, right_distance = 0.0;
+        if (ascii_lower(insert_method_or_default(left, "Begin")) == "end" &&
+            parse_edit_number(insert_required_number(left, "distance"), left_distance) &&
+            parse_edit_number(insert_required_number(right, "distance"), right_distance) &&
+            left_distance == right_distance) {
+            std::swap(effective_changes[first], effective_changes[second]);
+        }
+    }
 
     std::vector<PreparedEdit> prepared;
     prepared.reserve(effective_changes.size());

@@ -92,18 +92,9 @@ inline Linkage pair_linkage(std::vector<Event> events) {
     std::stable_sort(events.begin(), events.end(), [](const Event& a, const Event& b) {
         if (a.distance < b.distance) return true;
         if (a.distance > b.distance) return false;
-        // Repeater lifetimes are half-open intervals.  At a shared distance an
-        // End therefore closes the earlier lifetime before any Begin starts a
-        // new one, regardless of source parse order.
-        const auto kind_rank = [](EventKind kind) {
-            if (kind == EventKind::End) return 0;
-            if (kind == EventKind::Begin) return 1;
-            return 2;
-        };
-        const int a_rank = kind_rank(a.kind);
-        const int b_rank = kind_rank(b.kind);
-        if (a_rank < b_rank) return true;
-        if (a_rank > b_rank) return false;
+        // At the same distance the last parsed Begin/End is authoritative,
+        // including events expanded from Includes. Half-open intervals do not
+        // imply an End-before-Begin ordering.
         if (a.order < b.order) return true;
         if (a.order > b.order) return false;
         return a.source_index < b.source_index;
@@ -178,6 +169,8 @@ inline Linkage pair_linkage(std::vector<Event> events) {
 }
 
 inline bool half_open_intervals_overlap(const Chain& left, const Chain& right) {
+    if (left.end_distance && *left.end_distance <= left.begin_distance) return false;
+    if (right.end_distance && *right.end_distance <= right.begin_distance) return false;
     if (left.end_distance && *left.end_distance <= right.begin_distance) return false;
     if (right.end_distance && *right.end_distance <= left.begin_distance) return false;
     return true;

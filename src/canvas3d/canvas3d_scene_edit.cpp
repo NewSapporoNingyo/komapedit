@@ -524,7 +524,7 @@ bool Canvas3D::Impl::write_scene_repeater_segment(const std::string& edit_id,
     const auto location_it = scene_repeater_locations.find(edit_id);
     if (location_it == scene_repeater_locations.end() ||
         location_it->second >= scene_data.repeaters.size() ||
-        desired.model_paths.empty() || desired.model_paths.front().empty()) {
+        desired.model_paths.empty()) {
         return false;
     }
     const size_t repeater_index = location_it->second;
@@ -827,7 +827,7 @@ bool Canvas3D::Impl::set_scene_repeater_edit_target(const Canvas3DPlacementEditT
         return false;
     }
     const Canvas3DRepeaterSegment& current = scene_data.repeaters[location_it->second];
-    if (current.model_paths.empty() || current.model_paths.front().empty()) return false;
+    if (current.model_paths.empty()) return false;
 
     if (!scene_structure_edit.active) {
         scene_structure_edit.active = true;

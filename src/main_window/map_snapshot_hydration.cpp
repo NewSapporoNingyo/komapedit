@@ -1011,7 +1011,17 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         row.cells["tilt"] = format_double(input.tilt, 6);
         row.cells["span"] = format_double(input.span, 6);
         row.cells["interval"] = format_double(input.interval, 6);
-        row.cells["structureKeys"] = map_snapshot_value_span_text(snapshot, input.structure_keys);
+        if (!map_snapshot_span_valid(input.structure_keys, snapshot.value_count) ||
+            (input.structure_keys.count != 0 && !snapshot.values)) {
+            throw std::runtime_error("invalid Repeater structure key span");
+        }
+        std::vector<std::string> structure_keys;
+        structure_keys.reserve(static_cast<size_t>(input.structure_keys.count));
+        for (std::uint64_t key_index = 0; key_index < input.structure_keys.count; ++key_index) {
+            structure_keys.push_back(map_snapshot_value_text(
+                snapshot, snapshot.values[input.structure_keys.offset + key_index]));
+        }
+        set_repeater_structure_keys(row, structure_keys);
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.repeaters.push_back(std::move(row));
     }

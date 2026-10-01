@@ -706,6 +706,36 @@ double table_cell_number(const TableRow& row, const std::string& key) {
     return end == text.c_str() ? 0.0 : value;
 }
 
+std::vector<std::string> repeater_structure_keys(const TableRow& row) {
+    std::vector<std::string> keys;
+    const double count_value = table_cell_number(row, "_structureKeys.count");
+    if (!std::isfinite(count_value) || count_value < 0.0 ||
+        std::trunc(count_value) != count_value || count_value > row.cells.size()) return keys;
+    const size_t count = static_cast<size_t>(count_value);
+    keys.reserve(count);
+    for (size_t index = 0; index < count; ++index) {
+        const auto item = row.cells.find("_structureKeys." + std::to_string(index));
+        if (item == row.cells.end()) return {};
+        keys.push_back(item->second);
+    }
+    return keys;
+}
+
+void set_repeater_structure_keys(TableRow& row, const std::vector<std::string>& keys) {
+    for (auto it = row.cells.begin(); it != row.cells.end();) {
+        if (it->first.rfind("_structureKeys.", 0) == 0) it = row.cells.erase(it);
+        else ++it;
+    }
+    row.cells["_structureKeys.count"] = std::to_string(keys.size());
+    std::string display;
+    for (size_t index = 0; index < keys.size(); ++index) {
+        row.cells["_structureKeys." + std::to_string(index)] = keys[index];
+        if (index) display += ", ";
+        display += keys[index];
+    }
+    row.cells["structureKeys"] = std::move(display);
+}
+
 std::vector<repeater_linkage::Event> table_repeater_events(
     const std::vector<TableRow>& rows) {
     std::vector<repeater_linkage::Event> events;

@@ -22,6 +22,7 @@
 #include <map>
 #include <limits>
 #include <string>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -167,6 +168,85 @@ void Canvas3D::Impl::debug_record_scene_world(const std::string& path, int objec
 }
 
 bool Canvas3D::Impl::debug_check_repeater_cache() {
+    // Independently specified placement sequences, not merely equivalence of
+    // two implementations that could share the same enumeration error.
+    const auto check_sequence = [&](double begin, double end, double interval,
+                                    std::vector<std::string> paths,
+                                    const std::vector<std::pair<double, std::string>>& expected) {
+        Impl placed(device, nullptr);
+        placed.scene_chunk_m = 25;
+        placed.scene_data.min_distance = 0;
+        placed.scene_data.max_distance = 500;
+        Canvas3DTrackPath track;
+        track.key = "0";
+        for (double distance : {0.0, 500.0}) {
+            Canvas3DTrackPoint point;
+            point.distance = distance;
+            point.z = -distance;
+            track.points.push_back(point);
+        }
+        placed.scene_data.tracks.push_back(track);
+        Canvas3DRepeaterSegment repeater;
+        repeater.edit_id = "sequence";
+        repeater.track_key = "0";
+        repeater.begin_distance = begin;
+        repeater.end_distance = end;
+        repeater.has_end_or_change_position = true;
+        repeater.interval = interval;
+        repeater.model_paths = std::move(paths);
+        repeater.object_index = 0;
+        placed.scene_data.repeaters.push_back(repeater);
+        Canvas3DSceneObject object;
+        object.kind = Canvas3DSceneObjectKind::Repeater;
+        object.source_row = 0;
+        object.edit_id = repeater.edit_id;
+        placed.scene_data.objects.push_back(object);
+        placed.scene_placement_tracks.rebuild(placed.scene_data);
+        std::string error;
+        if (!placed.build_scene_chunks(error)) return false;
+        placed.debug_scene_capture = true;
+        placed.debug_scene_signature = 14695981039346656037ULL;
+        for (const auto& item : expected) {
+            double world[16]{};
+            if (!placed.make_repeater_instance_world(repeater, item.first, world)) return false;
+            placed.debug_record_scene_world(item.second, 0, item.first, world);
+        }
+        const auto expected_signature = placed.debug_scene_signature;
+        for (bool reference : {false, true}) {
+            placed.debug_scene_reference = reference;
+            placed.debug_scene_signature = 14695981039346656037ULL;
+            std::map<std::string, std::vector<SceneInstanceData>> instances;
+            for (auto& chunk : placed.scene_chunks) {
+                placed.append_visible_repeater_instances(chunk, 0, 500, {}, identity(),
+                                                         640, 480, false, instances, nullptr);
+            }
+            if (placed.debug_scene_signature != expected_signature) {
+                throw std::runtime_error("Repeater placement sequence mismatch at Begin=" +
+                    std::to_string(begin) + ", interval=" + std::to_string(interval));
+            }
+        }
+        SceneObjectJumpTarget start, finish;
+        if (!placed.find_repeater_jump_target(0, start) || start.distance != begin ||
+            !placed.find_repeater_end_or_change_jump_target(0, finish) || finish.distance != end) return false;
+        if ((begin == end || repeater.model_paths.front().empty()) &&
+            (!start.model_path.empty() || start.center.z != -begin)) return false;
+        if (expected.empty() && (!finish.model_path.empty() || finish.center.z != -end)) return false;
+        auto changed = repeater;
+        changed.x = 1;
+        if (!placed.write_scene_repeater_segment(repeater.edit_id, changed) ||
+            !placed.write_scene_repeater_segment(repeater.edit_id, repeater)) return false;
+        if (begin == end && scene_repeater_instance_count(repeater) != 0) return false;
+        return true;
+    };
+    if (!check_sequence(7, 100, 30, {"A", "B"}, {{7,"A"},{37,"B"},{67,"A"},{97,"B"}}) ||
+        !check_sequence(100, 140, 10, {"A", "B", "C"}, {{100,"A"},{110,"B"},{120,"C"},{130,"A"}}) ||
+        !check_sequence(0, 100, 25, {"A", "B"}, {{0,"A"},{25,"B"},{50,"A"},{75,"B"}}) ||
+        !check_sequence(3.25, 25.75, 7.5, {"A", "B"}, {{3.25,"A"},{10.75,"B"},{18.25,"A"}}) ||
+        !check_sequence(7, 100, 30, {"A", "", "C"}, {{7,"A"},{67,"C"},{97,"A"}}) ||
+        !check_sequence(7, 100, 30, {"", "B", "B"}, {{37,"B"},{67,"B"}}) ||
+        !check_sequence(7, 100, 30, {"", ""}, {}) ||
+        !check_sequence(25, 25, 10, {"A"}, {}) ||
+        !check_sequence(25, 25, 0, {"A"}, {})) return false;
     Impl fixture(device, nullptr);
     auto& scene = fixture.scene_data;
     scene.min_distance = 0.0;

@@ -293,6 +293,7 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 - **Map Structure List (PutBetween)**: Shows `Structure.PutBetween` structures deformed between two tracks.
 - **Structure List**: Shows each structureKey and model path. Right-click a key to preview the model or fill that key into an open New Map Element Wizard of a matching type.
 - **Repeater List**: Combines related `Repeater.Begin`/`Begin0`/`End` statements into intervals. You can jump to a start, end, or change point. If an interval has several Begin statements, the delete menu offers `Delete All`, `Delete Change Point`, `Trim to Change Point`, and `Start from Change Point`.
+  Each Begin starts its own placement grid at `begin + k * interval`, using the `k % N` entry of its original structure list. End and the next same-name Begin exclude their boundary from the preceding segment. Events at the same distance follow source parse order, including Includes: Begin then End leaves no active segment, while End then Begin starts a new one. Missing model references leave gaps in the cycle; they do not shift later models. A zero-length segment remains editable and draws no instances.
 - **Other Train List**: Shows other-train definitions, stop positions, and the read-only `Train.Enable` time. You can control each path separately and locate stop positions in the Plan.
 
 #### Track Geometry, Signals, and Sections

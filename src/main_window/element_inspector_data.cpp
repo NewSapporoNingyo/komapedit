@@ -900,19 +900,19 @@ void set_inspector_row_field_value(TableRow& row,
             if (field_key == "structureKeys.count") {
                 double parsed_count = 0.0;
                 if (!parse_gui_edit_number(value, &parsed_count) || parsed_count < 1.0 ||
-                    std::trunc(parsed_count) != parsed_count) {
+                    std::trunc(parsed_count) != parsed_count || parsed_count > row.cells.size()) {
                     return;
                 }
                 const size_t count = static_cast<size_t>(parsed_count);
-                std::string joined;
+                std::vector<std::string> keys;
+                keys.reserve(count);
                 for (size_t index = 0; index < count; ++index) {
                     const std::string key = "_structureKeys." + std::to_string(index);
                     const auto item = row.cells.find(key);
                     if (item == row.cells.end() || item->second.empty()) return;
-                    if (!joined.empty()) joined += ",";
-                    joined += item->second;
+                    keys.push_back(item->second);
                 }
-                row.cells["structureKeys"] = std::move(joined);
+                set_repeater_structure_keys(row, keys);
             } else {
                 row.cells["_" + field_key] = value;
             }
@@ -1078,19 +1078,6 @@ bool is_section_values_field(const MapElementEditFieldState& field) {
     return is_section_values_field(field.key);
 }
 
-std::vector<std::string> split_repeater_structure_keys(const std::string& text) {
-    std::vector<std::string> keys;
-    size_t begin = 0;
-    while (begin <= text.size()) {
-        const size_t end = text.find(',', begin);
-        const std::string key = trim_gui_ascii_copy(
-            text.substr(begin, end == std::string::npos ? std::string::npos : end - begin));
-        if (!key.empty()) keys.push_back(key);
-        if (end == std::string::npos) break;
-        begin = end + 1;
-    }
-    return keys;
-}
 
 void reindex_repeater_structure_key_fields(MapElementInspectorState& inspector) {
     size_t index = 0;
@@ -1694,9 +1681,9 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         add_row_field("interval", "interval", MapElementNumericConstraint::Finite, true);
 
         const std::vector<std::string> current_keys =
-            split_repeater_structure_keys(table_cell(*row, "structureKeys"));
+            repeater_structure_keys(*row);
         next.repeater_structure_keys_original =
-            split_repeater_structure_keys(table_cell(*original_row, "structureKeys"));
+            repeater_structure_keys(*original_row);
         for (size_t key_index = 0; key_index < current_keys.size(); ++key_index) {
             const std::string original_key = key_index < next.repeater_structure_keys_original.size()
                 ? next.repeater_structure_keys_original[key_index]

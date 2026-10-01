@@ -1142,7 +1142,7 @@ int App::run_debug_headless_new_element_edit(
             const std::string method = ascii_lower(table_cell(row, "method"));
             if (method != "begin" && method != "begin0") continue;
             const std::vector<std::string> keys =
-                split_repeater_structure_keys(table_cell(row, "structureKeys"));
+                repeater_structure_keys(row);
             if (keys.empty() || table_cell(row, "trackKey").empty()) continue;
             track_key = table_cell(row, "trackKey");
             structure_key = keys.front();

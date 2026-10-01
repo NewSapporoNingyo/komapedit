@@ -155,8 +155,8 @@ ctest --test-dir build --output-on-failure
 
 #### `include/repeater_linkage.h`
 
-- `EventKind` 区分 `Begin`、`Begin0`、`End`，`BoundaryKind` 区分显式 End 和后续 Begin 形成的变化边界；`Event` 保留距离、源码顺序、轨道/key 和源行索引。
-- `canonical_key()` 统一 key 的大小写比较。`pair_linkage()` 先按来源顺序稳定排序，再按“轨道 + repeater key”维护活动链，生成 `Chain`、`Segment`、事件到链/段的反向索引；遇到新 Begin 时封闭旧段，遇到 End 时结束链。
+- `EventKind` 将 `Begin`/`Begin0` 归为 Begin，并区分 End 和其他事件；`BoundaryKind` 区分显式 End、后续 Begin 和未闭合边界；`Event` 保留距离、全局解析顺序、repeater key 和源行索引。
+- `canonical_key()` 统一 key 的大小写比较。`pair_linkage()` 按距离、全局解析顺序、源行索引稳定排序，按 repeater key 维护活动链并生成 `Chain` 和 `Segment`；遇到新 Begin 时封闭旧段，遇到 End 时结束链。同里程最后解析的事件决定活动状态。
 - `pair_segments()` 是只需要扁平段列表的适配入口。地图快照、表格、二维和三维代码应共用这些结果，不能各自猜测 Begin/End 配对。
 
 #### `include/own_track_transition_linkage.h`
@@ -611,7 +611,8 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - 除显式检查器操作外保持方法与参数形状：Structure/Repeater 坐标偏移按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，丢弃非零偏移前必须确认；短式 `Signal.Put` 与 Repeater 修剪沿用原确认流程。
 - 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程。编辑模式右键可在上下新增行，固定 BVE CSV 字段数为 Structure 2、Sound/Sound3D 3、Station 13、Signal 主行 6；Signal 主行/glare 成对作为一个插入块，glare 需显式新增。
 - maploader、表格、二维和三维统一使用 `repeater_linkage` 与过渡关联规则。
-- Repeater 生命周期使用半开区间 `[第一个 Begin, End)`；同里程 End 无论源码顺序如何都排在全部 Begin 之前。一次 `repeaterKey` 改名 typed batch 必须包含链内全部 Begin/Begin0 和显式 End；批次不完整或规范化同名区间重叠时由 maploader 拒绝。
+- Repeater 生命周期使用半开区间 `[第一个 Begin, End)`。共享配对按距离、全局解析顺序和源行索引排序；同里程最后一个 Begin/End 决定活动状态。空区间保留源身份，但不占据里程范围。一次 `repeaterKey` 改名 typed batch 必须包含链内全部 Begin/Begin0 和显式 End；批次不完整、同名区间重叠或相接改名会改变链归属时由 maploader 拒绝。完整重解析还检查非目标段边界。成对新建零长度段时先输出 Begin，再输出 End。
+- Repeater 水合将完整 typed `structure_keys` 保存为 `_structureKeys.count` 与 `_structureKeys.N` 单元格。`repeater_structure_keys()` 和 `set_repeater_structure_keys()` 在水合、Inspector 草稿及场景构建之间共享这一表示；拼接的 `structureKeys` 仅供显示。场景模型路径数组保留未解析项的位置，使原始列表长度始终决定 `k % N`。端点模型缺失时，相机跳转使用放置几何锚点。
 - 他轨道 `trackKey` 改名必须形成一个 typed batch，包含根地图及全部 Include 中大小写不敏感且保留数值/字符串类型的同键全部存续 `Track[trackKey].*` 语句。maploader 会拒绝不完整批次，以及最终键与另一条他轨道重名的批次，不使用里程或区间例外；依赖该轨道键的地图元素保持为非目标行。
 
 ### UI、表格与渲染
@@ -652,7 +653,7 @@ scene benchmark 默认连续测量 300 个固定相机帧，unit distance 为 25
 
 `--profile-stages` 启用可选 CPU 分段及异步 GPU 时间戳诊断。查询在计时前分配，跨帧读取，不强制提交或等待，跳过无效/未就绪样本。GPU 帧区间可能包含 CPU 提交命令造成的间隙，不代表 GPU 忙碌时间。CPU 阶段可能嵌套（轨道/高亮绘制包含 mesh 提交），不能直接相加当作互斥耗时。profiling 结果用于解释瓶颈，不替代原有 CPU 帧门槛。
 
-计时结束后，scene benchmark 比较原始与缓存放置路径的双精度实例指纹、像素、拾取，以及相机平移/旋转、chunk 跳转和返回、窗口/Fog 变化及启用轨道辅助线后的结果。这些检查不生成 UI 点击。scene-loader contract 另覆盖 Repeater 非零起点、模型循环、tilt/span、间距边界、无效间距、编辑/恢复失效、轨道替换、缓存预算回退及释放。本次性能修复保留现有相对 Begin 起点的 Repeater 放置序列，与官方全局 interval 网格描述的差异在 `TODO.md` 中独立跟踪。
+计时结束后，scene benchmark 比较原始与缓存放置路径的双精度实例指纹、像素、拾取，以及相机平移/旋转、chunk 跳转和返回、窗口/Fog 变化及启用轨道辅助线后的结果。这些检查不生成 UI 点击。scene-loader contract 另覆盖具有独立预期值的 Repeater 距离/模型序列、typed 列表水合、Include 顺序、缺失项、零长度段、几何跳转锚点、tilt/span、无效间距、编辑/恢复失效、轨道替换、缓存预算回退及释放。放置使用 `begin + k * interval` 和原始列表的 `k % N`，每个 Begin 重新起算。这遵循本次提供的 BVE 5.8 二进制分析；官方 Map 措辞未明确 `dist` 的原点。2026-10-01 已核对刷新日期为 2026-09-29 的官方 Map 和 Structure List 缓存。预览保留自身分块缓存与线路范围，不复刻 BVE 内部 25 m 分块的重复提交及额外 10 km 尾段。
 
 常用 Debug 无界面命令：
 

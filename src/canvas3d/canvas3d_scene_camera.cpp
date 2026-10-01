@@ -74,8 +74,8 @@ const Canvas3DRepeaterSegment* Canvas3D::Impl::find_repeater_segment(size_t sour
 bool Canvas3D::Impl::find_repeater_jump_target(size_t source_row, SceneObjectJumpTarget& target) const {
     const Canvas3DRepeaterSegment* repeater = find_repeater_segment(source_row);
     if (!repeater || repeater->model_paths.empty()) return false;
-    const std::string& model_path = repeater->model_paths.front();
-    if (model_path.empty()) return false;
+    const std::string model_path = repeater->end_distance > repeater->begin_distance
+        ? repeater->model_paths.front() : std::string{};
     double world[16] = {};
     if (!make_repeater_instance_world(*repeater, repeater->begin_distance, world)) return false;
     target.object_index = repeater->object_index;
@@ -93,14 +93,14 @@ bool Canvas3D::Impl::find_repeater_end_or_change_jump_target(size_t source_row,
     const Canvas3DRepeaterSegment* repeater = find_repeater_segment(source_row);
     if (!repeater || !repeater->has_end_or_change_position) return false;
 
-    double last_instance_distance = 0.0;
+    double last_instance_distance = repeater->end_distance;
     size_t last_model_index = 0;
-    if (!scene_repeater_last_instance(*repeater, last_instance_distance, last_model_index)) return false;
+    const bool has_instance =
+        scene_repeater_last_instance(*repeater, last_instance_distance, last_model_index);
 
-    const std::string& model_path = repeater->model_paths[last_model_index];
+    const std::string model_path = has_instance ? repeater->model_paths[last_model_index] : std::string{};
     double last_instance_world[16] = {};
-    if (model_path.empty() ||
-        !make_repeater_instance_world(*repeater, last_instance_distance, last_instance_world)) {
+    if (!make_repeater_instance_world(*repeater, last_instance_distance, last_instance_world)) {
         return false;
     }
 

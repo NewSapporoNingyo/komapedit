@@ -14,6 +14,7 @@
 #include "../canvas3d_scene_geometry.h"
 #include "../canvas3d_put_between.h"
 #include "kme.h"
+#include "maploader.h"
 #include <d3d11.h>
 #include <algorithm>
 #include <atomic>
@@ -33,6 +34,80 @@
 #include <stdexcept>
 
 using namespace canvas3d_detail;
+
+namespace {
+bool repeater_hydration_contract(const std::string& model_path) {
+    struct Fixture {
+        std::filesystem::path directory = std::filesystem::temp_directory_path() /
+            ("komapedit-repeater-hydration-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        void* handle = nullptr;
+        ~Fixture() {
+            if (handle) kv_free(handle);
+            std::error_code error;
+            std::filesystem::remove_all(directory, error);
+        }
+    } fixture;
+    if (!std::filesystem::create_directory(fixture.directory)) return false;
+    const auto map_path = fixture.directory / "map.txt";
+    const std::string source =
+        "BveTs Map 2.02:utf-8\r\n0; Structure.Load('structures.csv');\r\n"
+        "7; Repeater['r'].Begin0(0,0,0,30,'A name;part','missing','C','A name;part');\r\n"
+        "100; Repeater['r'].Begin0(0,0,0,10,'C');\r\n"
+        "include 'end.txt';\r\n"
+        "Repeater['r'].Begin(0,0,0,0,0,0,0,0,0,10,'missing','C');\r\n"
+        "200; Repeater['r'].End();\r\n"
+        "250; Repeater['absent'].Begin0(0,0,0,10,'missing','also missing');\r\n"
+        "300; Repeater['absent'].End();\r\n"
+        "400; Repeater['open'].Begin0(0,0,0,25,'C');\r\n500;\r\n";
+    {
+        std::ofstream map(map_path, std::ios::binary);
+        map << source;
+        std::ofstream list(fixture.directory / "structures.csv", std::ios::binary);
+        list << "BveTs Structure List 2.00:utf-8\r\nA name;part," << model_path
+             << "\r\nC," << model_path << "\r\n";
+        std::ofstream child(fixture.directory / "end.txt", std::ios::binary);
+        child << "BveTs Map 2.02:utf-8\r\n100; Repeater['r'].End();\r\n";
+        if (!map || !list || !child) return false;
+    }
+    fixture.handle = kv_load_map_ex(map_path.u8string().c_str(), 25,
+                                    KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA);
+    KvMapSnapshot snapshot{};
+    if (!fixture.handle || !kv_get_map_snapshot(fixture.handle, KV_MAP_SNAPSHOT_VERSION,
+                                                &snapshot, sizeof(snapshot))) return false;
+    MapModel model = hydrate_map_snapshot(snapshot, map_path.u8string(), 0);
+    if (model.repeaters.empty() || repeater_structure_keys(model.repeaters.front()) !=
+        std::vector<std::string>{"A name;part", "missing", "C", "A name;part"}) return false;
+    Canvas3DScene scene;
+    Canvas3DTrackPath track;
+    track.key = "0";
+    for (double distance : {0.0, 500.0}) {
+        Canvas3DTrackPoint point;
+        point.distance = distance;
+        point.z = -distance;
+        track.points.push_back(point);
+    }
+    scene.tracks.push_back(std::move(track));
+    if (!populate_canvas3d_scene_dynamic_content(scene, model, -1) || scene.repeaters.size() != 5) return false;
+    const auto& paths = scene.repeaters[0].model_paths;
+    if (paths.size() != 4 || paths[0].empty() || !paths[1].empty() ||
+        paths[2] != paths[0] || paths[3] != paths[0] ||
+        scene.repeaters[1].begin_distance != scene.repeaters[1].end_distance ||
+        scene_repeater_instance_count(scene.repeaters[1]) != 0 ||
+        scene.repeaters[2].model_paths.size() != 2 || !scene.repeaters[2].model_paths[0].empty() ||
+        scene.repeaters[3].model_paths != std::vector<std::string>{"", ""} ||
+        scene.repeaters[4].begin_distance != 400 || scene.repeaters[4].end_distance != 500 ||
+        scene_repeater_instance_count(scene.repeaters[4]) != 4) return false;
+    TableRow edited = model.repeaters.front();
+    set_inspector_row_field_value(edited, "repeater", "structureKeys.0", "C", 0);
+    set_inspector_row_field_value(edited, "repeater", "structureKeys.1", "A name;part", 0);
+    set_inspector_row_field_value(edited, "repeater", "structureKeys.count", "2", 0);
+    if (repeater_structure_keys(edited) != std::vector<std::string>{"C", "A name;part"} ||
+        edited.cells.count("_structureKeys.2") != 0) return false;
+    std::ifstream unchanged(map_path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(unchanged), {}) == source;
+}
+} // namespace
 
 Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contract(
     const std::string& valid_model_path,
@@ -67,7 +142,7 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
     };
 
     try {
-        result.repeater_cache = debug_check_repeater_cache();
+        result.repeater_cache = debug_check_repeater_cache() && repeater_hydration_contract(valid_model_path);
         const auto number_text = [](double value) {
             char text[64]{};
             std::snprintf(text, sizeof(text), "%.0f", value);

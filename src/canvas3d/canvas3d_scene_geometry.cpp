@@ -108,7 +108,7 @@ static size_t scene_repeater_index_count(const SceneRepeaterIndexRange& range) {
 }
 
 size_t scene_repeater_instance_count(const Canvas3DRepeaterSegment& repeater) {
-    if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) return 0;
+    if (repeater.model_paths.empty() || repeater.end_distance <= repeater.begin_distance) return 0;
     if (!scene_repeater_has_interval(repeater)) return 1;
 
     SceneRepeaterIndexRange range;
@@ -119,7 +119,7 @@ size_t scene_repeater_instance_count(const Canvas3DRepeaterSegment& repeater) {
 bool scene_repeater_last_instance(const Canvas3DRepeaterSegment& repeater,
                                   double& distance,
                                   size_t& model_index) {
-    if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) return false;
+    if (repeater.model_paths.empty() || repeater.end_distance <= repeater.begin_distance) return false;
     if (!scene_repeater_has_interval(repeater)) {
         distance = repeater.begin_distance;
         model_index = 0;
@@ -622,7 +622,7 @@ void Canvas3D::Impl::prepare_scene_repeater_cache(SceneChunk& chunk) {
         const size_t index = chunk.repeater_indices[slot];
         if (index >= scene_data.repeaters.size()) continue;
         const auto& repeater = scene_data.repeaters[index];
-        if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) continue;
+        if (repeater.model_paths.empty() || repeater.end_distance <= repeater.begin_distance) continue;
         SceneRepeaterIndexRange range{0, 0};
         if (scene_repeater_has_interval(repeater)) {
             if (!scene_repeater_index_range(repeater, chunk.d_min, chunk_max, range)) continue;
@@ -676,13 +676,16 @@ void Canvas3D::Impl::append_visible_repeater_instances(SceneChunk& chunk,
         const size_t repeater_index = chunk.repeater_indices[repeater_slot];
         if (repeater_index >= scene_data.repeaters.size()) continue;
         const Canvas3DRepeaterSegment& repeater = scene_data.repeaters[repeater_index];
-        if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) continue;
+        if (repeater.model_paths.empty() || repeater.end_distance <= repeater.begin_distance) continue;
 
         const double begin = std::max(range_min, repeater.begin_distance);
         const double end = std::min(range_max, repeater.end_distance);
         if (end < begin - k_scene_repeater_distance_epsilon) continue;
 
         auto emit = [&](double distance, size_t model_index) {
+            // Index tolerances may include a point on both sides of a chunk
+            // boundary. Only its half-open owner submits the actual instance.
+            if (distance < chunk.d_min || distance >= chunk.d_max) return;
             const std::string& path = repeater.model_paths[model_index % repeater.model_paths.size()];
             if (path.empty()) return;
             double computed_world[16] = {};

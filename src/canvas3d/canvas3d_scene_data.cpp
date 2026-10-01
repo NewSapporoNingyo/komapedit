@@ -101,22 +101,6 @@ static Canvas3DTrackPoint scene_track_row_point(const SceneTrackBufferView& poin
     return p;
 }
 
-static std::vector<std::string> scene_split_key_list(const std::string& text) {
-    std::vector<std::string> keys;
-    std::string current;
-    for (char ch : text) {
-        if (ch == ',' || ch == ';' || std::isspace(static_cast<unsigned char>(ch))) {
-            std::string key = trim_ascii(current);
-            if (!key.empty()) keys.push_back(key);
-            current.clear();
-        } else {
-            current.push_back(ch);
-        }
-    }
-    std::string key = trim_ascii(current);
-    if (!key.empty()) keys.push_back(key);
-    return keys;
-}
 static void append_scene_route_value_event(
     std::vector<route_value_sampling::Event>& events,
     const TrackEvent& source,
@@ -958,10 +942,10 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         segment.rz = table_cell_number(begin, "rz");
         segment.tilt = table_cell_number(begin, "tilt");
         segment.span = table_cell_number(begin, "span");
-        for (const std::string& structure_key : scene_split_key_list(
-                 table_cell(begin, "structureKeys"))) {
-            const std::string path = model_path_for_key(structure_key);
-            if (!path.empty()) segment.model_paths.push_back(path);
+        for (const std::string& structure_key : repeater_structure_keys(begin)) {
+            // An unresolved slot still participates in k % N. Dropping it
+            // would move every later model to a different grid position.
+            segment.model_paths.push_back(model_path_for_key(structure_key));
         }
         if (segment.model_paths.empty()) continue;
 

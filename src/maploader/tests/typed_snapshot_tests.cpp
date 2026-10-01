@@ -195,7 +195,7 @@ struct RepeaterRenameFixture {
     std::filesystem::path directory;
     std::filesystem::path map_path;
 
-    RepeaterRenameFixture() {
+    explicit RepeaterRenameFixture(bool begin_before_end = false) {
         directory = std::filesystem::temp_directory_path() /
             ("komapedit-repeater-rename-contract-" + std::to_string(
                 std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -205,10 +205,15 @@ struct RepeaterRenameFixture {
         map << "BveTs Map 2.02:utf-8\n"
             << "0;\n"
             << "Repeater['shared'].Begin0('0',0,0,25,'shared-a');\n"
-            << "100;\n"
-            << "Repeater['shared'].End();\n"
-            << "Repeater['target'].Begin0('0',0,0,25, 'target-a');\n"
-            << "110;\n"
+            << "100;\n";
+        if (begin_before_end) {
+            map << "Repeater['target'].Begin0('0',0,0,25, 'target-a');\n"
+                   "Repeater['shared'].End();\n";
+        } else {
+            map << "Repeater['shared'].End();\n"
+                   "Repeater['target'].Begin0('0',0,0,25, 'target-a');\n";
+        }
+        map << "110;\n"
             << "Repeater['blocker'].Begin0('0',0,0,25,'blocker-a');\n"
             << "150;\n"
             << "Repeater['target'].Begin0('0',0,0,25, 'target-b');\n"
@@ -2981,27 +2986,134 @@ int geometry_projection_contract() {
     return failures;
 }
 
+repeater_linkage::Linkage snapshot_repeater_linkage(const KvMapSnapshot& snapshot) {
+    std::vector<repeater_linkage::Event> events;
+    for (std::uint64_t index = 0; index < snapshot.repeater_count; ++index) {
+        const auto& row = snapshot.repeaters[index];
+        events.push_back({static_cast<size_t>(index), row.distance,
+            static_cast<double>(row.order), map_string(snapshot, row.repeater_key.string_value),
+            map_string(snapshot, row.method) == "End" ? repeater_linkage::EventKind::End
+                                                      : repeater_linkage::EventKind::Begin});
+    }
+    return repeater_linkage::pair_linkage(std::move(events));
+}
+
 void repeater_linkage_boundary_contract() {
     using repeater_linkage::Event;
     using repeater_linkage::EventKind;
     const repeater_linkage::Linkage linkage = repeater_linkage::pair_linkage({
         Event{0, 0.0, 0.0, "rail", EventKind::Begin},
-        // Deliberately put Begin before End in source order at the shared
-        // distance. Half-open linkage must still close the earlier chain first.
         Event{1, 100.0, 1.0, "rail", EventKind::Begin},
         Event{2, 100.0, 2.0, "rail", EventKind::End},
     });
-    check(linkage.chains.size() == 2 && linkage.segments.size() == 2,
-          "Repeater same-distance End/Begin split chains");
-    if (linkage.chains.size() == 2) {
+    check(linkage.chains.size() == 1 && linkage.segments.size() == 2,
+          "Repeater same-distance Begin then End closes the active chain");
+    if (linkage.chains.size() == 1 && linkage.segments.size() == 2) {
         check(linkage.chains[0].end_source_index &&
                   *linkage.chains[0].end_source_index == 2 &&
-                  linkage.chains[1].begin_source_indices.size() == 1 &&
-                  linkage.chains[1].begin_source_indices[0] == 1,
-              "Repeater same-distance chain ownership");
+                  linkage.chains[0].begin_source_indices.size() == 2 &&
+                  linkage.segments[1].begin_distance == 100.0 &&
+                  linkage.segments[1].end_distance == 100.0,
+              "Repeater zero-length segment retains its source and explicit End");
+    }
+    const auto restarted = repeater_linkage::pair_linkage({
+        Event{0, 0, 0, "rail", EventKind::Begin},
+        Event{1, 100, 1, "rail", EventKind::End},
+        Event{2, 100, 2, "rail", EventKind::Begin},
+        Event{3, 100, 3, "rail", EventKind::Begin},
+    });
+    check(restarted.chains.size() == 2 && restarted.segments.size() == 3 &&
+              restarted.segments[1].end_distance == 100 &&
+              restarted.segments[2].boundary_kind == repeater_linkage::BoundaryKind::Open,
+          "Repeater End then Begins restarts with the last Begin active");
+    if (restarted.chains.size() == 2) {
         check(!repeater_linkage::half_open_intervals_overlap(
-                  linkage.chains[0], linkage.chains[1]),
+                  restarted.chains[0], restarted.chains[1]),
               "Repeater touching half-open intervals do not overlap");
+        auto empty = restarted.chains[1];
+        empty.end_distance = empty.begin_distance;
+        auto enclosing = restarted.chains[0];
+        enclosing.end_distance = 200;
+        check(!repeater_linkage::half_open_intervals_overlap(empty, enclosing) &&
+                  !repeater_linkage::half_open_intervals_overlap(enclosing, empty),
+              "Repeater empty intervals never overlap");
+    }
+
+    TempFixture fixture;
+    {
+        std::ofstream root(fixture.map_path, std::ios::binary | std::ios::trunc);
+        root << "BveTs Map 2.02:utf-8\r\n"
+                "$d=7; $d; Repeater['rail'].Begin0(0,0,0,30,'A','B');\r\n"
+                "100; Repeater['rail'].Begin0(0,0,0,10,'C');\r\n"
+                "include 'repeater-order.txt';\r\n"
+                "Repeater['rail'].Begin0(0,0,0,20,'D'); # last wins\r\n"
+                "200; Repeater['rail'].End();\r\n";
+        std::ofstream child(fixture.directory / "repeater-order.txt", std::ios::binary);
+        child << "BveTs Map 2.02:utf-8\r\n100; Repeater['rail'].End();\r\n";
+    }
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25,
+                                   KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot snapshot{};
+    const bool loaded = handle.value && kv_get_map_snapshot(handle.value,
+        KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot));
+    check(loaded, "Repeater Include-order fixture load");
+    if (loaded) {
+        const auto linked = snapshot_repeater_linkage(snapshot);
+        check(linked.chains.size() == 2 && linked.segments.size() == 3 &&
+                  linked.segments[0].begin_distance == 7 &&
+                  linked.segments[0].end_distance == 100 &&
+                  linked.segments[1].end_distance == 100 &&
+                  linked.segments[2].end_distance == 200,
+              "Repeater Include expansion preserves same-distance global parse order");
+        if (linked.segments.size() != 3) return;
+        const auto& zero = snapshot.repeaters[linked.segments[1].begin_source_index];
+        const std::string edit_id = map_string(snapshot, zero.metadata.edit_id);
+        const std::string source_hash = map_string(snapshot,
+            snapshot.source_files[zero.metadata.source_file_index].source_hash);
+        UpdateBatch move(edit_id, source_hash, "150", "distance");
+        KvEditReportSnapshot rejected{};
+        check(kv_edit_dry_run_typed(handle.value, &move.batch, &rejected, sizeof(rejected)) &&
+                  !rejected.ok && rejected.non_target_changed_count != 0 &&
+                  edit_report_has_error_prefix(rejected,
+                      "full reparse changed a non-target Repeater boundary"),
+              "Moving a zero-length Begin cannot truncate a non-target segment");
+
+        const auto read_root = [&]() {
+            std::ifstream input(fixture.map_path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(input), {});
+        };
+        const std::string original = read_root();
+        UpdateBatch edit(edit_id, source_hash, "5", "span");
+        KvEditReportSnapshot applied{};
+        check(kv_edit_apply_to_memory_typed(handle.value, &edit.batch, &applied, sizeof(applied)) &&
+                  applied.ok && read_root() == original,
+              "Zero-length Begin remains editable without disk writes");
+        check(kv_edit_reset_memory(handle.value), "Zero-length Begin Reset");
+        check(kv_edit_apply_to_memory_typed(handle.value, &edit.batch, &applied, sizeof(applied)) &&
+                  applied.ok, "Zero-length Begin reapply after Reset");
+        KvEditReportSnapshot saved{};
+        check(kv_edit_commit_typed(handle.value, &saved, sizeof(saved)) && saved.ok,
+              "Zero-length Begin Save in temporary fixture");
+        MapHandle reloaded(kv_load_map_ex(fixture.path_utf8().c_str(), 25,
+                                         KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot committed{};
+        if (reloaded.value && kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                                                  &committed, sizeof(committed))) {
+            const auto restored = snapshot_repeater_linkage(committed);
+            const auto* row = find_repeater(committed, edit_id);
+            check(row && row->span == 5 && restored.segments.size() == 3 &&
+                      restored.segments[1].begin_distance == 100 &&
+                      restored.segments[1].end_distance == 100,
+                  "Zero-length identity and Include ordering survive Save/reload");
+        } else check(false, "Zero-length Begin reload");
+        std::string expected = original;
+        const std::string original_begin = "Begin0(0,0,0,10,'C')";
+        const auto offset = expected.find(original_begin);
+        if (offset != std::string::npos) {
+            expected.replace(offset, original_begin.size(), "Begin0(0,0,5,10,'C')");
+        }
+        check(read_root() == expected,
+              "Zero-length edit preserves expressions, comments, UTF-8 and CRLF");
     }
 }
 
@@ -3341,6 +3453,30 @@ void repeater_key_edit_contract() {
 }
 
 void repeater_insert_contract() {
+    {
+        RepeaterRenameFixture conflicting(true);
+        MapHandle rename_handle(kv_load_map_ex(conflicting.path_utf8().c_str(), 25,
+                                               KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot snapshot{};
+        const bool loaded = rename_handle.value && kv_get_map_snapshot(rename_handle.value,
+            KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot));
+        check(loaded, "Repeater conflicting source-order rename fixture");
+        if (loaded) {
+            std::vector<std::pair<std::string, std::string>> targets;
+            for (std::uint64_t index = 0; index < snapshot.repeater_count; ++index) {
+                const auto& row = snapshot.repeaters[index];
+                if (map_string(snapshot, row.repeater_key.string_value) != "target") continue;
+                targets.emplace_back(map_string(snapshot, row.metadata.edit_id),
+                    map_string(snapshot, snapshot.source_files[row.metadata.source_file_index].source_hash));
+            }
+            RepeaterKeyBatch rename(targets, "shared");
+            KvEditReportSnapshot report{};
+            check(kv_edit_dry_run_typed(rename_handle.value, &rename.batch, &report, sizeof(report)) &&
+                      !report.ok && edit_report_has_error_prefix(report,
+                          "Repeater key rename changes chain ownership"),
+                  "Touching rename cannot let a later End consume another Begin");
+        }
+    }
     TempFixture fixture;
     MapHandle handle(kv_load_map_ex(
         fixture.path_utf8().c_str(), 25.0,
@@ -3432,10 +3568,10 @@ void repeater_insert_contract() {
           "Repeater End before paired Begin is rejected");
 
     RepeaterInsertBatch equal_pair(source_path, {
-        {"typed-contract-repeater-equal-begin", "Begin0", "equal-pair", "175",
-         "'1'", false, {"pole"}, "equal-pair"},
         {"typed-contract-repeater-equal-end", "End", "equal-pair", "175",
          "", false, {}, "equal-pair"},
+        {"typed-contract-repeater-equal-begin", "Begin0", "equal-pair", "175",
+         "'1'", false, {"pole"}, "equal-pair"},
     });
     KvEditReportSnapshot equal_pair_report{};
     dry_run(equal_pair, equal_pair_report,
@@ -3443,6 +3579,25 @@ void repeater_insert_contract() {
     check(equal_pair_report.ok && equal_pair_report.full_reparse_ok &&
               equal_pair_report.insert_count == 2,
           "Equal-distance Repeater Begin and End pair is allowed");
+    KvEditReportSnapshot equal_apply{};
+    check(kv_edit_apply_to_memory_typed(handle.value, &equal_pair.batch,
+              &equal_apply, sizeof(equal_apply)) && equal_apply.ok,
+          "Zero-length Repeater pair memory Apply");
+    KvMapSnapshot equal_snapshot{};
+    if (kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                           &equal_snapshot, sizeof(equal_snapshot))) {
+        const auto* begin = find_repeater(equal_snapshot, "typed-contract-repeater-equal-begin");
+        const auto* end = find_repeater(equal_snapshot, "typed-contract-repeater-equal-end");
+        check(begin && end && begin->order < end->order,
+              "Zero-length paired insertion emits Begin before End");
+        const auto links = snapshot_repeater_linkage(equal_snapshot);
+        const auto found = std::find_if(links.chains.begin(), links.chains.end(),
+            [](const repeater_linkage::Chain& chain) { return chain.key == "equal-pair"; });
+        check(found != links.chains.end() && found->end_distance &&
+                  found->begin_distance == *found->end_distance,
+              "Zero-length inserted pair remains explicitly closed");
+    } else check(false, "Zero-length pair snapshot");
+    check(kv_edit_reset_memory(handle.value) != 0, "Zero-length pair Reset");
 
     RepeaterInsertBatch incomplete_pair(source_path, {{
         "typed-contract-repeater-incomplete-begin", "Begin0", "incomplete-pair", "175",

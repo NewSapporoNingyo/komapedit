@@ -3019,7 +3019,8 @@ const EditSourceFileInfo* find_model_source_file(const MapModel& model,
                                                  const std::string& path);
 MapElementKeySource map_element_key_source_for_field(
     std::string_view row_kind, std::string_view field_key) noexcept;
-std::vector<std::string> split_repeater_structure_keys(const std::string& text);
+std::vector<std::string> repeater_structure_keys(const TableRow& row);
+void set_repeater_structure_keys(TableRow& row, const std::vector<std::string>& keys);
 void replace_repeater_structure_key_fields(
     MapElementInspectorState& inspector,
     const std::vector<std::string>& structure_keys);
