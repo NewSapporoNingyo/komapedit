@@ -532,6 +532,7 @@ void write_section_row(SemanticWriter& out, const KvMapSnapshot& snapshot,
             throw std::runtime_error(
                 "typed snapshot Section value span is out of bounds");
         }
+        validate_section_sparse_indices(values, static_cast<size_t>(row.values.count));
         out.label(values_name);
         out.signed_integer(static_cast<std::int64_t>(row.values.count));
         for (std::uint64_t index = 0; index < row.values.count; ++index) {

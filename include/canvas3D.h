@@ -306,6 +306,7 @@ struct Canvas3DSceneRenderContractResult {
 
 struct Canvas3DSceneLoaderContractResult {
     bool repeater_cache = false;
+    bool model_bounds = false;
     bool normal_worker = false;
     bool copy_exception = false;
     bool put_between_exception = false;

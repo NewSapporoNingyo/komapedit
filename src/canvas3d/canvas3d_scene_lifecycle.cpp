@@ -245,6 +245,7 @@ bool Canvas3D::Impl::refresh_scene_dynamic_content(const MapModel& model, int st
     const double old_min_distance = scene_data.min_distance;
     const double old_max_distance = scene_data.max_distance;
     std::vector<SceneChunk> old_chunks = std::move(scene_chunks);
+    const size_t old_cached_repeater_world_count = scene_cached_repeater_world_count;
     auto old_structure_locations = scene_placement_locations;
     auto old_repeater_locations = scene_repeater_locations;
 
@@ -257,6 +258,7 @@ bool Canvas3D::Impl::refresh_scene_dynamic_content(const MapModel& model, int st
         scene_data.min_distance = old_min_distance;
         scene_data.max_distance = old_max_distance;
         scene_chunks = std::move(old_chunks);
+        scene_cached_repeater_world_count = old_cached_repeater_world_count;
         scene_placement_locations = std::move(old_structure_locations);
         scene_repeater_locations = std::move(old_repeater_locations);
     };

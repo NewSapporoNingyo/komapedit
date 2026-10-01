@@ -36,6 +36,71 @@
 using namespace canvas3d_detail;
 
 namespace {
+bool model_bounds_contract() {
+    struct Fixture {
+        std::filesystem::path directory = std::filesystem::temp_directory_path() /
+            ("komapedit-model-bounds-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        bool owned = false;
+        ~Fixture() {
+            if (!owned) return;
+            std::error_code error;
+            std::filesystem::remove_all(directory, error);
+        }
+    } fixture;
+    fixture.owned = std::filesystem::create_directory(fixture.directory);
+    if (!fixture.owned) return false;
+    struct Case {
+        const char* name;
+        const char* points;
+        double center;
+        double radius;
+        bool valid;
+    };
+    const Case cases[] = {
+        {"ordinary", "0;0;0;,1;0;0;,0;1;0;;", 0.5, std::sqrt(0.5), true},
+        {"large", "0;0;0;,5e19;0;0;,0;5e19;0;;", 2.5e19, std::sqrt(2.0) * 2.5e19, true},
+        {"large_center", "2e38;2e38;0;,3e38;2e38;0;,2e38;3e38;0;;", 2.5e38, std::sqrt(2.0) * 0.5e38, true},
+        {"unrepresentable", "-3e38;-3e38;0;,3e38;-3e38;0;,0;3e38;0;;", 0, 0, false},
+        {"infinite", "0;0;0;,1e39;0;0;,0;1;0;;", 0, 0, false},
+        {"nan", "0;0;0;,nan;0;0;,0;1;0;;", 0, 0, false},
+    };
+    ModelLoaderClient loader;
+    bool passed = true;
+    for (const auto& test : cases) {
+        const auto path = fixture.directory / (std::string(test.name) + ".x");
+        {
+            std::ofstream file(path, std::ios::binary);
+            file << "xof 0303txt 0032\nMesh {3;" << test.points << "1;3;0,1,2;;}\n";
+            if (!file) return false;
+        }
+        MlMeshData data{};
+        std::string error;
+        const bool loaded = loader.load(path.u8string(), data, error);
+        if (test.valid) {
+            const auto bounds_close = [](float actual, double expected) {
+                return std::isfinite(actual) &&
+                    std::abs(static_cast<double>(actual) - expected) <=
+                        std::max(1.0, std::abs(expected)) * 1e-6;
+            };
+            passed = loaded && error.empty() && data.vertex_count == 3 &&
+                data.index_count == 3 && bounds_close(data.center[0], test.center) &&
+                bounds_close(data.center[1], test.center) && bounds_close(data.center[2], 0) &&
+                bounds_close(data.radius, test.radius) && passed;
+        } else {
+            passed = !loaded && !error.empty() && !data.vertices &&
+                data.vertex_count == 0 && !data.indices && data.index_count == 0 &&
+                !data.parts && data.part_count == 0 && !data.materials &&
+                data.material_count == 0 && passed;
+        }
+        if (loaded) loader.free_model(data);
+        passed = !data.vertices && data.vertex_count == 0 &&
+            !data.indices && data.index_count == 0 && !data.parts &&
+            data.part_count == 0 && !data.materials && data.material_count == 0 && passed;
+    }
+    return passed;
+}
+
 bool repeater_hydration_contract(const std::string& model_path) {
     struct Fixture {
         std::filesystem::path directory = std::filesystem::temp_directory_path() /
@@ -142,6 +207,7 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
     };
 
     try {
+        result.model_bounds = model_bounds_contract();
         result.repeater_cache = debug_check_repeater_cache() && repeater_hydration_contract(valid_model_path);
         const auto number_text = [](double value) {
             char text[64]{};

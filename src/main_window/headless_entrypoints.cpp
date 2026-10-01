@@ -1015,6 +1015,7 @@ int App::run_debug_headless_new_element_edit(
          << "path=" << options.path << "\n"
          << "commit=" << (options.commit ? 1 : 0) << "\n"
          << "memory_apply_only=" << (options.commit ? 0 : 1) << "\n"
+         << "mixed_save_scope=exclusive_temporary_fixtures\n"
          << "stage=load-start\n";
     out->flush();
 
@@ -1471,6 +1472,256 @@ int App::run_debug_headless_new_element_edit(
                       preserved_sound_3d_target);
         check("resource_key_prefill_keeps_pending_ledger_empty",
               app.pending_edit_changes_.empty());
+
+        // Existing rows keep a disk-relative baseline even while insertions
+        // force the preview through full typed hydration on every Apply.
+        {
+            const auto existing = std::find_if(
+                app.model_.structures.begin(), app.model_.structures.end(),
+                [](const TableRow& row) {
+                    return !row.edit_id.empty() &&
+                        ascii_lower(table_cell(row, "method")) == "put";
+                });
+            if (existing == app.model_.structures.end() || app.model_.other_tracks.empty()) {
+                throw std::runtime_error("mixed ledger contract needs a Structure.Put and other track");
+            }
+            const TableRow baseline_structure = *existing;
+            const std::string existing_id = baseline_structure.edit_id;
+            const OtherTrack saved_track = app.model_.other_tracks.front();
+            auto track_view = [&]() -> OtherTrack* {
+                const auto found = std::find_if(
+                    app.model_.other_tracks.begin(), app.model_.other_tracks.end(),
+                    [&](const OtherTrack& track) { return track.key == saved_track.key; });
+                return found == app.model_.other_tracks.end() ? nullptr : &*found;
+            };
+            auto set_track_view = [&]() {
+                OtherTrack* track = track_view();
+                if (!track) return false;
+                track->visible = !saved_track.visible;
+                track->color = ImVec4(0.13f, 0.37f, 0.71f, 1.0f);
+                track->range_min = saved_track.range_min + 0.125;
+                track->range_max = saved_track.range_max - 0.125;
+                return true;
+            };
+            auto track_view_preserved = [&]() {
+                const OtherTrack* track = track_view();
+                return track && track->visible == !saved_track.visible &&
+                    track->color.x == 0.13f && track->color.y == 0.37f &&
+                    track->color.z == 0.71f && track->color.w == 1.0f &&
+                    track->range_min == saved_track.range_min + 0.125 &&
+                    track->range_max == saved_track.range_max - 0.125;
+            };
+            double original_x = 0.0;
+            double original_y = 0.0;
+            if (!parse_gui_edit_number(table_cell(baseline_structure, "x"), &original_x) ||
+                !parse_gui_edit_number(table_cell(baseline_structure, "y"), &original_y)) {
+                throw std::runtime_error("mixed ledger Structure coordinates are invalid");
+            }
+            auto coordinates_match = [&](double x, double y) {
+                const TableRow* row = model_row(app.model_.structures, existing_id);
+                double actual_x = 0.0;
+                double actual_y = 0.0;
+                return row && parse_gui_edit_number(table_cell(*row, "x"), &actual_x) &&
+                    parse_gui_edit_number(table_cell(*row, "y"), &actual_y) &&
+                    std::abs(actual_x - x) < 1e-6 && std::abs(actual_y - y) < 1e-6;
+            };
+            auto insert_beacon = [&]() {
+                return prepare_wizard("beacon.put") &&
+                    set_field(app.new_element_wizard_.form, "distance",
+                              format_double(begin_distance, 6)) && apply_wizard();
+            };
+            for (const bool insert_first : {true, false}) {
+                const std::string prefix = insert_first ? "mixed_insert_first_" : "mixed_update_first_";
+                bool prepared = set_track_view();
+                if (insert_first) prepared = insert_beacon() && prepared;
+                prepared = app.open_element_inspector(existing_id, "structure.put") && prepared;
+                prepared = set_field(app.inspector_, "x", format_double(original_x + 1.0, 12)) &&
+                    apply_inspector() && prepared;
+                if (!insert_first) {
+                    prepared = insert_beacon() && prepared;
+                    prepared = app.open_element_inspector(existing_id, "structure.put") && prepared;
+                }
+                check((prefix + "first_apply").c_str(), prepared);
+                const bool second_applied = set_field(
+                    app.inspector_, "y", format_double(original_y + 2.0, 12)) && apply_inspector();
+                check((prefix + "retains_prior_field").c_str(), second_applied &&
+                    coordinates_match(original_x + 1.0, original_y + 2.0));
+                const bool reverted_field = set_field(
+                    app.inspector_, "x", table_cell(baseline_structure, "x")) && apply_inspector();
+                const auto pending = app.pending_edit_changes_.find(existing_id);
+                check((prefix + "explicit_baseline_revert").c_str(), reverted_field &&
+                    coordinates_match(original_x, original_y + 2.0) &&
+                    pending != app.pending_edit_changes_.end() &&
+                    pending->second.field_changes.count("x") == 0 &&
+                    pending->second.field_changes.count("y") == 1);
+                check((prefix + "preserves_track_view").c_str(), track_view_preserved());
+                check((prefix + "revert").c_str(), app.discard_pending_edits() &&
+                    app.pending_edit_changes_.empty() && app.original_edit_rows_.empty() &&
+                    coordinates_match(original_x, original_y));
+            }
+            bool alignment_applied = false;
+            for (const TableRow& row : app.model_.other_track_changes) {
+                const std::string method = ascii_lower(table_cell(row, "method"));
+                if (method != "track.position" && method != "track.x.interpolate" &&
+                    method != "track.y.interpolate") continue;
+                if (!app.open_element_inspector(row.edit_id, "otherTrack.change")) continue;
+                const MapElementEditFieldState* field = find_inspector_field(app.inspector_, "parameter0");
+                double value = 0.0;
+                if (!field || field->read_only || field->disabled ||
+                    !parse_gui_edit_number(edit_field_buffer_text(*field), &value)) continue;
+                MapElementPendingChange invalid;
+                invalid.change_id = row.edit_id;
+                invalid.edit_id = row.edit_id;
+                invalid.row_kind = "otherTrack.change";
+                invalid.expected_source_hash = source_hash_for_path(app.model_, row.source.file_path);
+                invalid.field_changes["parameter0"] = "invalid-number";
+                check("failed_apply_preserves_baseline_transaction",
+                    !app.apply_edit_ledger_to_preview({{row.edit_id, invalid}}, std::nullopt, false) &&
+                    app.pending_edit_changes_.empty() && app.original_edit_rows_.empty());
+                const std::string edit_id = row.edit_id;
+                const std::string changed_value = format_double(value + 0.125, 12);
+                alignment_applied = set_track_view() &&
+                    set_field(app.inspector_, "parameter0", changed_value) &&
+                    apply_inspector();
+                const TableRow* updated = model_row(app.model_.other_track_changes, edit_id);
+                const auto pending = app.pending_edit_changes_.find(edit_id);
+                double actual = 0.0;
+                alignment_applied = alignment_applied && updated &&
+                    parse_gui_edit_number(table_cell(*updated, "parameter0"), &actual) &&
+                    std::abs(actual - (value + 0.125)) < 1e-6 &&
+                    pending != app.pending_edit_changes_.end() &&
+                    pending->second.field_changes.count("parameter0") == 1 &&
+                    pending->second.field_changes.at("parameter0") == changed_value;
+                break;
+            }
+            check("partial_hydration_preserves_track_view", alignment_applied && track_view_preserved());
+            check("mixed_ledger_final_revert", app.discard_pending_edits() &&
+                app.pending_edit_changes_.empty() && app.original_edit_rows_.empty());
+            check("mixed_ledger_disk_sources_unchanged",
+                std::all_of(protected_sources.begin(), protected_sources.end(), [&](const auto& entry) {
+                    return read_source_bytes(entry.first) == entry.second;
+                }));
+            if (OtherTrack* track = track_view()) {
+                track->visible = saved_track.visible;
+                track->color = saved_track.color;
+                track->range_min = saved_track.range_min;
+                track->range_max = saved_track.range_max;
+            }
+            app.new_element_wizard_ = NewElementWizardState{};
+        }
+
+        // Save the same mixed Inspector edits only inside an owned fixture.
+        for (const bool insert_first : {true, false}) {
+            for (const bool revert_x : {false, true}) {
+                const std::string label = std::string("mixed_save_") +
+                    (insert_first ? "insert_first_" : "update_first_") +
+                    (revert_x ? "reverted_x" : "kept_xy");
+                const auto require = [&](bool value, const char* stage) {
+                    if (!value) throw std::runtime_error(label + ": " + stage);
+                };
+                struct Fixture {
+                    std::filesystem::path directory;
+                    bool owned = false;
+                    ~Fixture() {
+                        if (!owned) return;
+                        std::error_code error;
+                        std::filesystem::remove(directory / "map.txt", error);
+                        std::filesystem::remove(directory / "structures.csv", error);
+                        std::filesystem::remove(directory, error);
+                    }
+                } fixture{std::filesystem::temp_directory_path() /
+                    ("komapedit-mixed-save-" + std::to_string(GetCurrentProcessId()) + "-" +
+                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))};
+                fixture.owned = std::filesystem::create_directory(fixture.directory);
+                require(fixture.owned, "exclusive directory creation");
+                const auto map_path = fixture.directory / "map.txt";
+                const auto list_path = fixture.directory / "structures.csv";
+                const std::string fixture_path = wide_to_utf8(map_path.wstring());
+                const std::string map_bytes = "BveTs Map 2.02:utf-8\r\n0;\r\n"
+                    "Structure.Load('structures.csv');\r\n"
+                    "Structure['pole'].Put(0,1,2,3,0,0,0,0,25);\r\n100;\r\n";
+                const std::string list_bytes = "BveTs Structure List 2.00:utf-8\r\npole,pole.csv\r\n";
+                std::string error;
+                require(create_utf8_bve_file_exclusive(map_path, map_bytes, error) &&
+                    create_utf8_bve_file_exclusive(list_path, list_bytes, error), "fixture files");
+                LoadResult loaded = load_map_worker(fixture_path, options.unit_distance,
+                    false, 0.0, 0.0, options.unit_distance, LoadModelOptions{true});
+                struct FreeHandle {
+                    void*& handle;
+                    ~FreeHandle() { if (handle) kv_free(handle); }
+                } loaded_guard{loaded.handle};
+                require(loaded.ok && loaded.model.structures.size() == 1, "fixture load");
+                struct RestoreAppOwner {
+                    App* previous = g_app;
+                    ~RestoreAppOwner() { g_app = previous; }
+                } restore_app_owner;
+                App saved(nullptr, settings, 1.0f, false, false);
+                saved.handle_ = loaded.handle;
+                loaded.handle = nullptr;
+                saved.model_ = std::move(loaded.model);
+                saved.file_path_ = fixture_path;
+                saved.has_model_ = saved.edit_mode_enabled_ = saved.edit_registry_loaded_ = true;
+                saved.edit_memory_matches_pending_ledger_ = true;
+                saved.dmin_ = saved.model_.default_min;
+                saved.dmax_ = saved.model_.default_max;
+                saved.unit_distance_ = options.unit_distance;
+                const std::string id = saved.model_.structures[0].edit_id;
+                const auto insert = [&]() {
+                    NewElementWizardState& wizard = saved.new_element_wizard_;
+                    wizard.open = true;
+                    wizard.selected_template = template_index("beacon.put");
+                    wizard.target_file_path = fixture_path;
+                    wizard.target_candidates_built = true;
+                    wizard.target_file_candidates = {fixture_path};
+                    saved.rebuild_new_element_wizard_form();
+                    require(set_field(wizard.form, "distance", "0") &&
+                        saved.apply_new_element_insert(), "Beacon insertion");
+                };
+                const auto apply_field = [&](const char* field, const char* value) {
+                    require(saved.open_element_inspector(id, "structure.put") &&
+                        set_field(saved.inspector_, field, value), "Inspector field");
+                    saved.apply_inspector_changes();
+                    saved.process_pending_element_inspector();
+                    require(saved.edit_timing_outcome_ == "success" &&
+                        saved.distance_resolution_workflow_.phase == DistanceResolutionPhase::None,
+                        "Inspector Apply");
+                };
+                if (insert_first) insert();
+                apply_field("x", "2");
+                if (!insert_first) insert();
+                apply_field("y", "4");
+                if (revert_x) apply_field("x", "1");
+                const auto update = saved.pending_edit_changes_.find(id);
+                const double expected_x = revert_x ? 1.0 : 2.0;
+                require(saved.pending_edit_changes_.size() == 2 &&
+                    saved.model_.structures.size() == 1 &&
+                    update != saved.pending_edit_changes_.end() &&
+                    update->second.field_changes.count("x") == (revert_x ? 0u : 1u) &&
+                    update->second.field_changes.at("y") == "4" &&
+                    table_cell_number(saved.model_.structures[0], "x") == expected_x &&
+                    table_cell_number(saved.model_.structures[0], "y") == 4.0 &&
+                    read_source_bytes(fixture_path) == map_bytes, "memory preview and source protection");
+                require(std::all_of(saved.model_.edit_files.begin(), saved.model_.edit_files.end(),
+                    [&](const EditSourceFileInfo& file) {
+                        const auto path = std::filesystem::path(utf8_to_wide(file.file_path));
+                        return path == map_path || path == list_path;
+                    }), "Save source ownership");
+                require(saved.save_pending_edits(false) && saved.pending_edit_changes_.empty() &&
+                    saved.original_edit_rows_.empty(), "Save clears ledger and baselines");
+                LoadResult reloaded = load_map_worker(fixture_path, options.unit_distance,
+                    false, 0.0, 0.0, options.unit_distance, LoadModelOptions{true});
+                FreeHandle reload_guard{reloaded.handle};
+                check(label.c_str(), reloaded.ok && reloaded.model.structures.size() == 1 &&
+                    reloaded.model.beacons.size() == 1 &&
+                    table_cell_number(reloaded.model.structures[0], "x") == expected_x &&
+                    table_cell_number(reloaded.model.structures[0], "y") == 4.0 &&
+                    read_source_bytes(wide_to_utf8(list_path.wstring())) == list_bytes);
+            }
+        }
+        check("mixed_save_real_sources_unchanged",
+            std::all_of(protected_sources.begin(), protected_sources.end(), [&](const auto& entry) {
+                return read_source_bytes(entry.first) == entry.second;
+            }));
 
         check("repeater_template_found", prepare_wizard("repeater.begin0"));
         NewElementWizardState& repeater_wizard = app.new_element_wizard_;

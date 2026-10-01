@@ -1203,7 +1203,7 @@ void note_variable_write(MapContext& ctx, const std::string& key);
 std::string format_seconds(double seconds);
 void log_load_timing(const MapContext& ctx);
 void add_controlpoint(MapContext& ctx, double value);
-void set_distance(MapContext& ctx, double value);
+bool set_distance(MapContext& ctx, double value);
 void put_own(MapContext& ctx, const std::string& key, const Value& value, const std::string& flag = "");
 void ensure_othertrack(MapContext& ctx, const std::string& key);
 void put_other(MapContext& ctx, const Value& track_key, const std::string& element_key,
@@ -1385,6 +1385,13 @@ struct SectionValuesEdit {
     std::vector<std::string> values;
     std::map<size_t, std::string> index_values;
 };
+
+inline void validate_section_sparse_indices(const SectionValuesEdit& values, size_t count) {
+    if (!values.index_values.empty() && values.index_values.rbegin()->first >= count) {
+        throw std::runtime_error("Section values index is out of range: values." +
+                                 std::to_string(values.index_values.rbegin()->first));
+    }
+}
 
 inline bool is_section_values_edit_field(const std::string& field) {
     return field == "values.count" ||

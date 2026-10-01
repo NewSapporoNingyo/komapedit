@@ -934,9 +934,11 @@ void add_controlpoint(MapContext& ctx, double value) {
     ctx.controlpoints.push_back(value);
 }
 
-void set_distance(MapContext& ctx, double value) {
+bool set_distance(MapContext& ctx, double value) {
+    if (!std::isfinite(value)) return false;
     ctx.distance = value;
     add_controlpoint(ctx, value);
+    return true;
 }
 
 void put_own(MapContext& ctx, const std::string& key, const Value& value, const std::string& flag) {

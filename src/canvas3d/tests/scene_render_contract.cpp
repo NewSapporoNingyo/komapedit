@@ -168,6 +168,44 @@ void Canvas3D::Impl::debug_record_scene_world(const std::string& path, int objec
 }
 
 bool Canvas3D::Impl::debug_check_repeater_cache() {
+    // A single-point route uses the camera window for its chunk layout. A
+    // changed window must reject dynamic reuse without losing cache ownership.
+    {
+        Impl rollback(device, nullptr);
+        rollback.scene_active = true;
+        Canvas3DTrackPath track;
+        track.key = "0";
+        track.points.push_back(Canvas3DTrackPoint{});
+        rollback.scene_data.tracks.push_back(std::move(track));
+        Canvas3DRepeaterSegment repeater;
+        repeater.edit_id = "rollback";
+        repeater.begin_distance = 0;
+        repeater.end_distance = 100;
+        repeater.interval = 10;
+        repeater.model_paths = {"rollback.x"};
+        rollback.scene_data.repeaters.push_back(std::move(repeater));
+        rollback.scene_placement_tracks.rebuild(rollback.scene_data);
+        std::string error;
+        if (!rollback.build_scene_chunks(error) ||
+            !rollback.build_scene_track_chunks(error)) return false;
+        for (auto& chunk : rollback.scene_chunks) rollback.prepare_scene_repeater_cache(chunk);
+        const size_t cached = rollback.scene_cached_repeater_world_count;
+        if (cached == 0) return false;
+        rollback.scene_window_forward_m += rollback.scene_chunk_m;
+        if (rollback.refresh_scene_dynamic_content(MapModel{}, -1, error) ||
+            error != "3D scene preview chunk layout changed" ||
+            rollback.scene_cached_repeater_world_count != cached ||
+            rollback.scene_data.repeaters.size() != 1) return false;
+        size_t restored = 0;
+        for (auto& chunk : rollback.scene_chunks) {
+            restored += chunk.cached_world_count;
+            rollback.invalidate_scene_repeater_cache(chunk);
+        }
+        if (restored != cached || rollback.scene_cached_repeater_world_count != 0) return false;
+        for (auto& chunk : rollback.scene_chunks) rollback.prepare_scene_repeater_cache(chunk);
+        if (rollback.scene_cached_repeater_world_count != cached ||
+            cached > k_scene_repeater_cache_instance_limit) return false;
+    }
     // Independently specified placement sequences, not merely equivalence of
     // two implementations that could share the same enumeration error.
     const auto check_sequence = [&](double begin, double end, double interval,

@@ -375,6 +375,9 @@ private:
         finish_statement(statement_start, "Distance.Set");
         std::string raw_distance = trim_field_copy(src_.substr(args_start, args_end - args_start));
         double distance_value = as_number(distance);
+        if (!set_distance(ctx_, distance_value)) {
+            throw FatalParseError("distance must be finite");
+        }
         if (ctx_.parse_options.collect_edit_metadata) {
             add_parsed_statement(ctx_, "Distance.Set",
                                  make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
@@ -383,7 +386,6 @@ private:
                                  {distance}, raw_distance, distance_value);
         }
         ctx_.distance_expression = raw_distance;
-        set_distance(ctx_, distance_value);
     }
 
     bool include_path_is_simple_string(size_t include_pos) const {

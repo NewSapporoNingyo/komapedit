@@ -492,6 +492,10 @@ struct CachedTableRow {
     bool invalid_track_key = false;
 };
 
+struct CachedRepeaterRow : CachedTableRow {
+    std::vector<std::string> structure_keys;
+};
+
 struct CachedOtherTrainStopGroup {
     std::string train_key;
     std::string enable_time = "-";
@@ -523,7 +527,7 @@ struct TableUiCache {
     size_t section_begin_value_columns = 0;
     size_t section_speed_limit_value_columns = 0;
     std::vector<CachedVariableRow> variable_rows;
-    std::vector<CachedTableRow> repeater_rows;
+    std::vector<CachedRepeaterRow> repeater_rows;
     std::vector<CachedTableRow> signal_aspect_rows;
     std::vector<EditableListDisplayRow> signal_aspect_display_rows;
     std::vector<CachedTableRow> signal_rows;
@@ -1869,6 +1873,8 @@ public:
     static bool debug_section_inspector_lifecycle(std::ostream& out);
     static bool debug_curve_interpolate_contract(double unit_distance, std::ostream& out);
     static bool debug_csv_write_failure_contract();
+    static bool debug_background_texture_contract(
+        ID3D11Device* device, const std::string& image_path, std::ostream& out);
     static bool debug_repeater_overview_indices();
     ImVec2 debug_other_track_change_marker_screen_position(
         const OtherTrackChangeMarker& marker, double model_angle,

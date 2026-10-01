@@ -437,8 +437,9 @@ void App::ensure_table_cache() {
     std::vector<TableRow> repeater_rows = merged_repeater_rows(model_.repeaters);
     cache.repeater_rows.reserve(repeater_rows.size());
     for (const auto& row : repeater_rows) {
-        CachedTableRow cached;
+        CachedRepeaterRow cached;
         copy_table_row_metadata(row, cached);
+        cached.structure_keys = repeater_structure_keys(row);
         cached.cells.resize(IM_ARRAYSIZE(k_repeater_columns));
         cached.invalid_track_key = is_invalid_track_key_row(row);
         cached.repeater_chain_begin_index = static_cast<size_t>(std::max(

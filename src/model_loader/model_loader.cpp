@@ -118,25 +118,37 @@ void assign_bounds(MlMeshData& out) {
         const MlVertex& v = out.vertices[i];
         const float p[3] = {v.px, v.py, v.pz};
         for (int axis = 0; axis < 3; ++axis) {
+            if (!std::isfinite(p[axis])) {
+                throw std::runtime_error("model contains a non-finite vertex position");
+            }
             mn[axis] = std::min(mn[axis], p[axis]);
             mx[axis] = std::max(mx[axis], p[axis]);
         }
     }
 
-    float radius = 0.0f;
+    float center[3];
+    for (int axis = 0; axis < 3; ++axis) {
+        center[axis] = static_cast<float>(
+            (static_cast<double>(mn[axis]) + mx[axis]) * 0.5);
+    }
+    double radius_squared = 0.0;
+    for (size_t i = 0; i < out.vertex_count; ++i) {
+        const MlVertex& v = out.vertices[i];
+        const double dx = static_cast<double>(v.px) - center[0];
+        const double dy = static_cast<double>(v.py) - center[1];
+        const double dz = static_cast<double>(v.pz) - center[2];
+        radius_squared = std::max(radius_squared, dx * dx + dy * dy + dz * dz);
+    }
+    const double radius = std::sqrt(radius_squared);
+    if (!std::isfinite(radius) || radius > std::numeric_limits<float>::max()) {
+        throw std::runtime_error("model bounds radius is outside the supported float range");
+    }
     for (int axis = 0; axis < 3; ++axis) {
         out.bounds_min[axis] = mn[axis];
         out.bounds_max[axis] = mx[axis];
-        out.center[axis] = (mn[axis] + mx[axis]) * 0.5f;
+        out.center[axis] = center[axis];
     }
-    for (size_t i = 0; i < out.vertex_count; ++i) {
-        const MlVertex& v = out.vertices[i];
-        const float dx = v.px - out.center[0];
-        const float dy = v.py - out.center[1];
-        const float dz = v.pz - out.center[2];
-        radius = std::max(radius, std::sqrt(dx * dx + dy * dy + dz * dz));
-    }
-    out.radius = std::max(radius, 0.001f);
+    out.radius = std::max(static_cast<float>(radius), 0.001f);
 }
 
 MlMeshData load_with_assimp(const std::string& path_utf8) {

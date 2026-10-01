@@ -2344,6 +2344,71 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
         check(sound_usage_matches({}, true), "station_sound_drafts_do_not_use_sound3d");
         station_edit = {};
 
+        {
+            struct RestoreAppOwner {
+                App* previous = g_app;
+                ~RestoreAppOwner() { g_app = previous; }
+            } restore_app_owner;
+            App usage(nullptr, settings, 1.0f, false, false);
+            usage.has_model_ = true;
+            for (const char* key : {"comma,key", "comma", "key", "with space", "plain",
+                                    "main-old", "main-new", "glare-old", "glare-new"}) {
+                usage.model_.structure_models.push_back(make_row({
+                    {"structureKey", key}, {"filePath", "model.csv"}}));
+            }
+            TableRow repeater = make_row({
+                {"repeaterKey", "key-identity"}, {"method", "Begin0"},
+                {"distance", "0"}, {"trackKey", "0"}, {"interval", "25"}});
+            set_repeater_structure_keys(repeater, {"comma,key", "with space", "plain"});
+            usage.model_.repeaters.push_back(std::move(repeater));
+            auto structure_usage_matches = [&](std::initializer_list<size_t> used) {
+                usage.run_unused_structure_model_search();
+                const auto& matches = usage.structure_model_find_.unused_row_matches;
+                if (matches.size() != usage.model_.structure_models.size()) return false;
+                for (size_t index = 0; index < matches.size(); ++index) {
+                    const bool expected_unused =
+                        std::find(used.begin(), used.end(), index) == used.end();
+                    if ((matches[index] != 0) != expected_unused) return false;
+                }
+                return true;
+            };
+            check(structure_usage_matches({0, 3, 4}),
+                  "repeater_structure_keys_preserve_commas_and_spaces");
+            check(usage.table_cache_.repeater_rows.size() == 1 &&
+                      usage.table_cache_.repeater_rows[0].structure_keys ==
+                          std::vector<std::string>{"comma,key", "with space", "plain"},
+                  "repeater_navigation_uses_exact_ordered_keys");
+            usage.model_.repeaters.clear();
+            usage.invalidate_table_cache();
+
+            EditableListDraftRow aspect;
+            aspect.target_edit_id = "signal-key-draft";
+            aspect.values = {"aspect", "main-old", "glare-old"};
+            aspect.original_values = aspect.values;
+            aspect.primary_structure_field_count = 1;
+            aspect.secondary_structure_field_count = 1;
+            auto& signal_edit = usage.signal_aspect_edit_;
+            signal_edit.rows_initialized = true;
+            signal_edit.rows.push_back(std::move(aspect));
+            signal_edit.visible_rows = editable_list_visible_row_indices(signal_edit.rows);
+            signal_edit.editing_edit_id = "signal-key-draft";
+            signal_edit.editing_column = 1;
+            signal_edit.editing_baseline = "main-old";
+            signal_edit.edit_buffer = "main-new";
+            check(structure_usage_matches({6, 7}) &&
+                      signal_edit.editing_edit_id.empty() &&
+                      signal_edit.rows[0].values[1] == "main-new",
+                  "signal_main_active_cell_committed_before_structure_search");
+            signal_edit.editing_edit_id = "signal-key-draft";
+            signal_edit.editing_column = 2;
+            signal_edit.editing_baseline = "glare-old";
+            signal_edit.edit_buffer = "glare-new";
+            check(structure_usage_matches({6, 8}) &&
+                      signal_edit.editing_edit_id.empty() &&
+                      signal_edit.rows[0].values[2] == "glare-new",
+                  "signal_glare_active_cell_committed_before_structure_search");
+        }
+
         app.ensure_table_cache();
         auto cached_row_matches = [&](const std::vector<CachedTableRow>& rows,
                                       const std::vector<std::string>& expected_cells,
@@ -2637,12 +2702,14 @@ int run_debug_headless_scene_loader_contract(
         contract = canvas.debug_run_scene_loader_contract(
             model_path.u8string(), image_path.u8string());
     }
-    release_com(context);
-    release_com(device);
     const HeadlessResourceSafetyContractResult resource_safety =
         run_debug_resource_safety_contract(
             image_path.u8string(), (temp.path / "missing.bmp").u8string());
-    const bool passed = contract.error.empty() && contract.repeater_cache && contract.normal_worker &&
+    const bool background_texture = App::debug_background_texture_contract(
+        device, image_path.u8string(), *out);
+    release_com(context);
+    release_com(device);
+    const bool passed = contract.error.empty() && contract.repeater_cache && contract.model_bounds && contract.normal_worker &&
         contract.copy_exception && contract.put_between_exception &&
         contract.subset_requeue && contract.removal_only_cancel &&
         contract.release_balance && contract.texture_allocation_cleanup &&
@@ -2650,9 +2717,11 @@ int run_debug_headless_scene_loader_contract(
         contract.numeric_boundaries && contract.put_between_preparation &&
         contract.geometry_model_reuse && contract.full_model_reload &&
         resource_safety.image_layout &&
-        resource_safety.image_decode && resource_safety.numeric_conversion;
+        resource_safety.image_decode && resource_safety.numeric_conversion && background_texture;
     *out << "stage=worker-contract-complete\n"
          << "repeater_cache=" << (contract.repeater_cache ? "PASS" : "FAIL") << "\n"
+         << "model_bounds=" << (contract.model_bounds ? "PASS" : "FAIL") << "\n"
+         << "background_texture=" << (background_texture ? "PASS" : "FAIL") << "\n"
          << "d3d_driver=" << driver << "\n"
          << "normal_worker=" << (contract.normal_worker ? "PASS" : "FAIL") << "\n"
          << "copy_exception=" << (contract.copy_exception ? "PASS" : "FAIL") << "\n"
@@ -5638,13 +5707,14 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             "BveTs Map 2.02:utf-8\n"
             "0;\n"
             "Structure.Load('structures.csv');\n"
+            "$base=0;\n"
             "include 'repeated_include_child.txt';\n"
             "100;\n"
+            "$base=100;\n"
             "include 'repeated_include_child.txt';\n"
             "200;\n");
         write_fixture_file(repeated_include_child,
             "BveTs Map 2.02:utf-8\n"
-            "$base=distance;\n"
             "$base+10;\n"
             "Structure['pole'].Put('',1,0,0,,,,,);\n"
             "$base+30;\n");
@@ -5654,6 +5724,10 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             if (edits.size() != 2) {
                 throw std::runtime_error(
                     "repeated Include fixture did not yield two structures");
+            }
+            if (edits[0].old_distance != 10.0 || edits[1].old_distance != 110.0) {
+                throw std::runtime_error(
+                    "repeated Include fixture did not yield distances 10 and 110");
             }
             for (StructureEdit& edit : edits) {
                 std::string error;

@@ -9161,7 +9161,450 @@ void distance_resolution_reason_contract() {
     }
 }
 
+void untouched_object_key_contract() {
+    struct Case {
+        const char* statement;
+        const char* field;
+        const char* value;
+        const char* expected;
+        int family; // Structure, Station, Signal, Repeater, Structure.PutBetween.
+        size_t row = 0;
+    };
+    const std::vector<Case> cases{
+        {"Structure[$s+'le'].Put(0,1,2,3,0,0,0,0,25);", "x", "7",
+         "Structure[$s+'le'].Put(0,7,2,3,0,0,0,0,25);", 0},
+        {"Structure[$s+'le'].Put0(0,0,25);", "span", "30",
+         "Structure[$s+'le'].Put0(0,0,30);", 0},
+        {"Structure[$s+'le'].Put0(0,0,25);", "method", "Put",
+         "Structure[$s+'le'].Put(0,0,0,0,0,0,0,0,25);", 0},
+        {"Structure[$s+'le'].PutBetween(0,'1',0);", "flag", "1",
+         "Structure[$s+'le'].PutBetween(0,'1',1);", 4},
+        {"Station[$station].Put(1,-5,5);", "margin2", "8",
+         "Station[$station].Put(1,-5,8);", 1},
+        {"Signal[$signal].Put(0,0,1,2);", "x", "7",
+         "Signal[$signal].Put(0,0,7,2);", 2},
+        {"Signal[$signal].Put(0,0,1,2,3,0,0,0,0,25);", "y", "7",
+         "Signal[$signal].Put(0,0,1,7,3,0,0,0,0,25);", 2},
+        {"Repeater[$repeat].Begin0(0,0,25,25,'pole');", "span", "30",
+         "Repeater[$repeat].Begin0(0,0,30,25,'pole');", 3},
+        {"Repeater[$repeat].Begin(0,1,2,3,0,0,0,0,25,25,'pole');", "x", "7",
+         "Repeater[$repeat].Begin(0,7,2,3,0,0,0,0,25,25,'pole');", 3},
+        {"Repeater[$repeat].Begin0(0,0,25,25,'pole');", "method", "Begin",
+         "Repeater[$repeat].Begin(0,0,0,0,0,0,0,0,25,25,'pole');", 3},
+        {"Structure[$s+'le'].Put0(0,0,25);", "distance", "75",
+         "Structure[$s+'le'].Put0(0,0,25);", 0},
+        {"Repeater[$repeat].Begin0(0,0,25,25,'pole');\n50;Repeater[$repeat].End();",
+         "distance", "75", "Repeater[$repeat].End();", 3, 1},
+        {"Structure[$s+'le' # [ignored] bracket\n].Put0(0,0,25);", "span", "30",
+         "Structure[$s+'le' # [ignored] bracket\n].Put0(0,0,30);", 0},
+        {"Structure[$s+'le' // [ignored] bracket\n].Put0(0,0,25);", "span", "30",
+         "Structure[$s+'le' // [ignored] bracket\n].Put0(0,0,30);", 0},
+        {"Structure['pole]'].Put0(0,0,25);", "span", "30",
+         "Structure['pole]'].Put0(0,0,30);", 0},
+    };
+    for (const bool cp932 : {false, true}) {
+        for (const Case& test : cases) {
+            TempFixture fixture;
+            const auto encode_newlines = [cp932](std::string text) {
+                if (cp932) {
+                    for (size_t pos = 0; (pos = text.find('\n', pos)) != std::string::npos; pos += 2) {
+                        text.insert(pos, 1, '\r');
+                    }
+                }
+                return text;
+            };
+            const std::string non_ascii = cp932 ? "\x93\xfa\x96\x7b" : u8"日本";
+            const std::string before = encode_newlines(
+                std::string("BveTs Map 2.02:") + (cp932 ? "cp932\n" : "utf-8\n") +
+                "# " + non_ascii + " source preservation\n" +
+                "0;\nStructure.Load('structures.csv');\nStation.Load('stations.csv');\n"
+                "Signal.Load('signals.csv');\nTrack['1'].Position(4,0);\n"
+                "$s='po';$station='STA';$signal='aspectA';$repeat='rail';\n" +
+                test.statement + "\n75;\n100;\n");
+            const std::filesystem::path source_path = cp932
+                ? fixture.directory / "keys.txt" : fixture.map_path;
+            const std::string root_before = "BveTs Map 2.02:utf-8\nInclude 'keys.txt';\n";
+            if (cp932) {
+                std::ofstream root(fixture.map_path, std::ios::binary | std::ios::trunc);
+                root << root_before;
+            }
+            {
+                std::ofstream map(source_path, std::ios::binary | std::ios::trunc);
+                map << before;
+            }
+            const auto read_disk = [&] {
+                std::ifstream input(source_path, std::ios::binary);
+                return std::string(std::istreambuf_iterator<char>(input),
+                                   std::istreambuf_iterator<char>());
+            };
+            MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+            check(handle.value != nullptr, "raw object-key fixture loads");
+            if (!handle.value) continue;
+            KvMapSnapshot snapshot{};
+            if (!kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &snapshot, sizeof(snapshot))) {
+                check(false, "raw object-key baseline snapshot");
+                continue;
+            }
+            const KvRowMetadata* metadata = nullptr;
+            switch (test.family) {
+            case 0:
+                if (snapshot.structure_puts && test.row < snapshot.structure_put_count)
+                    metadata = &snapshot.structure_puts[test.row].metadata;
+                break;
+            case 1:
+                if (snapshot.station_puts && test.row < snapshot.station_put_count)
+                    metadata = &snapshot.station_puts[test.row].metadata;
+                break;
+            case 2:
+                if (snapshot.signal_puts && test.row < snapshot.signal_put_count)
+                    metadata = &snapshot.signal_puts[test.row].metadata;
+                break;
+            case 3:
+                if (snapshot.repeaters && test.row < snapshot.repeater_count)
+                    metadata = &snapshot.repeaters[test.row].metadata;
+                break;
+            case 4:
+                if (snapshot.structure_betweens && test.row < snapshot.structure_between_count)
+                    metadata = &snapshot.structure_betweens[test.row].metadata;
+                break;
+            }
+            if (!metadata || !snapshot.source_files ||
+                metadata->source_file_index >= snapshot.source_file_count) {
+                check(false, "raw object-key target and source metadata are present");
+                continue;
+            }
+            const std::string edit_id = map_string(snapshot, metadata->edit_id);
+            const std::string hash = map_string(snapshot,
+                snapshot.source_files[metadata->source_file_index].source_hash);
+            UpdateBatch update(edit_id, hash, test.value, test.field);
+            const std::string expected = encode_newlines(test.expected);
+            std::string expected_bytes = before;
+            if (std::string_view(test.field) != "distance") {
+                const std::string original = encode_newlines(test.statement);
+                const size_t position = expected_bytes.find(original);
+                if (position == std::string::npos) {
+                    check(false, "raw object-key fixture contains its original statement");
+                    continue;
+                }
+                expected_bytes.replace(position, original.size(), expected);
+            }
+            const auto source_matches = [&] {
+                const char* source = kv_get_source_text(handle.value, source_path.u8string().c_str());
+                const bool matched = source && std::string_view(source).find(expected) !=
+                    std::string_view::npos;
+                kv_free_string(source);
+                return matched;
+            };
+            KvEditReportSnapshot report{};
+            check(kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+                      report.ok && report.full_reparse_ok,
+                  "raw object-key dry run");
+            const bool applied = kv_edit_apply_to_memory_typed(
+                handle.value, &update.batch, &report, sizeof(report)) && report.ok &&
+                report.full_reparse_ok && report.non_target_changed_count == 0;
+            check(applied, "raw object-key Apply succeeds");
+            check(source_matches(), test.expected);
+            check(read_disk() == before, "raw object-key Apply leaves disk unchanged");
+            KvEditTargetSnapshot target{};
+            check(kv_get_edit_target_typed(handle.value, utf8_view(edit_id),
+                                          &target, sizeof(target)) != 0,
+                  "raw object-key Apply retains stable identity");
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "raw object-key reset succeeds");
+            check(kv_edit_apply_to_memory_typed(handle.value, &update.batch,
+                                               &report, sizeof(report)) && report.ok,
+                  "raw object-key reapply succeeds");
+            check(kv_edit_commit_typed(handle.value, &report, sizeof(report)) && report.ok &&
+                      read_disk().find(expected) != std::string::npos &&
+                      read_disk().find(non_ascii) != std::string::npos &&
+                      (std::string_view(test.field) == "distance" || read_disk() == expected_bytes),
+                  "raw object-key commit preserves expressions and encoding");
+            if (cp932) {
+                std::ifstream input(fixture.map_path, std::ios::binary);
+                const std::string root_after{std::istreambuf_iterator<char>(input),
+                                             std::istreambuf_iterator<char>()};
+                check(root_after == root_before,
+                      "included object-key commit changes only the physical child source");
+            }
+            MapHandle reloaded(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                              KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+            check(reloaded.value != nullptr, "raw object-key committed source reloads");
+        }
+    }
+}
+
+void section_sparse_bounds_contract() {
+    for (const char* method : {"Section.Begin", "Section.BeginNew",
+                               "Section.SetSpeedLimit", "Signal.SpeedLimit"}) {
+        TempFixture fixture;
+        const std::string before = std::string("BveTs Map 2.02:utf-8\n0;\n") +
+            method + "(0,1);\n100;\n";
+        {
+            std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+            map << before;
+        }
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "Section sparse fixture load");
+        if (!handle.value) continue;
+        KvMapSnapshot snapshot{};
+        if (!kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                 &snapshot, sizeof(snapshot))) {
+            check(false, "Section sparse fixture snapshot");
+            continue;
+        }
+        const KvSectionRow* row = snapshot.section_begin_count && snapshot.section_begins
+            ? snapshot.section_begins : snapshot.section_speed_limit_count && snapshot.section_speed_limits
+            ? snapshot.section_speed_limits : nullptr;
+        if (!row || !snapshot.source_files ||
+            row->metadata.source_file_index >= snapshot.source_file_count) {
+            check(false, "Section sparse target and source metadata are present");
+            continue;
+        }
+        const std::string id = map_string(snapshot, row->metadata.edit_id);
+        const std::string hash = map_string(snapshot,
+            snapshot.source_files[row->metadata.source_file_index].source_hash);
+        for (const char* invalid : {"values.2", "values.999999"}) {
+            MultiFieldUpdateBatch update("section-bounds", id, hash,
+                                         {{"values.0", "2"}, {invalid, "3"}});
+            KvEditReportSnapshot report{};
+            check(kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+                      !report.ok && edit_report_has_error_containing(report, "out of range"),
+                  "Section sparse out-of-range dry run is rejected");
+            check(kv_edit_apply_to_memory_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+                      !report.ok && edit_report_has_error_containing(report, "out of range"),
+                  "Section sparse out-of-range Apply is rejected");
+            const char* source = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+            check(source && before == source,
+                  "Section mixed valid/invalid sparse update is atomic");
+            kv_free_string(source);
+            check(kv_edit_reset_memory(handle.value) != 0, "Section sparse reset");
+        }
+        for (const bool resize : {false, true}) {
+            MultiFieldUpdateBatch update("section-valid", id, hash,
+                resize ? std::vector<std::pair<std::string, std::string>>{
+                    {"values.count", "3"}, {"values.0", "0"}, {"values.1", "1"}, {"values.2", "3"}}
+                       : std::vector<std::pair<std::string, std::string>>{{"values.1", "3"}});
+            KvEditReportSnapshot report{};
+            check(kv_edit_apply_to_memory_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+                      report.ok && report.full_reparse_ok,
+                  "Section valid last index and explicit resize succeed");
+            const char* source = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+            const std::string expected = std::string(method) + (resize ? "(0,1,3);" : "(0,3);");
+            check(source && std::string_view(source).find(expected) != std::string_view::npos,
+                  "Section sparse edit preserves method spelling and requested values");
+            kv_free_string(source);
+            check(kv_edit_reset_memory(handle.value) != 0, "Section valid update reset");
+        }
+    }
+}
+
+void finite_distance_contract() {
+    kv_set_log_callback(diagnostic_log_callback);
+    for (const bool included : {false, true}) {
+      for (const char* expression : {"sqrt(-1)", "1/0", "-1/0"}) {
+        TempFixture fixture;
+        const auto source_path = included ? fixture.directory / "distance.txt" : fixture.map_path;
+        if (included) {
+            std::ofstream root(fixture.map_path, std::ios::binary | std::ios::trunc);
+            root << "BveTs Map 2.02:utf-8\nInclude 'distance.txt';\n";
+        }
+        {
+            std::ofstream map(source_path, std::ios::binary | std::ios::trunc);
+            map << "BveTs Map 2.02:utf-8\n0;\n" << expression << ";\n100;\n";
+        }
+        {
+            std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+            diagnostic_logs.clear();
+        }
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        const char* error = kv_get_last_error();
+        check(!handle.value && error && std::string_view(error).find("distance must be finite") !=
+                  std::string_view::npos,
+              "nonfinite distance is rejected at the distance setter");
+        std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+        check(std::none_of(diagnostic_logs.begin(), diagnostic_logs.end(), [](const auto& log) {
+                  return log.find("sorting parsed IR") != std::string::npos;
+              }), "nonfinite distance never reaches controlpoint sorting");
+      }
+    }
+    kv_set_log_callback(nullptr);
+    TempFixture negative;
+    {
+        std::ofstream map(negative.map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n-10;\nCurve.Begin(0);\n100;\n";
+    }
+    MapHandle handle(kv_load_map_ex(negative.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    check(handle.value != nullptr, "finite negative-distance compatibility is retained");
+}
+
+void patch_sources_preview_contract() {
+    TempFixture fixture;
+    const std::array<std::string, 4> old_values{{"1", "23456", "7", "89123"}};
+    const std::array<std::string, 4> new_values{{"12345", "2", "76543", "8"}};
+    const auto statement = [](const std::string& x) {
+        return "Structure['pole'].Put(0," + x + ",2,3,0,0,0,0,25);";
+    };
+    std::string before = "BveTs Map 2.02:utf-8\n0;\nStructure.Load('structures.csv');\n# " +
+        std::string(90, 'L') + "\n";
+    std::array<size_t, 4> positions{};
+    for (size_t index = 0; index < old_values.size(); ++index) {
+        positions[index] = before.size();
+        before += statement(old_values[index]) + "\n";
+    }
+    before += "# " + std::string(90, 'R') + "\n100;\n";
+    {
+        std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+        map << before;
+    }
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                    KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot snapshot{};
+    check(handle.value && kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+              &snapshot, sizeof(snapshot)) && snapshot.structure_put_count == 4,
+          "patch preview fixture loads");
+    if (snapshot.structure_put_count != 4 || !snapshot.structure_puts ||
+        !snapshot.source_files || snapshot.structure_puts[0].metadata.source_file_index >=
+            snapshot.source_file_count) return;
+    std::array<std::string, 4> ids;
+    const std::string name = "x";
+    const std::string hash = map_string(snapshot,
+        snapshot.source_files[snapshot.structure_puts[0].metadata.source_file_index].source_hash);
+    std::array<KvEditField, 4> fields{};
+    std::array<KvEditChange, 4> changes{};
+    for (size_t index = 0; index < ids.size(); ++index) {
+        ids[index] = map_string(snapshot, snapshot.structure_puts[index].metadata.edit_id);
+        fields[index] = {utf8_view(name), utf8_view(new_values[index])};
+        changes[index].change_id = utf8_view(ids[index]);
+        changes[index].edit_id = utf8_view(ids[index]);
+        changes[index].operation = KV_EDIT_UPDATE;
+        changes[index].fields = {static_cast<std::uint64_t>(index), 1};
+        changes[index].expected_source_hash = utf8_view(hash);
+    }
+    const KvEditBatch batch{changes.data(), changes.size(), fields.data(), fields.size()};
+    KvEditReportSnapshot report{};
+    check(kv_edit_apply_to_memory_typed(handle.value, &batch, &report, sizeof(report)) &&
+              report.ok && report.full_reparse_ok && report.preview_snippet_count == 4,
+          "patch preview multi-target Apply succeeds");
+    std::string expected = before;
+    for (size_t preview = 0; preview < 4 && preview < report.preview_snippet_count; ++preview) {
+        const size_t index = 3 - preview;
+        const size_t begin = positions[index];
+        const size_t end = begin + statement(old_values[index]).size();
+        const size_t first = begin > 80 ? begin - 80 : 0;
+        const size_t last = std::min(expected.size(), end + 80);
+        const std::string context = (first ? "..." : "") + expected.substr(first, last - first) +
+            (last < expected.size() ? "..." : "");
+        check(arena_view(report.string_data, report.string_size,
+                         report.preview_snippets[preview].before_text) == context &&
+                  arena_view(report.string_data, report.string_size,
+                         report.preview_snippets[preview].after_text) == statement(new_values[index]),
+              "patch previews retain descending order and the already-edited right context");
+        expected.replace(begin, end - begin, statement(new_values[index]));
+    }
+    const char* source = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+    check(source && expected == source, "patch assembly preserves the complete expected source");
+    kv_free_string(source);
+    for (const std::string& id : ids) {
+        KvEditTargetSnapshot target{};
+        check(kv_get_edit_target_typed(handle.value, utf8_view(id), &target, sizeof(target)) != 0,
+              "growing and shrinking replacements retain every stable identity");
+    }
+}
+
+int patch_sources_benchmark(size_t repetitions) {
+    kv_set_log_callback(diagnostic_log_callback);
+    for (size_t count : {100u, 1000u, 10000u}) {
+        TempFixture fixture;
+        {
+            std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+            map << "BveTs Map 2.02:utf-8\n0;\nStructure.Load('structures.csv');\n";
+            for (size_t index = 0; index < count; ++index) {
+                map << "Structure['pole'].Put(0,1,2,3,0,0,0,0,25);\n";
+            }
+            map << "100;\n";
+        }
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot snapshot{};
+        if (!handle.value || !kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                &snapshot, sizeof(snapshot)) || snapshot.structure_put_count != count ||
+            !snapshot.structure_puts || !snapshot.source_files ||
+            snapshot.structure_puts[0].metadata.source_file_index >= snapshot.source_file_count) {
+            check(false, "patch benchmark fixture load");
+            break;
+        }
+        std::vector<std::string> ids;
+        ids.reserve(count);
+        for (size_t index = 0; index < count; ++index) {
+            ids.push_back(map_string(snapshot, snapshot.structure_puts[index].metadata.edit_id));
+        }
+        const std::string hash = map_string(snapshot, snapshot.source_files[
+            snapshot.structure_puts[0].metadata.source_file_index].source_hash);
+        const std::string name = "x";
+        const std::string value = "123.456";
+        std::vector<KvEditField> fields(count, {utf8_view(name), utf8_view(value)});
+        std::vector<KvEditChange> changes(count);
+        for (size_t index = 0; index < count; ++index) {
+            changes[index].change_id = utf8_view(ids[index]);
+            changes[index].edit_id = utf8_view(ids[index]);
+            changes[index].operation = KV_EDIT_UPDATE;
+            changes[index].fields = {static_cast<std::uint64_t>(index), 1};
+            changes[index].expected_source_hash = utf8_view(hash);
+        }
+        const KvEditBatch batch{changes.data(), static_cast<std::uint64_t>(count),
+                                fields.data(), static_cast<std::uint64_t>(count)};
+        std::vector<double> samples;
+        for (size_t iteration = 0; iteration <= repetitions; ++iteration) {
+            {
+                std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+                diagnostic_logs.clear();
+            }
+            KvEditReportSnapshot report{};
+            if (!kv_edit_dry_run_typed(handle.value, &batch, &report, sizeof(report)) ||
+                !report.ok || !report.full_reparse_ok ||
+                report.update_count != static_cast<int>(count)) {
+                check(false, "patch benchmark full batch validates");
+                break;
+            }
+            double patch_ms = -1.0;
+            {
+                std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+                const std::string key = " plan.patch_sources_ms=";
+                for (const std::string& log : diagnostic_logs) {
+                    if (log.find("dll.dry_run outcome=success") == std::string::npos) continue;
+                    const size_t begin = log.find(key);
+                    if (begin != std::string::npos) patch_ms = std::stod(log.substr(begin + key.size()));
+                }
+            }
+            check(patch_ms >= 0.0, "patch benchmark stage sample exists");
+            if (patch_ms < 0.0) break;
+            if (iteration != 0) samples.push_back(patch_ms);
+            std::cout << "PATCH_BENCH_SAMPLE count=" << count << " iteration=" << iteration
+                      << " warmup=" << (iteration == 0) << " patch_ms=" << patch_ms << '\n';
+        }
+        if (samples.size() == repetitions) {
+            std::sort(samples.begin(), samples.end());
+            const size_t middle = samples.size() / 2;
+            const double median = samples.size() % 2 ? samples[middle]
+                : (samples[middle - 1] + samples[middle]) / 2.0;
+            const size_t p95 = (samples.size() * 95 + 99) / 100 - 1;
+            std::cout << "PATCH_BENCH_RESULT count=" << count << " samples=" << samples.size()
+                      << " median_ms=" << median << " p95_ms=" << samples[p95]
+                      << " build=Debug profile=edit operation=dry_run stage=plan.patch_sources\n";
+        }
+    }
+    kv_set_log_callback(nullptr);
+    return failures == 0 ? 0 : 1;
+}
+
 int edit_contract() {
+    untouched_object_key_contract();
+    section_sparse_bounds_contract();
+    patch_sources_preview_contract();
     distance_resolution_reason_contract();
     legacy_fog_non_target_contract();
     other_track_key_argument_layout_contract();
@@ -11009,12 +11452,13 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "usage: typed_snapshot_tests "
-                     "<snapshot|geometry|edit|diagnostics|signal-glare> "
+                     "<snapshot|geometry|edit|diagnostics|signal-glare|slop|patch-bench> "
                      "[fixture-root|map-path] [--commit]\n";
         return 2;
     }
     const std::string mode = argv[1];
     if (mode == "snapshot") {
+        finite_distance_contract();
         snapshot_contract();
         include_distance_scope_contract();
         light_contract();
@@ -11022,6 +11466,24 @@ int main(int argc, char** argv) {
     }
     if (mode == "geometry") return geometry_projection_contract() == 0 ? 0 : 1;
     if (mode == "edit") return edit_contract() == 0 ? 0 : 1;
+    if (mode == "slop") {
+        untouched_object_key_contract();
+        section_sparse_bounds_contract();
+        patch_sources_preview_contract();
+        finite_distance_contract();
+        return failures == 0 ? 0 : 1;
+    }
+    if (mode == "patch-bench" && (argc == 2 || argc == 3)) {
+        size_t repetitions = 7;
+        if (argc == 3) {
+            const std::string argument = argv[2];
+            if (argument.empty() || argument.size() > 2 ||
+                argument.find_first_not_of("0123456789") != std::string::npos) return 2;
+            repetitions = static_cast<size_t>(std::stoul(argument));
+            if (repetitions < 5 || repetitions > 50) return 2;
+        }
+        return patch_sources_benchmark(repetitions);
+    }
     if (mode == "diagnostics" && argc == 3) {
         return diagnostics_contract(std::filesystem::path(argv[2])) == 0 ? 0 : 1;
     }

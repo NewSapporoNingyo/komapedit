@@ -115,6 +115,8 @@ void App::run_structure_model_find() {
 void App::run_unused_structure_model_search() {
     commit_editable_list_active_edit(
         structure_model_edit_, k_structure_model_edit_spec);
+    commit_editable_list_active_edit(
+        signal_aspect_edit_, k_signal_aspect_edit_spec);
     ensure_table_cache();
     KME_ADD_LOG("[INFO]Searching unused models...");
 
@@ -135,10 +137,8 @@ void App::run_unused_structure_model_search() {
             };
             note_structure_rows(table_cache_.structure_rows);
             note_structure_rows(table_cache_.structure_between_rows);
-            for (const CachedTableRow& row : table_cache_.repeater_rows) {
-                if (row.cells.size() <= static_cast<size_t>(k_repeater_structure_keys_column)) continue;
-                for (const std::string& key :
-                     split_structure_key_list(row.cells[static_cast<size_t>(k_repeater_structure_keys_column)])) {
+            for (const CachedRepeaterRow& row : table_cache_.repeater_rows) {
+                for (const std::string& key : row.structure_keys) {
                     note_structure_key(key);
                 }
             }

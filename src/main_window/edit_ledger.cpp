@@ -1476,18 +1476,24 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             row_backups.emplace(row_kind, *rows);
         }
     }
+    const auto snapshot_backup = original_edit_rows_;
+    // Keep the disk-relative originals across partial and full hydration. New
+    // inserts have no baseline row; their insert operation owns all fields.
     for (const auto& entry : changes) {
-        if (entry.second.row_kind == "curve" || entry.second.row_kind == "gradient" ||
-            entry.second.row_kind == "otherTrack.change") {
-            snapshot_local_preview_row(entry.first, entry.second.row_kind);
+        if (entry.second.operation != "insert" &&
+            inspector_rows_for_kind(model_, entry.second.row_kind) &&
+            !snapshot_local_preview_row(entry.first, entry.second.row_kind)) {
+            original_edit_rows_ = snapshot_backup;
+            KME_ADD_LOG("[error]failed to capture local edit baseline: " + entry.first);
+            return false;
         }
     }
-    const auto snapshot_backup = original_edit_rows_;
 
     timing.next("preview.backend");
     std::vector<DistanceResolutionRequest> resolution_requests;
     if (!sync_edit_memory_with_ledger(changes, &resolution_requests)) {
         GuiTiming::Stage rollback_timing("preview.rollback");
+        original_edit_rows_ = snapshot_backup;
         if (!pending_edit_changes_.empty()) {
             sync_edit_memory_with_ledger(pending_edit_changes_);
         }
@@ -1555,6 +1561,22 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         ledger_contains_include_edit(pending_edit_changes_) ||
         ledger_contains_resource_list_load_edit(changes) ||
         ledger_contains_resource_list_load_edit(pending_edit_changes_);
+    const auto hydrate_preview_snapshot = [&](const KvMapSnapshot& snapshot) {
+        MapModel refreshed = hydrate_map_snapshot(snapshot, model_.path, 0.0);
+        std::map<std::string, const OtherTrack*> previous_tracks;
+        for (const OtherTrack& track : model_.other_tracks) {
+            previous_tracks[track.key] = &track;
+        }
+        for (OtherTrack& track : refreshed.other_tracks) {
+            const auto previous = previous_tracks.find(track.key);
+            if (previous == previous_tracks.end()) continue;
+            track.visible = previous->second->visible;
+            track.color = previous->second->color;
+            track.range_min = previous->second->range_min;
+            track.range_max = previous->second->range_max;
+        }
+        return refreshed;
+    };
     if (!full_insert_hydration && (signal_aspects_hydrated || alignment_hydrated)) {
         GuiTiming::Stage partial_refresh("snapshot.partial_refresh");
         KvMapSnapshot snapshot{};
@@ -1586,18 +1608,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             model_.signal_aspects = hydrate_signal_aspect_rows(snapshot);
         }
         if (alignment_hydrated) {
-            std::map<std::string, std::pair<bool, ImVec4>> other_track_state;
-            for (const OtherTrack& track : model_.other_tracks) {
-                other_track_state[track.key] = {track.visible, track.color};
-            }
-            MapModel refreshed = hydrate_map_snapshot(snapshot, model_.path, 0.0);
-            for (OtherTrack& track : refreshed.other_tracks) {
-                auto state = other_track_state.find(track.key);
-                if (state != other_track_state.end()) {
-                    track.visible = state->second.first;
-                    track.color = state->second.second;
-                }
-            }
+            MapModel refreshed = hydrate_preview_snapshot(snapshot);
             model_.own = std::move(refreshed.own);
             model_.curve = std::move(refreshed.curve);
             model_.other_tracks = std::move(refreshed.other_tracks);
@@ -1613,15 +1624,6 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             model_.default_max = refreshed.default_max;
             for (size_t i = 0; i < 3; ++i) model_.cp_arb[i] = refreshed.cp_arb[i];
             normalize_station_preview_rows(model_);
-        }
-        for (auto original = original_edit_rows_.begin();
-             original != original_edit_rows_.end();) {
-            if (signal_aspects_hydrated &&
-                original->second.row_kind == "signal.aspect") {
-                original = original_edit_rows_.erase(original);
-            } else {
-                ++original;
-            }
         }
     }
 
@@ -1649,21 +1651,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
                     : std::string{}));
             return rollback_local_preview();
         }
-        std::map<std::string, std::pair<bool, ImVec4>> other_track_state;
-        for (const OtherTrack& track : model_.other_tracks) {
-            other_track_state[track.key] = {track.visible, track.color};
-        }
-        MapModel refreshed = hydrate_map_snapshot(snapshot, model_.path, 0.0);
-        for (OtherTrack& track : refreshed.other_tracks) {
-            auto state = other_track_state.find(track.key);
-            if (state != other_track_state.end()) {
-                track.visible = state->second.first;
-                track.color = state->second.second;
-            }
-        }
-        model_ = std::move(refreshed);
+        model_ = hydrate_preview_snapshot(snapshot);
         normalize_station_preview_rows(model_);
-        original_edit_rows_.clear();
     }
 
     timing.next("preview.rows");
@@ -1737,17 +1726,12 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             (previous != pending_edit_changes_.end() && needs_full_refresh(previous->second));
         note_refresh_target(kv.second.row_kind, kv.first, force_full_refresh);
     }
-    if (alignment_hydrated) {
-        for (auto original = original_edit_rows_.begin();
-             original != original_edit_rows_.end();) {
-            const bool alignment_row = original->second.row_kind == "curve" ||
-                original->second.row_kind == "gradient" ||
-                original->second.row_kind == "otherTrack.change";
-            if (alignment_row && changes.find(original->first) == changes.end()) {
-                original = original_edit_rows_.erase(original);
-            } else {
-                ++original;
-            }
+    for (auto original = original_edit_rows_.begin(); original != original_edit_rows_.end();) {
+        const auto pending = changes.find(original->first);
+        if (pending == changes.end() || pending->second.operation == "insert") {
+            original = original_edit_rows_.erase(original);
+        } else {
+            ++original;
         }
     }
     pending_edit_changes_ = changes;

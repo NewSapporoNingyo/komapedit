@@ -266,6 +266,162 @@ HeadlessResourceSafetyContractResult run_debug_resource_safety_contract(
         thousandths_truncation;
     return result;
 }
+
+bool App::debug_background_texture_contract(ID3D11Device* device,
+                                             const std::string& image_path,
+                                             std::ostream& out) {
+    bool passed = true;
+    const auto check = [&](const char* name, bool value) {
+        out << "background_" << name << '=' << (value ? "PASS" : "FAIL") << '\n';
+        passed = value && passed;
+        return value;
+    };
+    struct HeldView {
+        ID3D11ShaderResourceView* value;
+        explicit HeldView(ID3D11ShaderResourceView* view) : value(view) {
+            if (value) value->AddRef();
+        }
+        ~HeldView() { release_com(value); }
+    };
+    const auto pixel = [&](ID3D11ShaderResourceView* view)
+        -> std::optional<std::array<unsigned char, 4>> {
+        if (!view) return std::nullopt;
+        struct Resources {
+            ID3D11Resource* resource = nullptr;
+            ID3D11Texture2D* texture = nullptr;
+            ID3D11Texture2D* staging = nullptr;
+            ID3D11DeviceContext* context = nullptr;
+            ~Resources() {
+                release_com(context);
+                release_com(staging);
+                release_com(texture);
+                release_com(resource);
+            }
+        } resources;
+        view->GetResource(&resources.resource);
+        if (!resources.resource || FAILED(resources.resource->QueryInterface(
+                IID_PPV_ARGS(&resources.texture)))) return std::nullopt;
+        D3D11_TEXTURE2D_DESC desc{};
+        resources.texture->GetDesc(&desc);
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.BindFlags = 0;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        if (FAILED(device->CreateTexture2D(&desc, nullptr, &resources.staging))) return std::nullopt;
+        device->GetImmediateContext(&resources.context);
+        resources.context->CopyResource(resources.staging, resources.texture);
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (FAILED(resources.context->Map(resources.staging, 0, D3D11_MAP_READ, 0, &mapped))) return std::nullopt;
+        std::array<unsigned char, 4> value{};
+        std::copy_n(static_cast<const unsigned char*>(mapped.pData), value.size(), value.begin());
+        resources.context->Unmap(resources.staging, 0);
+        return value;
+    };
+    struct Fixture {
+        std::filesystem::path directory = std::filesystem::temp_directory_path() /
+            ("komapedit-background-cache-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        bool owned = false;
+        ~Fixture() {
+            if (!owned) return;
+            std::error_code error;
+            std::filesystem::remove_all(directory, error);
+        }
+    } fixture;
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr;
+    try {
+        UserSettings settings;
+        settings.language = Language::En;
+        App app(device, settings, 1.0f, false, false);
+        if (!check("initial_load", app.load_background_image(image_path, true))) {
+            throw std::runtime_error("background fixture could not load");
+        }
+        HeldView original(app.bg_image_.srv);
+        check("initial_pixel", pixel(original.value) ==
+            std::array<unsigned char, 4>{0x11, 0x22, 0x33, 0xff});
+        app.sync_pending_background_values();
+        app.apply_pending_background_values(false);
+        check("unchanged_reuses_texture", app.bg_image_.srv == original.value);
+        app.pending_bg_x_ += 10;
+        app.pending_bg_y_ -= 20;
+        app.pending_bg_width_ *= 2;
+        app.pending_bg_height_ *= 3;
+        app.pending_bg_rotation_deg_ += 30;
+        app.apply_pending_background_values(false);
+        check("geometry_reuses_texture", app.bg_image_.srv == original.value &&
+            app.bg_x_ == app.pending_bg_x_ && app.bg_y_ == app.pending_bg_y_ &&
+            app.bg_width_ == app.pending_bg_width_ && app.bg_height_ == app.pending_bg_height_ &&
+            app.bg_rotation_deg_ == app.pending_bg_rotation_deg_);
+        app.pending_bg_brightness_ = 200;
+        app.apply_pending_background_values(false);
+        check("brightness_rebuilds_texture", app.bg_image_.srv != original.value &&
+            app.bg_image_.brightness == 200 && pixel(app.bg_image_.srv) ==
+                std::array<unsigned char, 4>{0x22, 0x44, 0x66, 0xff});
+        HeldView bright(app.bg_image_.srv);
+        app.pending_bg_brightness_ = 150;
+        app.device_ = nullptr;
+        app.apply_pending_background_values(false);
+        app.device_ = device;
+        check("failed_upload_retains_texture", app.bg_image_.srv == bright.value &&
+            app.bg_image_.brightness == 200);
+        app.apply_pending_background_values(false);
+        check("failed_upload_retries", app.bg_image_.srv != bright.value &&
+            app.bg_image_.brightness == 150 && pixel(app.bg_image_.srv) ==
+                std::array<unsigned char, 4>{25, 51, 76, 255});
+
+        fixture.owned = std::filesystem::create_directory(fixture.directory);
+        if (!fixture.owned) {
+            throw std::runtime_error("background fixture directory could not be created");
+        }
+        const auto replacement = fixture.directory / "replacement.bmp";
+        std::filesystem::copy_file(std::filesystem::path(utf8_to_wide(image_path)), replacement);
+        {
+            std::fstream file(replacement, std::ios::in | std::ios::out | std::ios::binary);
+            const unsigned char bgra[] = {20, 40, 80, 255};
+            file.seekp(54);
+            file.write(reinterpret_cast<const char*>(bgra), sizeof(bgra));
+            if (!file) throw std::runtime_error("background replacement could not be written");
+        }
+        HeldView previous(app.bg_image_.srv);
+        check("new_image_rebuilds_same_brightness",
+            app.load_background_image(wide_to_utf8(replacement.wstring()), false) &&
+            app.bg_image_.srv != previous.value && app.bg_image_.brightness == 150 &&
+            pixel(app.bg_image_.srv) == std::array<unsigned char, 4>{120, 60, 30, 255});
+
+        // Same pixel data, build and Apply path for before/after measurements.
+        app.bg_image_.release();
+        app.bg_image_.width = app.bg_image_.height = 1024;
+        app.bg_image_.pixels_rgba.assign(size_t{1024} * 1024 * 4, 127);
+        app.bg_brightness_ = 100;
+        if (!app.rebuild_background_texture()) throw std::runtime_error("background benchmark upload failed");
+        app.sync_pending_background_values();
+        std::vector<double> samples;
+        size_t replacements = 0;
+        for (int sample = 0; sample < 9; ++sample) {
+            const auto started = std::chrono::steady_clock::now();
+            for (int iteration = 0; iteration < 8; ++iteration) {
+                HeldView before(app.bg_image_.srv);
+                app.pending_bg_x_ += 1;
+                app.apply_pending_background_values(false);
+                replacements += app.bg_image_.srv != before.value ? 1 : 0;
+            }
+            samples.push_back(std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count());
+        }
+        std::sort(samples.begin(), samples.end());
+        out << "background_apply_benchmark pixels=1048576 samples=9 applies_per_sample=8"
+            << " texture_replacements=" << replacements << " median_ms=" << samples[4]
+            << " p95_ms=" << samples.back() << '\n';
+        check("repeated_apply_reuses_texture", replacements == 0);
+    } catch (const std::exception& error) {
+        out << "background_contract_error=" << error.what() << '\n';
+        passed = false;
+    }
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    return passed;
+}
 #endif
 void TextureImage::release() {
     release_com(srv);
@@ -449,9 +605,12 @@ bool App::rebuild_background_texture() {
         return false;
     }
 
+    const double brightness = std::clamp(bg_brightness_, 1.0, 200.0);
+    if (bg_image_.srv && bg_image_.brightness == brightness) return true;
+
     try {
         std::vector<unsigned char> adjusted = bg_image_.pixels_rgba;
-        const double mul = std::clamp(bg_brightness_, 1.0, 200.0) / 100.0;
+        const double mul = brightness / 100.0;
         for (size_t i = 0; i + 3 < adjusted.size(); i += 4) {
             adjusted[i + 0] = static_cast<unsigned char>(
                 std::clamp(adjusted[i + 0] * mul, 0.0, 255.0));
@@ -496,7 +655,7 @@ bool App::rebuild_background_texture() {
         }
         release_com(bg_image_.srv);
         bg_image_.srv = new_srv;
-        bg_image_.brightness = bg_brightness_;
+        bg_image_.brightness = brightness;
         return true;
     } catch (const std::exception& error) {
         KME_ADD_LOG("[ERROR] Failed to rebuild background image texture: " +

@@ -95,7 +95,6 @@ RepeaterTextCellContextAction render_repeater_text_cell_with_context_actions(
     const std::string& trim_to_change_point_label,
     const std::string& start_from_change_point_label,
     bool edit_enabled, size_t chain_begin_index, size_t chain_begin_count);
-std::vector<std::string> split_structure_key_list(const std::string& text);
 std::string render_text_cell_with_submenu(
     const std::string& display_text, const std::string& menu_label,
     const std::vector<std::string>& menu_items);

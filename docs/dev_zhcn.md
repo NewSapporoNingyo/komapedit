@@ -86,6 +86,8 @@ ctest --test-dir build --output-on-failure
 
 普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。当前注册了 `multilanguage_contract`、`typed_snapshot_contract`、`maploader_gradient_projection_contract`、`typed_edit_contract`、`maploader_diagnostics_contract`、`canvas3d_camera_contract` 和 `route_value_sampling_contract` 七项非 headless 契约。已注册的测试程序与内置 headless 入口仅在 Debug 中编译：`build_dev.bat` 显式启用 `BUILD_TESTING`，`build_release.bat` 则将其关闭、排除 headless 实现源码，并拒绝 Release 输出中遗留的 `*_tests.exe`。headless 验证必须显式运行，不得注册为 CTest。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
 
+`build\bin\typed_snapshot_tests.exe slop` 选择对象键表达式、Section 稀疏索引、有限距离及补丁预览回归；这些回归也由已注册的 snapshot/edit 契约覆盖。`build\bin\typed_snapshot_tests.exe patch-bench 7` 用 100、1,000、10,000 项确定性更新测量既有 `plan.patch_sources` 阶段。每种规模先预热一次，再输出全部样本与 median/p95；重复次数默认为 7，接受 5–50。该显式基准包含完整 dry-run 语义验证，不注册为 CTest。
+
 运行时输出布局如下：
 
 - Debug 使用 `build\`，Release 使用 `build_release\`。
@@ -600,6 +602,10 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 
 ### 编辑模型
 
+距离赋值在添加控制点或编辑元数据前拒绝 NaN 和无穷大；根地图和 Include 均沿用既有 fatal-load 路径，有限负距离继续保留兼容行为。放置语句编辑保留未修改的对象键表达式及其中注释、换行的字节。稀疏 Section `values.N` 更新必须指向既有参数，除非显式提供 `values.count` 调整长度；源码生成与语义验证共用该边界检查。
+
+源码补丁组装保留既有替换排序与重叠验证，再一次顺序追加原文/替换片段，并从最终位置推导身份偏移。报告顺序和前后各 80 字节的预览上下文保留原降序编辑行为，包括右侧已生效的修改。这消除了组装中的重复后缀搬移和身份区间平移，不表示完整编辑验证管线已变为线性。
+
 - 源码所有权保留在 maploader 结构中；不得从 GUI 表格文本重建锚点或创建平行的 GUI 文档模型。
 - Preview 与 Edit 水合仅由既有 capability bit 区分。
 - `kv_edit_dry_run_typed()` 负责验证，`kv_edit_apply_to_memory_typed()` 更新工作副本预览，`kv_edit_apply_typed()` 是直接写入路径，`kv_edit_commit_typed()` 保存已验证工作副本，`kv_edit_reset_memory()` 仅在需要时丢弃覆盖。
@@ -617,6 +623,8 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 
 ### UI、表格与渲染
 
+App 为每个待保存的既有行 update/delete 保留相对磁盘的原始行，完整和局部水合均不清除这些基线。基线捕获属于事务：Apply 被拒绝时恢复原始快照，成功后只移除已退出 ledger 的快照，Save/Revert 则清空已完成的 ledger。Inspector 字段仍表示相对基线的稀疏差异，因此把一个字段改回原值只移除该字段，不丢弃其他待保存修改。两种水合路径均按精确轨道键保留仍存在的 OtherTrack 可见性、颜色和显示范围；显式轨道重命名继续使用原有稳定 ID 状态转移。
+
 编辑计时使用内部 C++17 `operation_timing.h` 中的稳态时钟作用域，GUI 与 maploader 分域记录，不修改 C ABI。App 持有事务计时，直到延迟 Inspector 处理和必要的首个场景帧完成。隐藏或折叠的场景窗口不会让计时等待用户重新打开。控制台阶段为包含嵌套工作的 `*_ms`、`*_count`，GUI 总用时包含 DLL 用时。`source.read_decode_hash` 记录调用线程上的源码处理，并行 Include 工作包含在 `parse.include_join_merge` 和 `parse.syntax_diagnostics` 中；模型加载继续使用独立异步日志。计时不代替语义验证，也不通过解析日志文本驱动应用状态。
 
 `refresh_local_preview_after_edits()` 合并 Apply 和回滚涉及的行类型刷新。完整模型转换覆盖局部轨道／列表转换；已安排完整场景重建时跳过旧场景更新。单个放置实例和 Repeater 坐标编辑继续保留稳定 ID 快速路径。`build_edit_report()` 仅在原有消费者首次使用时构建距离和物理锚点索引，同批次复用。Save 将编码后字节移动到事务请求，并保留长度／哈希元数据；完整重解析、变量／非目标证明、编码检查、磁盘基线检查、写入核验和回滚均不变。
@@ -631,7 +639,9 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - hydration 将曲线参数行分类为带 row index 与 edit ID 的 `CurveGauge`、`CurveCenter` 和 `CurveFunction` 标记。平面图绘制独立白色矩形 `CG`/`CC`/`CF` 标记；场景绘制上方代码、下方求值参数的白色双行标牌。场景继续复用现有拾取与蓝色高亮样式。精确 `[View2D]` 键 `show_curve_gauge_markers`、`show_curve_center_markers` 和 `show_curve_function_markers` 默认关闭，分别更新标记可见性而不重建轨道或模型几何。
 - 每条 `Curve.Interpolate` 都是保留原 0/1/2 参数形状和稳定编辑身份的类型化 Curve 行。hydration 使用既有 `KvElementRow` 的源文件索引和语句全局顺序，以线性复杂度关联求值后的 radius 插值事件；事件按里程排序后、以及 Include 在同里程重复出现时仍能正确配对。Preview 标记保留原外观且不猜测编辑目标，经过验证的 Edit 元数据合并补入来源行索引并刷新两个视图。2D 端点与复用 `CurveCircularStart` 外观的 3D 标牌共同消费这份来源行索引，使用既有“属性/编辑”和延迟“删除”路径，并跳过通用曲线标记副本。标牌继续显示求值后的半径/超高，求值半径为零时显示 `Intpl. 0`。
 - Edit 元数据就绪前，`Curve.Interpolate` 平面悬停使用命中标记的数组索引，独立于尚未绑定的源行；未绑定标记不进入基于源行的选择或右键目标。场景标牌保留 `curve` 分类，因此右键菜单可打开，而“属性/编辑”和“删除”禁用。新建模板只显示 `Curve.Interpolate(radius, cant);`，可选字段仍支持三种官方参数个数。自轨道 headless 夹具检查预览标记独立命中、重叠命中及预览/合并后的场景分类；新建元素 headless 还检查唯一的完整签名。
-- 缓存表格内容；保持 Section 动态参数与显式 `null`、变量列表顺序及行/平面/场景导航副作用。
+- 缓存表格内容；保持 Section 动态参数与显式 `null`、变量列表顺序及行/平面/场景导航副作用。Repeater 缓存行保留有序的强类型结构键供查找和导航使用，不得反向拆分逗号连接的显示单元格。未使用结构查找在收集引用前，将 Signal main/glare 活动单元格提交到既有草稿。
+- 背景图只修改几何参数时，若成功上传的亮度已匹配规范化请求，则复用纹理。加载另一张图片通过既有 release 路径使纹理失效；上传失败不推进亮度记录。
+- 模型 bounds 使用 double 中间量；非有限位置或超出公开 float 范围的半径沿用模型加载器的错误与清理路径拒绝。场景动态刷新失败时，Repeater 缓存总数与所属 chunks 一起恢复。
 - 将 Assimp 隔离在 `model_loader.dll`；纹理缺失、文件无效和模型不支持时不得崩溃。
 - 保持场景相机传递、拾取/高亮、可见性同步、标记配方、线路叠加层和 X/Y/Z 操纵器同步。
 
@@ -718,7 +728,9 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 
 `--debug-headless-fresh-resource-list-workflow <地图路径>` 仅读取输入地图以保护其原始字节。它在独占临时目录中创建无距离、仅有文件头的 Map、仅有文件头的 Structure List 和单行 Station List，再使用这些夹具驱动正式 App 工作流：引用目标候选包含无距离地图，可连续暂存多个 `*.Load`，空列表的首行草稿使用其 `ResourceListSource`。两份列表草稿与未保存 Load 同批应用必须成功，且不出现 `unsupported or unknown editId` 错误。命令检查 `input_map_bytes_unchanged` 和 `fixture_files_cleaned`，不会改写输入地图。
 
-同一工作流还加入隔离的 Signal List，验证待保存主行/glare 插入的多轮 Apply、删除及重加 glare、Revert，以及保持行相邻的 Save/reload。`--debug-headless-table-find` 还检查车站列表缓存和修改/新增/删除草稿（包括活动单元格）对普通 Sound 的引用，并验证这些引用不计入 Sound3D。
+同一工作流还加入隔离的 Signal List，验证待保存主行/glare 插入的多轮 Apply、删除及重加 glare、Revert，以及保持行相邻的 Save/reload。`--debug-headless-table-find` 还检查车站列表缓存和修改/新增/删除草稿（包括活动单元格）对普通 Sound 的引用，并验证这些引用不计入 Sound3D。其 Structure 检查保留含逗号或空格的完整 Repeater 键，并在查找未使用资源前提交活动 Signal 主行/glare 草稿单元格。
+
+scene-loader contract 还检查动态刷新失败后的 Repeater 缓存总数、坐标很大但可表示的有限模型包围范围、不可表示或非有限包围范围的拒绝，以及分配释放。其背景图合同检查无变化、仅几何变化、亮度变化、图片替换及上传失败/重试时的纹理身份和像素输出。固定 1024×1024 图片基准报告仅几何 Apply 的 median/p95 及纹理替换次数。
 
 为保证可移植性，应显式传入地图路径；Repeater key 与新建元素后续编辑命令始终要求路径，自轨道、他轨道、距离、Repeater 批量、仅 Repeater 插入和 Section 工具在省略时会回退到开发者机器上的线路路径。`--repeater-only` 会对恰好一条唯一 key 的 `Repeater.Begin` 和一条 `Begin0` 执行 dry-run、内存应用/重置，以及在请求时执行提交/重载验证。Repeater key 与仅 Repeater 插入的提交验证会保留经授权的线路修改，以便检查物理 diff。
 
@@ -727,6 +739,8 @@ plan benchmark 默认使用 `--interaction pan`。它会切换“曲线半径”
 plan、scene 和 `--debug-headless-own-track-edit` 共用临时 Map/Include 合同，覆盖 Interpolate 全部 0/1/2 参数形式的检查器字段、内存 Apply、Delete、Reset、来源身份及磁盘字节不变。真实线路无需包含 Interpolate：空的行/事件/标记集合必须一致，仅依赖具体实例的检查标记为不适用。自轨道编辑仍执行正式的 Preview→Edit 元数据合并（包括由 `rand()` 选择源码文件的地图），并验证真实线路实际存在的目标。scene-loader contract 注入模型复制和 PutBetween worker 故障，并检查取消、请求集合协调及 DLL 分配/释放平衡。diagnostics-popup benchmark 对 100,000 条混合日志生成快照，检查并发顺序、修订缓存和裁剪渲染。
 
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
+
+新建元素命令的混合 ledger 回归还需要既有可编辑 `Structure.Put`，以及可编辑的他轨道位置/X/Y 插值参数行。它覆盖在既有行更新前/后插入元素、重复 Inspector x/y 编辑、将 x 改回磁盘原值、失败 Apply、Revert，以及全量和局部刷新后他轨道显示、颜色和范围的原样保留。四组独占临时夹具覆盖两种插入顺序下保留 x/y 或恢复 x 的组合，再执行 Save 和 fresh Reload；这些 Save 检查不以输入线路为目标。
 
 独立 `curve.interpolate` 模板复用可选尾参数字段以及共享的 typed curve 插入校验、序列化和语义指纹，仅生成官方 0/1/2 参数形式；拒绝仅含 cant、非有限值、未知字段及不支持的方法。`typed_edit_contract` 在临时 Shift-JIS/CRLF Include 中逐一执行 dry run、内存 Apply、Reset、再次 Apply、Commit 与 fresh Reload，并保持表达式、注释、源码顺序和插入身份。既有新建元素 headless 命令还验证默认双参数、复选框联动、三种向导形式、新建后立即 Inspector 编辑、延迟取消、Revert、每个新元素唯一且带来源绑定的 2D/3D 标记，以及不传 `--commit` 时全部物理源文件的逐字节一致性。
 

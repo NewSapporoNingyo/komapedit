@@ -358,16 +358,6 @@ std::pair<size_t, size_t> safe_statement_removal_range(
     return {line_start, line_end};
 }
 
-std::string preview_fragment(const std::string& text, size_t begin, size_t end) {
-    const size_t context = 80;
-    size_t preview_begin = begin > context ? begin - context : 0;
-    size_t preview_end = std::min(text.size(), end + context);
-    std::string out = text.substr(preview_begin, preview_end - preview_begin);
-    if (preview_begin > 0) out = "..." + out;
-    if (preview_end < text.size()) out += "...";
-    return out;
-}
-
 bool parse_edit_number(const std::string& text, double& value) {
     return parse_finite_number(text, value);
 }
@@ -1179,40 +1169,6 @@ inline void validate_station_margin_value(const std::string& field_name,
     }
 }
 
-std::string build_station_put_statement(const MapEditChange& change,
-                                        const ParsedStatement& statement,
-                                        const StationPut& row) {
-    std::string station_key = required_string_field(change, "stationKey", value_to_edit_text(row.station_key));
-    std::string raw_args = trim_field_copy(statement.raw_arguments);
-    const bool parameter_change = has_field_change(change, "door") ||
-        has_field_change(change, "margin1") || has_field_change(change, "margin2");
-    if (parameter_change) {
-        if (has_field_change(change, "margin1")) {
-            validate_station_margin_value("margin1", field_text_or(change, "margin1", ""));
-        }
-        if (has_field_change(change, "margin2")) {
-            validate_station_margin_value("margin2", field_text_or(change, "margin2", ""));
-        }
-        std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
-        if (args.size() < 3) args.resize(3);
-        args[0] = optional_numeric_value_field(change, "door", row.door, raw_arg_at(args, 0));
-        args[1] = optional_numeric_value_field(change, "margin1", row.margin1,
-                                               raw_arg_at(args, 1));
-        args[2] = optional_numeric_value_field(change, "margin2", row.margin2,
-                                               raw_arg_at(args, 2));
-        while (!args.empty() && args.back().empty()) args.pop_back();
-        raw_args.clear();
-        for (size_t index = 0; index < args.size(); ++index) {
-            if (index) raw_args += ",";
-            raw_args += args[index];
-        }
-    }
-    std::ostringstream out;
-    out << "Station[" << quoted_bve_string(station_key) << "].Put("
-        << raw_args << ");";
-    return out.str();
-}
-
 std::string build_irregularity_statement(const MapEditChange& change,
                                          const ParsedStatement& statement,
                                          const IrregularityChange& row) {
@@ -1235,29 +1191,35 @@ bool has_non_distance_field_change(const MapEditChange& change) {
 }
 
 std::optional<std::pair<size_t, size_t>> raw_object_key_span(const std::string& text) {
-    const size_t open = text.find('[');
-    if (open == std::string::npos) return {};
+    size_t open = std::string::npos;
     bool single_quoted = false;
     bool double_quoted = false;
     int nested = 0;
-    for (size_t i = open + 1; i < text.size(); ++i) {
+    for (size_t i = 0; i < text.size();) {
         const char ch = text[i];
+        if (!single_quoted && !double_quoted &&
+            (ch == '#' || (ch == '/' && i + 1 < text.size() && text[i + 1] == '/'))) {
+            i = text_line_span(text, i).next_begin;
+            continue;
+        }
         if (ch == '\'' && !double_quoted) single_quoted = !single_quoted;
         else if (ch == '"' && !single_quoted) double_quoted = !double_quoted;
         else if (!single_quoted && !double_quoted) {
-            if (ch == '[') ++nested;
-            else if (ch == ']' && nested-- == 0) {
+            if (ch == '[') {
+                if (nested++ == 0) open = i;
+            } else if (ch == ']' && open != std::string::npos && --nested == 0) {
                 return std::make_pair(open + 1, i);
             }
         }
+        ++i;
     }
     return {};
 }
 
 std::string raw_object_key_argument(const ParsedStatement& statement) {
     const auto span = raw_object_key_span(statement.raw_text);
-    return span ? trim_field_copy(statement.raw_text.substr(
-        span->first, span->second - span->first)) : std::string{};
+    return span ? statement.raw_text.substr(
+        span->first, span->second - span->first) : std::string{};
 }
 
 std::string object_key_field_as_bve_arg(const MapEditChange& change,
@@ -1291,6 +1253,40 @@ std::string replace_raw_object_key_argument(const ParsedStatement& statement,
     while (value_end > value_begin &&
            (text[value_end - 1] == ' ' || text[value_end - 1] == '\t')) --value_end;
     return text.substr(0, value_begin) + replacement + text.substr(value_end);
+}
+
+std::string build_station_put_statement(const MapEditChange& change,
+                                        const ParsedStatement& statement,
+                                        const StationPut& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    std::string raw_args = trim_field_copy(statement.raw_arguments);
+    const bool parameter_change = has_field_change(change, "door") ||
+        has_field_change(change, "margin1") || has_field_change(change, "margin2");
+    if (parameter_change) {
+        if (has_field_change(change, "margin1")) {
+            validate_station_margin_value("margin1", field_text_or(change, "margin1", ""));
+        }
+        if (has_field_change(change, "margin2")) {
+            validate_station_margin_value("margin2", field_text_or(change, "margin2", ""));
+        }
+        std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+        if (args.size() < 3) args.resize(3);
+        args[0] = optional_numeric_value_field(change, "door", row.door, raw_arg_at(args, 0));
+        args[1] = optional_numeric_value_field(change, "margin1", row.margin1,
+                                               raw_arg_at(args, 1));
+        args[2] = optional_numeric_value_field(change, "margin2", row.margin2,
+                                               raw_arg_at(args, 2));
+        while (!args.empty() && args.back().empty()) args.pop_back();
+        raw_args.clear();
+        for (size_t index = 0; index < args.size(); ++index) {
+            if (index) raw_args += ",";
+            raw_args += args[index];
+        }
+    }
+    std::ostringstream out;
+    out << "Station[" << object_key_field_as_bve_arg(
+        change, "stationKey", row.station_key, statement) << "].Put(" << raw_args << ");";
+    return out.str();
 }
 
 std::string string_value_field_as_bve_arg(const MapEditChange& change,
@@ -1544,6 +1540,7 @@ std::string build_section_statement(const MapEditChange& change,
     } else {
         const std::vector<std::string> raw_args =
             parse_bve_argument_fields(statement.raw_arguments);
+        validate_section_sparse_indices(values, raw_args.size());
         for (size_t index = 0; index < raw_args.size(); ++index) {
             if (index) arguments += ",";
             const auto edited = values.index_values.find(index);
@@ -1688,7 +1685,7 @@ std::string build_structure_put_statement(const MapEditChange& change,
                                           const ParsedStatement& statement,
                                           const StructurePut& row,
                                           bool between) {
-    std::string structure_key = required_string_field(change, "structureKey", value_to_edit_text(row.structure_key));
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
     std::vector<std::string> raw_args = parse_bve_argument_fields(statement.raw_arguments);
     const bool source_put0 = ascii_lower(row.method) == "put0";
     std::string output_method = row.method;
@@ -1706,7 +1703,8 @@ std::string build_structure_put_statement(const MapEditChange& change,
     }
     const bool output_put0 = ascii_lower(output_method) == "put0";
     std::ostringstream out;
-    out << "Structure[" << quoted_bve_string(structure_key) << "]." << output_method << "(";
+    out << "Structure[" << object_key_field_as_bve_arg(
+        change, "structureKey", row.structure_key, statement) << "]." << output_method << "(";
     if (between) {
         out << track_key_field_as_bve_arg(change, "trackKey1", row.track_key1, raw_arg_at(raw_args, 0)) << ","
             << track_key_field_as_bve_arg(change, "trackKey2", row.track_key2, raw_arg_at(raw_args, 1)) << ","
@@ -1745,6 +1743,7 @@ std::string build_structure_put_statement(const MapEditChange& change,
 std::string build_signal_put_statement(const MapEditChange& change,
                                        const ParsedStatement& statement,
                                        const SignalPut& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
     std::vector<std::string> raw_args =
         parse_bve_argument_fields(statement.raw_arguments);
     const bool source_short_form = raw_args.size() == 4;
@@ -1762,11 +1761,8 @@ std::string build_signal_put_statement(const MapEditChange& change,
         }
     }
 
-    const auto aspect_key_change = change.field_changes.find("signalAspectKey");
-    const std::string aspect_key_arg = aspect_key_change == change.field_changes.end()
-        ? value_to_bve_arg(row.signal_aspect_key)
-        : quoted_bve_string(required_string_field(
-            change, "signalAspectKey", value_to_edit_text(row.signal_aspect_key)));
+    const std::string aspect_key_arg = object_key_field_as_bve_arg(
+        change, "signalAspectKey", row.signal_aspect_key, statement);
     if (aspect_key_arg.empty()) {
         throw std::runtime_error("required edit field is empty: signalAspectKey");
     }
@@ -1788,17 +1784,6 @@ std::string build_signal_put_statement(const MapEditChange& change,
     }
     out << ");";
     return out.str();
-}
-
-std::string repeater_key_bve_arg(const MapEditChange& change,
-                                 const RepeaterEvent& row) {
-    const auto edited = change.field_changes.find("repeaterKey");
-    const std::string key = edited == change.field_changes.end()
-        ? value_to_bve_arg(row.repeater_key)
-        : quoted_bve_string(required_string_field(
-              change, "repeaterKey", value_to_edit_text(row.repeater_key)));
-    if (key.empty()) throw std::runtime_error("Repeater key is empty");
-    return key;
 }
 
 bool repeater_has_field_change(const MapEditChange& change, const char* key) {
@@ -1835,15 +1820,17 @@ std::string build_repeater_statement(const MapEditChange& change,
                                      const ParsedStatement& statement,
                                      const RepeaterEvent& row) {
     validate_repeater_edit_fields(change);
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::string key = object_key_field_as_bve_arg(
+        change, "repeaterKey", row.repeater_key, statement);
+    if (key.empty()) throw std::runtime_error("Repeater key is empty");
     if (change.field_changes.size() == 1 &&
         has_field_change(change, "repeaterKey")) {
-        return replace_raw_object_key_argument(
-            statement, repeater_key_bve_arg(change, row));
+        return replace_raw_object_key_argument(statement, key);
     }
     const RepeaterStructureKeyEdit edited_keys = parse_repeater_structure_key_edit(change);
     const std::string source_method = ascii_lower(row.method);
     const std::vector<std::string> raw_args = parse_bve_argument_fields(statement.raw_arguments);
-    const std::string key = repeater_key_bve_arg(change, row);
 
     if (source_method == "end") {
         for (const auto& field : change.field_changes) {
@@ -8346,27 +8333,47 @@ MapEditReport build_edit_report(MapContext& ctx,
     for (auto& patch_entry : patches) {
         SourcePatch& patch = patch_entry.second;
         if (!patch.record || patch.replacements.empty()) continue;
-        std::string patched_text = patch.text;
-        std::vector<MapEditIdentityOrigin> resolved_identities;
+        std::string patched_text;
+        size_t patched_size = patch.text.size();
         for (const TextReplacement& replacement : patch.replacements) {
+            patched_size -= replacement.end - replacement.begin;
+            if (replacement.text.size() > patched_text.max_size() - patched_size) {
+                throw std::length_error("patched source text is too large");
+            }
+            patched_size += replacement.text.size();
+        }
+        patched_text.reserve(patched_size);
+        std::vector<size_t> replacement_ends(patch.replacements.size());
+        size_t source_cursor = 0;
+        for (size_t index = patch.replacements.size(); index-- > 0;) {
+            const TextReplacement& replacement = patch.replacements[index];
+            patched_text.append(patch.text, source_cursor, replacement.begin - source_cursor);
+            patched_text += replacement.text;
+            replacement_ends[index] = patched_text.size();
+            source_cursor = replacement.end;
+        }
+        patched_text.append(patch.text, source_cursor, patch.text.size() - source_cursor);
+
+        std::vector<MapEditIdentityOrigin> resolved_identities;
+        for (size_t index = 0; index < patch.replacements.size(); ++index) {
+            const TextReplacement& replacement = patch.replacements[index];
+            const size_t new_end = replacement_ends[index];
+            const size_t new_begin = new_end - replacement.text.size();
+            // Match the former descending edits: left/target bytes are still
+            // original, while the right context already contains later edits.
+            constexpr size_t context = 80;
+            const size_t preview_begin = replacement.begin > context
+                ? replacement.begin - context : 0;
+            const size_t right_context = std::min(context, patched_text.size() - new_end);
+            std::string before = patch.text.substr(preview_begin, replacement.end - preview_begin);
+            before.append(patched_text, new_end, right_context);
+            if (preview_begin != 0) before.insert(0, "...");
+            if (right_context < patched_text.size() - new_end) before += "...";
             report.previews.push_back({
                 patch.record->file_path,
-                preview_fragment(patched_text, replacement.begin, replacement.end),
-                preview_fragment(replacement.text, 0, replacement.text.size())
+                std::move(before),
+                replacement.text
             });
-            const std::ptrdiff_t delta =
-                static_cast<std::ptrdiff_t>(replacement.text.size()) -
-                static_cast<std::ptrdiff_t>(replacement.end - replacement.begin);
-            for (MapEditIdentityOrigin& identity : resolved_identities) {
-                if (identity.text_start < replacement.end) continue;
-                identity.text_start = static_cast<size_t>(
-                    static_cast<std::ptrdiff_t>(identity.text_start) + delta);
-                identity.text_end = static_cast<size_t>(
-                    static_cast<std::ptrdiff_t>(identity.text_end) + delta);
-            }
-            patched_text.replace(replacement.begin,
-                                 replacement.end - replacement.begin,
-                                 replacement.text);
             for (const TextReplacementIdentity& source_identity : replacement.identities) {
                 if (source_identity.relative_end < source_identity.relative_begin ||
                     source_identity.relative_end > replacement.text.size()) {
@@ -8378,8 +8385,8 @@ MapEditReport build_edit_report(MapContext& ctx,
                     source_identity.edit_id,
                     source_identity.row_kind,
                     patch.record->source_key,
-                    replacement.begin + source_identity.relative_begin,
-                    replacement.begin + source_identity.relative_end,
+                    new_begin + source_identity.relative_begin,
+                    new_begin + source_identity.relative_end,
                     source_identity.element_index,
                     source_identity.baseline_global_order,
                 });

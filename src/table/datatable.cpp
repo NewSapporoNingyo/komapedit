@@ -299,20 +299,6 @@ RepeaterTextCellContextAction render_repeater_text_cell_with_context_actions(
     return action;
 }
 
-std::vector<std::string> split_structure_key_list(const std::string& text) {
-    std::vector<std::string> keys;
-    size_t start = 0;
-    while (start <= text.size()) {
-        size_t comma = text.find(',', start);
-        size_t end = comma == std::string::npos ? text.size() : comma;
-        std::string key = trim_gui_ascii_copy(text.substr(start, end - start));
-        if (!key.empty()) keys.push_back(std::move(key));
-        if (comma == std::string::npos) break;
-        start = comma + 1;
-    }
-    return keys;
-}
-
 std::string render_text_cell_with_submenu(const std::string& display_text, const std::string& menu_label,
                                           const std::vector<std::string>& menu_items) {
     ImVec2 pos = ImGui::GetCursorScreenPos();

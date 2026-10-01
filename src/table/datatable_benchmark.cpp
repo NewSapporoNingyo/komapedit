@@ -77,8 +77,9 @@ void hash_source(KmeByteHash64& hash, const EditSourceInfo& source) {
     hash_string(hash, source.raw_text_preview);
 }
 
+template <typename Row>
 void hash_cached_rows(KmeByteHash64& hash,
-                      const std::vector<CachedTableRow>& rows,
+                      const std::vector<Row>& rows,
                       CacheSummary& summary) {
     hash.integer(static_cast<std::uint64_t>(rows.size()));
     summary.rows += rows.size();
@@ -144,6 +145,10 @@ CacheSummary summarize_table_cache(const TableUiCache& cache) {
     }
 
     hash_cached_rows(hash, cache.repeater_rows, summary);
+    for (const CachedRepeaterRow& row : cache.repeater_rows) {
+        hash.integer(static_cast<std::uint64_t>(row.structure_keys.size()));
+        for (const std::string& key : row.structure_keys) hash_string(hash, key);
+    }
     hash_cached_rows(hash, cache.signal_aspect_rows, summary);
 
     hash.integer(static_cast<std::uint64_t>(cache.signal_aspect_display_rows.size()));

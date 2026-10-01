@@ -500,7 +500,7 @@ void App::render_repeaters_window() {
         const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.repeater_rows[static_cast<size_t>(row_index)];
+                const CachedRepeaterRow& row = table_cache_.repeater_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
                 if (row.invalid_track_key) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_invalid_track_key_row_color);
@@ -562,9 +562,8 @@ void App::render_repeaters_window() {
                     if (value.empty()) continue;
                     if (i == k_repeater_structure_keys_column) {
                         ImGui::PushID("structure_keys");
-                        std::vector<std::string> structure_keys = split_structure_key_list(value);
                         std::string selected_key = render_text_cell_with_submenu(
-                            value, tr("menu.find_in_structure_models"), structure_keys);
+                            value, tr("menu.find_in_structure_models"), row.structure_keys);
                         if (!selected_key.empty()) find_structure_model_for_structure_key(selected_key);
                         ImGui::PopID();
                     } else if (i == k_repeater_file_path_column) {
