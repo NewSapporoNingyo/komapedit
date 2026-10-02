@@ -633,7 +633,21 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             },
         },
         {
-            "light.ambient", NewElementTemplateCategory::Effects, 5,
+            "legacy.fog", NewElementTemplateCategory::Effects, 5,
+            "legacyFog.change", "",
+            "Legacy.Fog(start, end, red, green, blue);",
+            "new_element.usage.legacy.fog", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"start", "start", MapElementNumericConstraint::Finite, true, "0"},
+                {"end", "end", MapElementNumericConstraint::Finite, true, "600"},
+                {"red", "red", MapElementNumericConstraint::Finite, true, "128"},
+                {"green", "green", MapElementNumericConstraint::Finite, true, "128"},
+                {"blue", "blue", MapElementNumericConstraint::Finite, true, "128"},
+            },
+        },
+        {
+            "light.ambient", NewElementTemplateCategory::Effects, 6,
             "light.ambient", "",
             "Light.Ambient(red, green, blue);",
             "new_element.usage.light.ambient", false,
@@ -645,7 +659,7 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             true,
         },
         {
-            "light.diffuse", NewElementTemplateCategory::Effects, 6,
+            "light.diffuse", NewElementTemplateCategory::Effects, 7,
             "light.diffuse", "",
             "Light.Diffuse(red, green, blue);",
             "new_element.usage.light.diffuse", false,
@@ -657,7 +671,7 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             true,
         },
         {
-            "light.direction", NewElementTemplateCategory::Effects, 7,
+            "light.direction", NewElementTemplateCategory::Effects, 8,
             "light.direction", "",
             "Light.Direction(pitch, yaw);",
             "new_element.usage.light.direction", false,
@@ -668,7 +682,7 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             true,
         },
         {
-            "draw_distance.change", NewElementTemplateCategory::Effects, 8,
+            "draw_distance.change", NewElementTemplateCategory::Effects, 9,
             "drawDistance.change", "",
             "DrawDistance.Change(value);",
             "new_element.usage.draw_distance.change", false,

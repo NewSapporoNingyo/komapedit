@@ -613,7 +613,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - `sourceHash` 标识工作副本；多次内存编辑期间 `expectedSourceHash` 始终是磁盘并发基线。
 - 按源文件、Include 上下文/区段和目标距离规划批量移动；保持语句顺序及用户注释或空距离结构。
 - 应用或保存前完整重解析，证明目标语义值，并拒绝非目标元素或最终变量绑定的意外变化；合法编辑可改变最终当前 `distance`。
-- 只读 `Legacy.Fog` 值也参与非目标语义证明，包括替换 Include 引起的变化。Include 自身子树仍使用既有目标排除规则，不增加 Legacy.Fog 编辑 API。
+- `Legacy.Fog` 通过既有 `legacyFog.change` 类型行支持更新/删除/插入，字段为 `distance/start/end/red/green/blue`，不改变 ABI 布局或版本。五个参数须为必填有限数值；负值、等值、反向深度区间及标度之外的有限 RGB 保留兼容行为。未修改表达式保持原样。基线、更新及插入共用语义写入函数，继续保护 Include 替换影响的非目标 Legacy 值；Include 自身子树保留既有排除规则。预览/编辑元数据合并、提交后的身份刷新及场景雾/标记刷新均包含此行族。
 - 除显式检查器操作外保持方法与参数形状：Structure/Repeater 坐标偏移按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，丢弃非零偏移前必须确认；短式 `Signal.Put` 与 Repeater 修剪沿用原确认流程。
 - 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程。编辑模式右键可在上下新增行，固定 BVE CSV 字段数为 Structure 2、Sound/Sound3D 3、Station 13、Signal 主行 6；Signal 主行/glare 成对作为一个插入块，glare 需显式新增。
 - maploader、表格、二维和三维统一使用 `repeater_linkage` 与过渡关联规则。
@@ -701,6 +701,7 @@ build\komapedit.exe --debug-headless-fresh-resource-list-workflow <地图路径>
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-light-edit <map-path> --headless-output build\headless-light-edit.txt
+build\komapedit.exe --debug-headless-legacy-fog-edit <map-path> --unit-distance 25 --headless-output build\headless-legacy-fog-edit.txt
 build\komapedit.exe --debug-headless-sparse-new-element <map-path> --headless-output build\sparse-new-element.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
@@ -745,6 +746,8 @@ plan、scene 和 `--debug-headless-own-track-edit` 共用临时 Map/Include 合�
 独立 `curve.interpolate` 模板复用可选尾参数字段以及共享的 typed curve 插入校验、序列化和语义指纹，仅生成官方 0/1/2 参数形式；拒绝仅含 cant、非有限值、未知字段及不支持的方法。`typed_edit_contract` 在临时 Shift-JIS/CRLF Include 中逐一执行 dry run、内存 Apply、Reset、再次 Apply、Commit 与 fresh Reload，并保持表达式、注释、源码顺序和插入身份。既有新建元素 headless 命令还验证默认双参数、复选框联动、三种向导形式、新建后立即 Inspector 编辑、延迟取消、Revert、每个新元素唯一且带来源绑定的 2D/3D 标记，以及不传 `--commit` 时全部物理源文件的逐字节一致性。
 
 `--debug-headless-light-edit` 要求显式传入地图，例如 `tests\\light_valid.txt`。它先按正式路径完成预览模型到编辑元数据的合并，再不模拟 ImGui 点击而直接调用“光照效果”表单 Apply、延迟删除和三种“效果”向导模板。合并后，地图中每条既有光照语句都必须可进行源码编辑；既有语句经共享延迟路径修改、删除，向导再在所选源文件的固定里程 `0` 创建全部三种形式。该命令支持仅含任意有效子集的三类光照语句的地图，检查求值预览和官方源码形式，最后 Revert 回原始子集。该命令仅进行内存 Apply，传入 `--commit` 会被拒绝，并证明地图字节未改变。
+
+`--debug-headless-legacy-fog-edit` 由仅在 Debug 编译的 `src/main_window/legacy_fog_edit_validation.cpp` 实现。它接受包含任意数量旧式雾行的显式地图，沿正式路径合并预览/编辑元数据，检查每条既有行的编辑身份，并验证 Inspector 非法输入、连续 Apply、延迟删除、向导默认值/新建、新建未保存行的再次编辑/删除以及 Revert。轻量 WARP 雾场景验证正式场景地图刷新路径，表格/平面图缓存与安排中的完整重建分别检查。该模式拒绝 `--commit`，并逐一比较所有已加载源文件的前后字节；Save/reload、Include 归属、BOM/CRLF 和 Shift-JIS 保真由 `typed_edit_contract` 的临时 fixture 覆盖。实际 UI 交互仍需单独验收。
 
 `--debug-headless-curve-parameter-edit` 要求显式传入包含三种现行 Curve 参数语句的地图。它按生产路径完成预览/编辑元数据合并，检查稳定身份、相互独立的 `CG`/`CC`/`CF` 平面标记与场景标牌、白色标牌主题及独立可见掩码；通过 Inspector 编辑里程和参数并拒绝 `SetFunction(2)`；经延迟路径删除；再通过三个正式向导模板新建现行形式；最后 Revert 回基线。该命令仅进行内存 Apply，传入 `--commit` 会被拒绝，并验证每个已加载物理源文件的字节完全不变。
 

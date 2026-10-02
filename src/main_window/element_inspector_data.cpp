@@ -103,6 +103,7 @@ bool row_kind_supports_delete(const std::string& row_kind) {
         row_kind == "flangeNoise.change" || row_kind == "jointNoise.play" ||
         row_kind == "background.change" || row_kind == "adhesion.change" ||
         row_kind == "cabIlluminance.change" || row_kind == "fog.change" ||
+        row_kind == "legacyFog.change" ||
         row_kind == "light.ambient" || row_kind == "light.diffuse" ||
         row_kind == "light.direction" ||
         row_kind == "drawDistance.change" || row_kind == "speedlimit" ||
@@ -951,7 +952,7 @@ void set_inspector_row_field_value(TableRow& row,
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
-    static constexpr std::array<const char*, 23> k_distance_row_kinds = {
+    static constexpr std::array<const char*, 24> k_distance_row_kinds = {
         "station.put",
         "structure.put",
         "structure.between",
@@ -968,6 +969,7 @@ bool row_kind_has_source_distance_string(const std::string& row_kind) {
         "adhesion.change",
         "cabIlluminance.change",
         "fog.change",
+        "legacyFog.change",
         "drawDistance.change",
         "speedlimit",
         "section.begin",
@@ -1434,6 +1436,11 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         for (const char* key : {"density", "red", "green", "blue"}) {
             add_row_field(key, key, MapElementNumericConstraint::Finite, source_set);
+        }
+    } else if (request.row_kind == "legacyFog.change") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        for (const char* key : {"start", "end", "red", "green", "blue"}) {
+            add_row_field(key, key, MapElementNumericConstraint::Finite, true);
         }
     } else if (request.row_kind == "drawDistance.change") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);

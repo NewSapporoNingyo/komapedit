@@ -119,7 +119,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 - [x] Align Repeater placement with the BVE 5.8 analysis: retain each Begin's `begin + k * interval` grid and `k % N` model cycle, follow global parse order at shared distances, preserve typed structure-list slots including unresolved models, and keep zero-length segments editable without drawing instances. Prevent duplicate submissions at preview chunk boundaries and reject edits that unexpectedly change non-target segment boundaries. Debug build, all seven CTests, scene-loader contracts, Scenario loading, real-route 2D/3D benchmarks, Repeater memory edits, and five scene-enabled edit/Save/reload benchmark rounds passed. Real sources remained unchanged; no automatic clicks or manual visual checks were performed.
 
-- [x] Apply `Legacy.Fog` linear fog through the existing scene fog toggle and shader, sharing mileage keyframes with exponential fog, including 25-meter Legacy transitions, same-mileage order, and hard mode switches. Keep Legacy editing, creation, and deletion unsupported; visual acceptance remains manual.
+- [x] Apply `Legacy.Fog` linear fog through the existing scene fog toggle and shader, sharing mileage keyframes with exponential fog, including 25-meter Legacy transitions, same-mileage order, and hard mode switches.
 
 - [x] Stabilize the visible 3D scene FPS after idle by publishing scene-render-call cadence over completed 0.2-second active windows, discarding partial windows after gaps longer than 0.1 seconds while preserving the last published value; retain refresh-rate-independent behavior and keep Present/headless metrics separate.
 - [x] Restore the sustained scene CPU-frame budget to 16.67 ms through indexed placement-track lookup and bounded, double-precision Repeater transform reuse. On 2026-09-13, the same real-route Debug workload (unit distance 25, 300 frames, back/forward 100/1200 m, RTX 3060) improved from p95 22.782/28.616/26.453 ms to 1.721/1.619/1.641 ms with profiling disabled; all three runs passed with 531 loaded models and 2,613 drawn instances. Moving-camera runs passed at 2.778/3.211/2.714 ms. Draw distance, model count, precision, and Begin-relative placement semantics were preserved; no disk cache or renderer replacement was introduced.
@@ -152,7 +152,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Edit or delete existing `Sound.Play`/`Sound3D.Put` placements and rolling/flange/joint-noise events; station definition announcement sound keys are editable, but audio playback remains unsupported.
 - [x] Edit or delete existing cab-illuminance setting positions.
 - [x] Edit or delete existing fog effects.
-- [x] Parse the read-only legacy linear-fog statement `Legacy.Fog(start, end, red, green, blue)` into typed snapshot rows and show them in a dedicated table list plus plan/scene markers with their source values; editing and creation are not implemented.
+- [x] Parse the legacy linear-fog statement `Legacy.Fog(start, end, red, green, blue)` into typed snapshot rows and show them in a dedicated table list plus plan/scene markers with their source values.
+- [x] Add source-backed `Legacy.Fog` editing, deferred deletion, and structured creation through the Effects wizard, including distance edits, stable identities, live table/marker/fog refresh, and Apply/Save/Revert. Require five finite parameters while preserving compatibility values and untouched expressions, encodings, comments, and line endings. Extend typed edit contracts and add memory-only `--debug-headless-legacy-fog-edit` validation; Debug build, all seven CTests, real-route and empty-route headless checks, and GUI edit/delete/create/Revert plus temporary-copy Save/reload passed.
 - [x] Add source-backed edit and deferred deletion for `Light.Ambient`, `Light.Diffuse`, and `Light.Direction`, and add fixed-distance-0 Effects wizard templates in the trilingual Lighting Effects UI. Each kind remains unique across the root map and all Includes; RGB bounds, Direction distance, full reparse/semantic proof, expression preservation, and memory Apply/Save/Revert behavior remain enforced. Markers and 3D lighting simulation are not implemented.
 
 ### User Interface and Utilities
@@ -306,7 +307,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 - [x] 按 BVE 5.8 分析对齐 Repeater 放置：保留每个 Begin 的 `begin + k * interval` 网格与 `k % N` 模型循环，同里程事件遵循全局解析顺序，typed 结构列表保留包括未解析模型在内的全部位置，零长度段仍可编辑但不绘制实例。阻止预览分块边界重复提交，并拒绝意外改变非目标段边界的编辑。Debug 构建、七项 CTest、scene-loader 契约、Scenario 加载、真实线路 2D/3D benchmark、Repeater 内存编辑和五轮启用场景的编辑/Save/reload benchmark 均通过；真实源文件保持不变，未执行自动点击或人工视觉检查。
 
-- [x] 通过现有场景雾开关与着色器显示 `Legacy.Fog` 线性雾，与指数雾共用里程关键帧，支持 Legacy 的 25 米过渡、同里程顺序及模式硬切换。Legacy 的编辑、新建与删除仍不支持；实际画面留待人工验收。
+- [x] 通过现有场景雾开关与着色器显示 `Legacy.Fog` 线性雾，与指数雾共用里程关键帧，支持 Legacy 的 25 米过渡、同里程顺序及模式硬切换。
 
 - [x] 稳定 3D 场景在空闲后恢复移动时的可见 FPS：以完整的 `0.2` 秒活动窗口发布场景渲染调用速率，间隔超过 `0.1` 秒时丢弃未完成窗口但保留上次发布值；保持与刷新率无关，并继续区分 Present 与 headless 指标。
 - [x] 通过放置轨道索引和有界双精度 Repeater 变换复用，将持续场景 CPU 帧预算恢复为 16.67 ms。2026-09-13 同一真实线路 Debug 负载（unit distance 25、300 帧、后方/前方 100/1200 m、RTX 3060）关闭 profiling 后，三次 p95 从 22.782/28.616/26.453 ms 降至 1.721/1.619/1.641 ms，全部通过；保持加载 531 个模型、绘制 2,613 个实例。移动相机三次 p95 为 2.778/3.211/2.714 ms，均通过。描画距离、模型数量、精度和相对 Begin 起点的放置语义不变，未引入磁盘缓存或替换渲染架构。
@@ -339,7 +340,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 编辑或删除已有 `Sound.Play`/`Sound3D.Put` 放置和走行音/轮缘摩擦音/道岔音事件；车站定义中的报站音 key 可编辑，程序不播放音频
 - [x] 编辑或删除已有驾驶台亮度设定位置
 - [x] 编辑或删除已有雾效果
-- [x] 将只读旧式线性雾语句 `Legacy.Fog(start, end, red, green, blue)` 解析为类型化快照行，并在独立列表及平面图/3D 标牌中按源值显示；编辑与新建未实现
+- [x] 将旧式线性雾语句 `Legacy.Fog(start, end, red, green, blue)` 解析为类型化快照行，并在独立列表及平面图/3D 标牌中按源值显示
+- [x] 为 `Legacy.Fog` 加入基于源码的编辑、延迟删除及“效果”向导结构化新建，支持里程编辑、稳定身份、表格/标记/雾效果即时刷新及 Apply/Save/Revert。五项参数必填且为有限数值，保留兼容数值以及未修改的表达式、编码、注释和换行。扩展类型化编辑合同测试，并新增仅操作内存的 `--debug-headless-legacy-fog-edit` 验证；Debug 构建、全部七项 CTest、真实线路与空地图 headless，以及 GUI 编辑/删除/新建/Revert 和临时副本 Save/reload 均通过。
 - [x] 为 `Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 加入基于源码的编辑和延迟删除，并在三语“光照效果”界面加入固定里程 `0` 的“效果”向导模板。根地图及全部 Include 中每类仍只允许一条基础语法正确的语句；RGB 范围、Direction 里程、完整重解析/语义证明、原始表达式保持及内存 Apply/Save/Revert 行为均继续校验。不实现标记或 3D 光照模拟
 
 ### 用户界面与辅助功能

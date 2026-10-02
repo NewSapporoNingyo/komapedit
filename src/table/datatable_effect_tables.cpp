@@ -959,33 +959,36 @@ void App::render_legacy_fogs_window() {
         return;
     }
     ensure_table_cache();
-    const bool can_locate_scene_preview = can_locate_scene_preview_row();
-    render_event_table(
+    render_change_point_table(
         "legacyFogs", k_legacy_fog_columns,
         k_legacy_fog_distance_column, k_legacy_fog_file_path_column,
         table_cache_.legacy_fog_rows,
         table_cache_.legacy_fog_distance_width,
         table_cache_.legacy_fog_file_path_width,
-        tr("column.file_name"), tr("menu.open_in_explorer"),
+        tr("column.file_name"), tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"), tr("menu.open_in_explorer"),
         legacy_fog_list_scroll_row_, legacy_fog_list_highlight_row_,
         table_row_highlight_color(theme_color_),
-        [this, can_locate_scene_preview](int row_index, int column,
-                                         const std::string& value) {
-            if (column != k_legacy_fog_distance_column) return false;
-            const size_t marker_index = static_cast<size_t>(row_index);
-            const bool can_locate = marker_index < legacy_fog_marker_cache_.size() &&
-                legacy_fog_marker_cache_[marker_index].has_value();
-            const TextCellContextAction action = render_marker_text_cell_with_context(
-                value,
-                tr("menu.locate_on_plan"), can_locate,
-                tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
-            if (action == TextCellContextAction::Primary) {
-                locate_legacy_fog_row_on_plan(marker_index);
-            } else if (action == TextCellContextAction::Secondary) {
-                locate_scene_marker_row_in_scene_preview(
-                    Canvas3DSceneMarkerListKind::LegacyFog, marker_index);
-            }
-            return true;
+        [this](size_t row) {
+            return row < legacy_fog_marker_cache_.size() &&
+                legacy_fog_marker_cache_[row].has_value();
+        },
+        [this](size_t row) { locate_legacy_fog_row_on_plan(row); },
+        can_locate_scene_preview_row(),
+        [this](size_t row) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::LegacyFog, row);
+        },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.legacy_fogs.size() &&
+                !model_.legacy_fogs[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.legacy_fogs[row].edit_id, "legacyFog.change");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.legacy_fogs[row].edit_id, "legacyFog.change");
         });
     focus_legacy_fogs_next_ = false;
     ImGui::End();

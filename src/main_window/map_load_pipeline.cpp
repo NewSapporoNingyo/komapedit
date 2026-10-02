@@ -589,7 +589,7 @@ struct EditMetadataTableRows {
     std::vector<TableRow> MapModel::* member;
 };
 
-constexpr std::array<EditMetadataTableRows, 36> k_edit_metadata_table_rows = {{
+constexpr std::array<EditMetadataTableRows, 37> k_edit_metadata_table_rows = {{
     {"curve", &MapModel::curve_rows},
     {"gradient", &MapModel::gradient_rows},
     {"otherTrack.change", &MapModel::other_track_changes},
@@ -619,6 +619,7 @@ constexpr std::array<EditMetadataTableRows, 36> k_edit_metadata_table_rows = {{
     {"adhesion.change", &MapModel::adhesions},
     {"cabIlluminance.change", &MapModel::cab_illuminance},
     {"fog.change", &MapModel::fogs},
+    {"legacyFog.change", &MapModel::legacy_fogs},
     {"light.ambient", &MapModel::light_ambient},
     {"light.diffuse", &MapModel::light_diffuse},
     {"light.direction", &MapModel::light_direction},

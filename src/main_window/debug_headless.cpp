@@ -1094,6 +1094,15 @@ HeadlessLightEditOptions parse_headless_light_edit_options(
         });
 }
 
+HeadlessLegacyFogEditOptions parse_headless_legacy_fog_edit_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_required_map_edit_options<HeadlessLegacyFogEditOptions>(
+        args, "--debug-headless-legacy-fog-edit",
+        [](HeadlessLegacyFogEditOptions& options) {
+            options.error = "--debug-headless-legacy-fog-edit is memory-apply only";
+        });
+}
+
 HeadlessCurveParameterEditOptions parse_headless_curve_parameter_edit_options(
     const std::vector<std::string>& args) {
     return parse_headless_required_map_edit_options<HeadlessCurveParameterEditOptions>(

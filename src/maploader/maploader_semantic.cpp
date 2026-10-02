@@ -469,6 +469,17 @@ void write_fog(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+void write_legacy_fog(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                      const KvLegacyFogRow& row, const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    field(out, "start", changed_number(change, "start", row.start));
+    field(out, "end", changed_number(change, "end", row.end));
+    field(out, "red", changed_number(change, "red", row.red));
+    field(out, "green", changed_number(change, "green", row.green));
+    field(out, "blue", changed_number(change, "blue", row.blue));
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
 void write_light_color(SemanticWriter& out, const KvMapSnapshot& snapshot,
                        const KvLightColorRow& row,
                        const MapEditChange* change = nullptr) {
@@ -791,6 +802,8 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "value"};
     } else if (target.row_kind == "fog.change") {
         allowed = {"distance", "density", "red", "green", "blue"};
+    } else if (target.row_kind == "legacyFog.change") {
+        allowed = {"distance", "start", "end", "red", "green", "blue"};
     } else if (target.row_kind == "light.ambient" ||
                target.row_kind == "light.diffuse") {
         allowed = {"red", "green", "blue"};
@@ -1247,13 +1260,7 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         const KvLegacyFogRow& row = snapshot.legacy_fogs[i];
         emit_element(output, full, snapshot, row.metadata, "legacyFog.change", "legacyFog",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, "start", row.start);
-            field(out, "end", row.end);
-            field(out, "red", row.red);
-            field(out, "green", row.green);
-            field(out, "blue", row.blue);
-            field(out, "filePath", text(snapshot, row.file_path));
+            write_legacy_fog(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.light_ambient_count; ++i) {
@@ -1436,6 +1443,11 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("fog.change target row is out of bounds");
         }
         write_fog(out, snapshot, snapshot.fogs[target.row_index], &change);
+    } else if (target.row_kind == "legacyFog.change") {
+        if (target.row_index >= snapshot.legacy_fog_count || !snapshot.legacy_fogs) {
+            throw std::runtime_error("legacyFog.change target row is out of bounds");
+        }
+        write_legacy_fog(out, snapshot, snapshot.legacy_fogs[target.row_index], &change);
     } else if (target.row_kind == "light.ambient" ||
                target.row_kind == "light.diffuse") {
         const KvLightColorRow* rows = target.row_kind == "light.ambient"
@@ -1549,6 +1561,7 @@ std::string insert_semantic_container(const std::string& row_kind) {
     if (row_kind == "adhesion.change") return "adhesion";
     if (row_kind == "cabIlluminance.change") return "cabIlluminance";
     if (row_kind == "fog.change") return "fog";
+    if (row_kind == "legacyFog.change") return "legacyFog";
     if (row_kind == "light.ambient") return "light.ambient";
     if (row_kind == "light.diffuse") return "light.diffuse";
     if (row_kind == "light.direction") return "light.direction";
@@ -1784,6 +1797,10 @@ std::string expected_insert_semantic(MapContext& ctx,
         KvFogRow row{};
         path_row(row);
         write_fog(out, fake.snapshot, row, &change);
+    } else if (row_kind == "legacyFog.change") {
+        KvLegacyFogRow row{};
+        path_row(row);
+        write_legacy_fog(out, fake.snapshot, row, &change);
     } else if (row_kind == "light.ambient" || row_kind == "light.diffuse") {
         KvLightColorRow row{};
         path_row(row);

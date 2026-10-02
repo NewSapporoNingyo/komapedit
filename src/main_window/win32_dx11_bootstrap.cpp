@@ -413,6 +413,16 @@ int main(int, char**) {
         return App::run_debug_headless_new_element_edit(new_element_edit);
     }
 
+    HeadlessLegacyFogEditOptions legacy_fog_edit = parse_headless_legacy_fog_edit_options(args);
+    if (legacy_fog_edit.requested) {
+        if (!legacy_fog_edit.error.empty()) {
+            std::cerr << legacy_fog_edit.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-legacy-fog-edit <map-path> "
+                      << "[--unit-distance N] [--headless-output <file>]\n";
+            return 1;
+        }
+        return App::run_debug_headless_legacy_fog_edit(legacy_fog_edit);
+    }
     HeadlessLightEditOptions light_edit = parse_headless_light_edit_options(args);
     if (light_edit.requested) {
         if (!light_edit.error.empty()) {

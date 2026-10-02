@@ -67,6 +67,7 @@ struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
 struct HeadlessLightEditOptions;
+struct HeadlessLegacyFogEditOptions;
 struct HeadlessCurveParameterEditOptions;
 struct HeadlessStationPutMarginEditOptions;
 struct HeadlessSparseNewElementOptions;
@@ -700,6 +701,7 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "adhesion.change") return &model.adhesions;
     if (row_kind == "cabIlluminance.change") return &model.cab_illuminance;
     if (row_kind == "fog.change") return &model.fogs;
+    if (row_kind == "legacyFog.change") return &model.legacy_fogs;
     if (row_kind == "light.ambient") return &model.light_ambient;
     if (row_kind == "light.diffuse") return &model.light_diffuse;
     if (row_kind == "light.direction") return &model.light_direction;
@@ -1849,6 +1851,8 @@ public:
         const HeadlessNewElementEditOptions& options);
     static int run_debug_headless_light_edit(
         const HeadlessLightEditOptions& options);
+    static int run_debug_headless_legacy_fog_edit(
+        const HeadlessLegacyFogEditOptions& options);
     static int run_debug_headless_curve_parameter_edit(
         const HeadlessCurveParameterEditOptions& options);
     static int run_debug_headless_station_put_margin_edit(

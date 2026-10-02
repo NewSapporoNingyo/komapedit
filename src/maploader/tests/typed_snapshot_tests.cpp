@@ -8830,6 +8830,201 @@ void staged_resource_list_workflow_contract() {
     check(reload_matches, "staged workflow reloads the committed state");
 }
 
+void legacy_fog_edit_contract() {
+    TempFixture fixture;
+    const auto include_path = fixture.directory / "fog.inc";
+    const std::string root_path = fixture.path_utf8();
+    const std::string child_path = include_path.u8string();
+    const std::string root_before = std::string("\xEF\xBB\xBF") +
+        "BveTs Map 2.02:utf-8\r\n$begin=-50.5;$color=180;\r\n0;\r\n"
+        "Legacy.Fog($begin,600,$color,128,255); # keep expression\r\n"
+        "Legacy.Fog(10,700,100,100,100); # same distance\r\n"
+        "25;\r\n50;\r\ninclude 'fog.inc';\r\n75;\r\n"
+        "Fog.Set(0.01,0.1,0.2,0.3);\r\n100;\r\n";
+    const std::string child_before =
+        "BveTs Map 2.02:shift_jis\r\n# \x93\xfa\x96\x7b\x8c\xea\r\n"
+        "0;\r\nLegacy.Fog(0,0,128,128,128);\r\n100;\r\n"
+        "Legacy.Fog(600,-20,300,-1,64.5);\r\n";
+    const auto write = [](const std::filesystem::path& path, const std::string& bytes) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output << bytes;
+    };
+    const auto read = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), {});
+    };
+    write(fixture.map_path, root_before);
+    write(include_path, child_before);
+    MapHandle handle(kv_load_map_ex(root_path.c_str(), 25.0,
+                                   KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "Legacy Fog edit fixture loads");
+    if (!handle.value) return;
+    const auto snapshot = [&]() {
+        KvMapSnapshot result{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &result, sizeof(result)) != 0, "Legacy Fog snapshot");
+        return result;
+    };
+    const auto source = [&](const std::string& path) {
+        const char* text = kv_get_source_text(handle.value, path.c_str());
+        std::string result = text ? text : "";
+        kv_free_string(text);
+        return result;
+    };
+    KvMapSnapshot baseline = snapshot();
+    check(baseline.legacy_fog_count == 4 && baseline.fog_count == 1,
+          "Legacy Fog compatibility and ordinary fog coexist");
+    if (baseline.legacy_fog_count != 4 || baseline.fog_count != 1) return;
+    std::array<std::string, 4> ids;
+    std::array<std::string, 4> hashes;
+    for (size_t i = 0; i < ids.size(); ++i) {
+        const auto& row = baseline.legacy_fogs[i];
+        ids[i] = map_string(baseline, row.metadata.edit_id);
+        hashes[i] = map_string(baseline,
+            baseline.source_files[row.metadata.source_file_index].source_hash);
+        KvEditTargetSnapshot target{};
+        check(kv_get_edit_target_typed(handle.value, utf8_view(ids[i]), &target, sizeof(target)) != 0,
+              "every existing Legacy Fog exposes an edit target");
+    }
+    check(ids[0] != ids[1], "same-distance Legacy Fog rows have distinct ids");
+    const std::string original_preview = source(root_path);
+    const auto find = [&](const KvMapSnapshot& view, const std::string& id) -> const KvLegacyFogRow* {
+        for (uint64_t i = 0; i < view.legacy_fog_count; ++i) {
+            if (map_string(view, view.legacy_fogs[i].metadata.edit_id) == id) return &view.legacy_fogs[i];
+        }
+        return nullptr;
+    };
+    const auto apply = [&](const KvEditBatch& batch) {
+        KvEditReportSnapshot report{};
+        const bool ok = kv_edit_apply_to_memory_typed(handle.value, &batch, &report, sizeof(report)) != 0 &&
+            report.ok && report.full_reparse_ok && report.non_target_changed_count == 0;
+        check(ok, "Legacy Fog memory Apply and full semantic proof");
+        return ok;
+    };
+    const auto reject = [&](const KvEditBatch& batch) {
+        const std::string before = source(root_path);
+        KvEditReportSnapshot report{};
+        const bool ok = kv_edit_apply_to_memory_typed(handle.value, &batch, &report, sizeof(report)) != 0;
+        check(!ok || !report.ok, "invalid Legacy Fog edit is rejected");
+        check(source(root_path) == before && read(fixture.map_path) == root_before &&
+                  read(include_path) == child_before,
+              "rejected Legacy Fog edit preserves memory and disk");
+    };
+    for (const char* value : {"", "abc", "nan", "inf", "1e999"}) {
+        UpdateBatch invalid(ids[0], hashes[0], value, "start");
+        reject(invalid.batch);
+    }
+    UpdateBatch unknown(ids[0], hashes[0], "1", "density");
+    reject(unknown.batch);
+    UpdateBatch stale(ids[0], "stale-disk-hash", "1", "red");
+    reject(stale.batch);
+    const std::vector<std::pair<std::string, std::string>> insert_fields{
+        {"rowKind", "legacyFog.change"}, {"distance", "50"}, {"start", "0"},
+        {"end", "600"}, {"red", "128"}, {"green", "128"}, {"blue", "128"}};
+    for (int variant = 0; variant < 4; ++variant) {
+        auto fields = insert_fields;
+        if (variant == 0) fields.pop_back();
+        if (variant == 1) fields.back().second = "Infinity";
+        if (variant == 2) fields.emplace_back("density", "1");
+        SimpleInsertBatch invalid(root_path, "invalid-legacy-fog", std::move(fields));
+        const std::string stale_hash = "stale-disk-hash";
+        if (variant == 3) invalid.change.expected_source_hash = utf8_view(stale_hash);
+        reject(invalid.batch);
+    }
+    UpdateBatch first(ids[0], hashes[0], "-60.25", "start");
+    KvEditReportSnapshot dry_run{};
+    check(kv_edit_dry_run_typed(handle.value, &first.batch, &dry_run, sizeof(dry_run)) != 0 &&
+              dry_run.ok && dry_run.full_reparse_ok && source(root_path) == original_preview,
+          "Legacy Fog dry run validates without changing the working copy");
+    if (!apply(first.batch)) return;
+    check(source(root_path).find("Legacy.Fog(-60.25,600,$color,128,255);") != std::string::npos,
+          "Legacy Fog update preserves untouched argument expressions");
+    UpdateBatch second(ids[0], hashes[0], "300.5", "green");
+    if (!apply(second.batch)) return;
+    KvEditTargetSnapshot repeated{};
+    check(kv_get_edit_target_typed(handle.value, utf8_view(ids[0]), &repeated, sizeof(repeated)) != 0 &&
+              arena_view(repeated.string_data, repeated.string_size, repeated.expected_source_hash) == hashes[0] &&
+              arena_view(repeated.string_data, repeated.string_size, repeated.source_hash) != hashes[0],
+          "repeated Legacy Fog Apply keeps disk baseline separate from working hash");
+    MultiFieldUpdateBatch move("move-legacy-fog", ids[0], hashes[0],
+        {{"distance", "25"}, {"end", "-80"}, {"red", "-4"}, {"blue", "500"}});
+    if (!apply(move.batch)) return;
+    KvMapSnapshot moved = snapshot();
+    const auto* moved_row = find(moved, ids[0]);
+    const auto* neighbor = find(moved, ids[1]);
+    check(moved_row && moved_row->distance == 25 && moved_row->start == -60.25 &&
+              moved_row->end == -80 && moved_row->red == -4 && moved_row->green == 300.5 &&
+              moved_row->blue == 500 && neighbor && neighbor->distance == 0 && neighbor->start == 10,
+          "Legacy Fog distance move and compatibility values preserve the same-distance neighbor");
+    UpdateBatch child(ids[2], hashes[2], "-20", "start");
+    if (!apply(child.batch)) return;
+    check(source(child_path).find("Legacy.Fog(-20,0,128,128,128);") != std::string::npos &&
+              read(fixture.map_path) == root_before && read(include_path) == child_before,
+          "Legacy Fog Include update stays in its physical source and does not save");
+    check(kv_edit_reset_memory(handle.value) != 0 && source(root_path) == original_preview,
+          "Legacy Fog Reset restores baseline source");
+
+    const auto remove = [&](const std::string& id, const std::string& hash) {
+        KvEditChange change{};
+        const std::string change_id = "delete-legacy-fog";
+        change.change_id = utf8_view(change_id);
+        change.edit_id = utf8_view(id);
+        change.expected_source_hash = utf8_view(hash);
+        change.operation = KV_EDIT_DELETE;
+        KvEditBatch batch{&change, 1, nullptr, 0};
+        return apply(batch);
+    };
+    SimpleInsertBatch insert(root_path, "insert-legacy-fog", insert_fields);
+    if (!apply(insert.batch)) return;
+    KvMapSnapshot inserted = snapshot();
+    check(inserted.legacy_fog_count == 5 && find(inserted, insert.change_id),
+          "Legacy Fog insertion exposes its stable edit identity");
+    UpdateBatch inserted_update(insert.change_id, hashes[0], "900", "end");
+    if (!apply(inserted_update.batch)) return;
+    if (!remove(insert.change_id, hashes[0])) return;
+    check(snapshot().legacy_fog_count == 4, "new Legacy Fog can be edited and deleted before Save");
+    check(kv_edit_reset_memory(handle.value) != 0, "Legacy Fog insertion Reset");
+
+    UpdateBatch save_root(ids[0], hashes[0], "500", "end");
+    if (!apply(save_root.batch) || !apply(child.batch) || !apply(insert.batch) ||
+        !remove(ids[1], hashes[1])) return;
+    KvEditReportSnapshot committed{};
+    check(kv_edit_commit_typed(handle.value, &committed, sizeof(committed)) != 0 &&
+              committed.ok && committed.full_reparse_ok && committed.non_target_changed_count == 0,
+          "Legacy Fog Save validates and writes the working copy");
+    KvMapSnapshot saved = snapshot();
+    check(saved.legacy_fog_count == 4 && find(saved, ids[0]) && find(saved, ids[2]) &&
+              find(saved, insert.change_id) && !find(saved, ids[1]),
+          "Legacy Fog Save preserves surviving session ids and removes only the deleted row");
+    const std::string root_after = read(fixture.map_path);
+    check(root_after.substr(0, 3) == root_before.substr(0, 3) &&
+              root_after.find("Legacy.Fog($begin,500,$color,128,255); # keep expression\r\n") != std::string::npos &&
+              root_after.find("# same distance") != std::string::npos &&
+              root_after.find("Legacy.Fog(0,600,128,128,128);") != std::string::npos &&
+              root_after.find("Fog.Set(0.01,0.1,0.2,0.3);") != std::string::npos,
+          "Legacy Fog Save preserves BOM, comments, expressions and ordinary Fog syntax");
+    check(std::count(root_after.begin(), root_after.end(), '\r') ==
+              std::count(root_after.begin(), root_after.end(), '\n'),
+          "Legacy Fog Save preserves CRLF");
+    std::string expected_child = child_before;
+    expected_child.replace(expected_child.find("Legacy.Fog(0,0,"), 15, "Legacy.Fog(-20,0,");
+    check(read(include_path) == expected_child, "Legacy Fog Save preserves Shift-JIS bytes exactly");
+    MapHandle reloaded(kv_load_map_ex(root_path.c_str(), 25.0,
+                                     KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot view{};
+    check(reloaded.value && kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+          &view, sizeof(view)) != 0 && view.legacy_fog_count == 4 && view.fog_count == 1,
+          "Legacy Fog saved map reloads");
+    bool root_value = false, child_value = false, new_value = false;
+    for (uint64_t i = 0; i < view.legacy_fog_count; ++i) {
+        const auto& row = view.legacy_fogs[i];
+        root_value |= row.start == -50.5 && row.end == 500 && row.red == 180;
+        child_value |= row.start == -20 && row.end == 0;
+        new_value |= row.distance == 50 && row.end == 600 && row.red == 128;
+    }
+    check(root_value && child_value && new_value, "Legacy Fog Save/reload retains edited and inserted values");
+}
+
 void legacy_fog_non_target_contract() {
     TempFixture fixture;
     auto write = [](const std::filesystem::path& path, const std::string& text) {
@@ -9607,6 +9802,7 @@ int edit_contract() {
     patch_sources_preview_contract();
     distance_resolution_reason_contract();
     legacy_fog_non_target_contract();
+    legacy_fog_edit_contract();
     other_track_key_argument_layout_contract();
     signal_list_append_layout_contract();
     multiline_statement_removal_contract();

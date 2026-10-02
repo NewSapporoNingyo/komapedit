@@ -563,11 +563,12 @@ void App::refresh_local_preview_after_edits(const std::map<std::string, std::str
     }
     Canvas3DSceneMapRefreshOptions map_refresh;
     map_refresh.route_stations = has("station.put") || has("station.list");
-    static constexpr std::array<const char*, 20> k_marker_row_kinds = {
+    static constexpr std::array<const char*, 21> k_marker_row_kinds = {
         "station.put", "station.list", "irregularity.change", "beacon.put",
         "mapSound.play", "mapSound3D.put", "rollingNoise.change",
         "flangeNoise.change", "jointNoise.play", "background.change",
         "adhesion.change", "cabIlluminance.change", "fog.change",
+        "legacyFog.change",
         "drawDistance.change", "speedlimit", "section.begin",
         "section.speedLimit", "curve", "gradient",
         "otherTrack.change",
@@ -575,7 +576,7 @@ void App::refresh_local_preview_after_edits(const std::map<std::string, std::str
     map_refresh.markers = std::any_of(
         k_marker_row_kinds.begin(), k_marker_row_kinds.end(),
         [&](const char* candidate) { return has(candidate); });
-    map_refresh.fog = has("fog.change");
+    map_refresh.fog = has("fog.change") || has("legacyFog.change");
     map_refresh.draw_distances = has("drawDistance.change");
     map_refresh.speed_limits = has("speedlimit");
     map_refresh.section_signals = has("section.begin") || has("section.speedLimit");
@@ -1235,7 +1236,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 31> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 32> k_committed_row_kinds = {
         "curve", "gradient", "structure.model", "structure.put", "structure.between", "station.put",
         "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
         "signal.aspect", "irregularity.change",
@@ -1243,6 +1244,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         "rollingNoise.change", "flangeNoise.change", "jointNoise.play",
         "background.change", "adhesion.change", "cabIlluminance.change",
         "fog.change", "light.ambient", "light.diffuse", "light.direction",
+        "legacyFog.change",
         "drawDistance.change", "speedlimit",
         "section.begin", "section.speedLimit", "otherTrack.change",
     };

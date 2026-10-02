@@ -1465,6 +1465,18 @@ std::string build_fog_statement(const MapEditChange& change,
     return "Fog." + method + "(" + build_fog_arguments(method, values) + ");";
 }
 
+std::string build_legacy_fog_statement(const MapEditChange& change,
+                                       const ParsedStatement& statement,
+                                       const LegacyFogChange& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    return "Legacy.Fog(" + numeric_field(change, "start", row.start, raw_arg_at(args, 0)) + "," +
+        numeric_field(change, "end", row.end, raw_arg_at(args, 1)) + "," +
+        numeric_field(change, "red", row.red, raw_arg_at(args, 2)) + "," +
+        numeric_field(change, "green", row.green, raw_arg_at(args, 3)) + "," +
+        numeric_field(change, "blue", row.blue, raw_arg_at(args, 4)) + ");";
+}
+
 std::string build_light_color_statement(const MapEditChange& change,
                                         const ParsedStatement& statement,
                                         const LightColor& row,
@@ -2380,6 +2392,8 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
             ctx, ctx.cab_illuminance, "cabIlluminance.change", edit_id, target) ||
         find_simple_target<decltype(ctx.fogs), build_fog_statement>(
             ctx, ctx.fogs, "fog.change", edit_id, target) ||
+        find_simple_target<decltype(ctx.legacy_fogs), build_legacy_fog_statement>(
+            ctx, ctx.legacy_fogs, "legacyFog.change", edit_id, target) ||
         find_simple_target<decltype(ctx.light_ambient), build_light_ambient_statement>(
             ctx, ctx.light_ambient, "light.ambient", edit_id, target) ||
         find_simple_target<decltype(ctx.light_diffuse), build_light_diffuse_statement>(
@@ -3103,6 +3117,8 @@ void validate_insert_change(const MapEditChange& change) {
         validate_insert_field_names(change,
                                     {"distance", "method", "density", "red", "green", "blue"});
         validate_insert_method(change, "Set", {"Set", "Interpolate"});
+    } else if (row_kind == "legacyFog.change") {
+        validate_insert_field_names(change, {"distance", "start", "end", "red", "green", "blue"});
     } else if (row_kind == "light.ambient" || row_kind == "light.diffuse") {
         validate_insert_field_names(change, {"distance", "red", "green", "blue"});
         validate_light_insert_distance(change);
@@ -3444,6 +3460,13 @@ std::string build_insert_statement(const MapEditChange& change,
             optional_numeric_value_field(change, "blue", Value::null()),
         };
         return "Fog." + method + "(" + build_fog_arguments(method, values) + ");";
+    }
+    if (row_kind == "legacyFog.change") {
+        return "Legacy.Fog(" + insert_required_number(change, "start") + "," +
+            insert_required_number(change, "end") + "," +
+            insert_required_number(change, "red") + "," +
+            insert_required_number(change, "green") + "," +
+            insert_required_number(change, "blue") + ");";
     }
     if (row_kind == "light.ambient" || row_kind == "light.diffuse") {
         const char* statement_name = row_kind == "light.ambient"
@@ -6130,6 +6153,7 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->adhesions, "adhesion.change");
         collect_candidate_rows(candidate->cab_illuminance, "cabIlluminance.change");
         collect_candidate_rows(candidate->fogs, "fog.change");
+        collect_candidate_rows(candidate->legacy_fogs, "legacyFog.change");
         collect_candidate_rows(candidate->light_ambient, "light.ambient");
         collect_candidate_rows(candidate->light_diffuse, "light.diffuse");
         collect_candidate_rows(candidate->light_direction, "light.direction");
@@ -8721,6 +8745,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "adhesion.change", ctx.adhesions);
     append_committed_rows(ctx, report, "cabIlluminance.change", ctx.cab_illuminance);
     append_committed_rows(ctx, report, "fog.change", ctx.fogs);
+    append_committed_rows(ctx, report, "legacyFog.change", ctx.legacy_fogs);
     append_committed_rows(ctx, report, "light.ambient", ctx.light_ambient);
     append_committed_rows(ctx, report, "light.diffuse", ctx.light_diffuse);
     append_committed_rows(ctx, report, "light.direction", ctx.light_direction);
