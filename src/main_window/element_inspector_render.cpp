@@ -266,6 +266,17 @@ void App::render_map_element_field_inputs(
             !validate_and_canonicalize_edit_field(field, true)) {
             set_program_status("status.edit.invalid_number");
         }
+        if (inspector.row_kind == "preTrain.pass" && field.key == "passTime" &&
+            ImGui::IsItemHovered()) {
+            const ImVec2 label_size = ImGui::CalcTextSize(field.label.c_str(), nullptr, true);
+            const ImVec2 label_min(
+                ImGui::GetItemRectMax().x - label_size.x,
+                ImGui::GetItemRectMin().y + ImGui::GetStyle().FramePadding.y);
+            const ImVec2 label_max(label_min.x + label_size.x, label_min.y + label_size.y);
+            if (ImGui::IsMouseHoveringRect(label_min, label_max)) {
+                ImGui::SetTooltip("%s", tr("hint.pretrain_time").c_str());
+            }
+        }
         if (optional_insertion_argument) {
             ImGui::SameLine();
             bool include_argument = !field.disabled;
@@ -284,9 +295,6 @@ void App::render_map_element_field_inputs(
         if (!field.source_distance_string.empty()) {
             render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
                                        field.source_distance_string);
-        }
-        if (inspector.row_kind == "preTrain.pass" && field.key == "passTime") {
-            ImGui::TextWrapped("%s", tr("hint.pretrain_time").c_str());
         }
     }
     if (render_optional_insertion_argument_toggles) {
