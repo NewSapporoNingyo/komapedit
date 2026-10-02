@@ -203,6 +203,10 @@ void App::process_pending_edit_ui_operation() {
         program_status_elapsed_suffix_ =
             std::move(pending.previous_status_elapsed_suffix);
     }
+    if (edit_timing_) {
+        // Preserve the final UI result when timing waits for a later scene frame.
+        edit_timing_status_key_ = program_status_key_;
+    }
 }
 
 void App::clear_pending_edit_state() {
