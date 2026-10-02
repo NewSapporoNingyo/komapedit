@@ -1320,6 +1320,15 @@ std::string source_change_method(const ParsedStatement& statement,
                              statement.statement_kind);
 }
 
+std::string build_pretrain_statement(const MapEditChange& change,
+                                     const ParsedStatement& statement,
+                                     const PreTrainPass&) {
+    const auto time = change.field_changes.find("passTime");
+    if (time == change.field_changes.end()) return statement.raw_text;
+    return "PreTrain.Pass(" +
+        value_to_bve_arg(pretrain_time_from_edit_text(time->second)) + ");";
+}
+
 std::string build_beacon_statement(const MapEditChange& change,
                                    const ParsedStatement& statement,
                                    const BeaconPut& row) {
@@ -2369,6 +2378,8 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
     }
     if (find_simple_target<decltype(ctx.beacons), build_beacon_statement>(
             ctx, ctx.beacons, "beacon.put", edit_id, target) ||
+        find_simple_target<decltype(ctx.pretrains), build_pretrain_statement>(
+            ctx, ctx.pretrains, "preTrain.pass", edit_id, target) ||
         find_simple_target<decltype(ctx.section_begins), build_section_begin_statement>(
             ctx, ctx.section_begins, "section.begin", edit_id, target) ||
         find_simple_target<decltype(ctx.section_speed_limits),
@@ -3098,6 +3109,8 @@ void validate_insert_change(const MapEditChange& change) {
     } else if (row_kind == "beacon.put") {
         validate_insert_field_names(change,
                                     {"distance", "type", "section", "sendData"});
+    } else if (row_kind == "preTrain.pass") {
+        validate_insert_field_names(change, {"distance", "passTime"});
     } else if (row_kind == "mapSound.play") {
         validate_insert_field_names(change, {"distance", "soundKey"});
     } else if (row_kind == "mapSound3D.put") {
@@ -3411,6 +3424,10 @@ std::string build_insert_statement(const MapEditChange& change,
             + insert_required_number(change, "type") + ","
             + insert_required_number(change, "section") + ","
             + insert_required_number(change, "sendData") + ");";
+    }
+    if (row_kind == "preTrain.pass") {
+        return "PreTrain.Pass(" + value_to_bve_arg(pretrain_time_from_edit_text(
+            required_string_field(change, "passTime", ""))) + ");";
     }
     if (row_kind == "mapSound.play") {
         return "Sound[" + insert_required_key(change, "soundKey") + "].Play();";
@@ -6142,6 +6159,7 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->repeaters, "repeater");
         collect_candidate_rows(candidate->irregularities, "irregularity.change");
         collect_candidate_rows(candidate->beacons, "beacon.put");
+        collect_candidate_rows(candidate->pretrains, "preTrain.pass");
         collect_candidate_rows(candidate->section_begins, "section.begin");
         collect_candidate_rows(candidate->section_speed_limits, "section.speedLimit");
         collect_candidate_rows(candidate->map_sounds, "mapSound.play");
@@ -8734,6 +8752,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "repeater", ctx.repeaters);
     append_committed_rows(ctx, report, "irregularity.change", ctx.irregularities);
     append_committed_rows(ctx, report, "beacon.put", ctx.beacons);
+    append_committed_rows(ctx, report, "preTrain.pass", ctx.pretrains);
     append_committed_rows(ctx, report, "section.begin", ctx.section_begins);
     append_committed_rows(ctx, report, "section.speedLimit", ctx.section_speed_limits);
     append_committed_rows(ctx, report, "mapSound.play", ctx.map_sounds);

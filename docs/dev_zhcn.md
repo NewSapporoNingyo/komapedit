@@ -701,6 +701,7 @@ build\komapedit.exe --debug-headless-fresh-resource-list-workflow <地图路径>
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-light-edit <map-path> --headless-output build\headless-light-edit.txt
+build\komapedit.exe --debug-headless-pretrain-edit <map-path> --headless-output build\headless-pretrain-edit.txt
 build\komapedit.exe --debug-headless-legacy-fog-edit <map-path> --unit-distance 25 --headless-output build\headless-legacy-fog-edit.txt
 build\komapedit.exe --debug-headless-sparse-new-element <map-path> --headless-output build\sparse-new-element.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -770,6 +771,8 @@ plan、scene 和 `--debug-headless-own-track-edit` 共用临时 Map/Include 合�
 最低验证范围应按变更涵盖普通/Include 地图加载、重载、平面/纵断面/半径图、车站跳转、测量、CSV 导出、模型预览/错误、三维轨道/对象/标记/相机/叠加层、编辑的应用/撤销/保存/重载、源码往返、编码/行尾、行内草稿、设置持久化和 Release 内容。磁盘写回变更必须保存后重载比较；性能变更必须在相同线路、参数、构建类型与加载配置上做可重复前后对比。
 
 `komapedit.exe` 是 GUI 子系统程序；PowerShell 中需要捕获输出时，应使用 `Start-Process -Wait -WindowStyle Hidden -PassThru` 并传入 `--headless-output`。
+
+`--debug-headless-pretrain-edit` 实现在 `src/main_window/headless_pretrain.cpp`，要求地图包含既有 PreTrain.Pass。它按正式路径合并预览／编辑元数据，检查每条既有语句的 Inspector 目标、时刻与秒数的重复 Apply、里程移动、非法输入、延迟删除、向导默认值和两种输入形式、新建后编辑／取消插入，以及 Revert。验证包括 2D 右键目标身份与标签，以及共享 3D 标记构建／刷新数据。命令拒绝 `--commit`，并比较全部已加载源文件的字节。它不模拟界面点击；采用全屏截图的 Computer Use 验收另行执行。`typed_snapshot_contract` 与 `typed_edit_contract` 覆盖类型值、Include 表达式、同里程身份、编码／BOM／换行保留、临时夹具 Save/reload 及磁盘并发保护。现有公共 ABI 不变；编辑字段 `passTime` 识别不带引号的 hh:mm:ss 或有限秒数，不附加 24 小时或时间先后限制。
 
 ## 构建脚本、依赖与分发
 

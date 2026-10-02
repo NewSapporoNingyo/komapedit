@@ -513,6 +513,16 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             },
         },
         {
+            "pretrain.pass", NewElementTemplateCategory::Signal, 6,
+            "preTrain.pass", "",
+            "PreTrain.Pass(time);",
+            "new_element.usage.pretrain.pass", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"passTime", "passTime", MapElementNumericConstraint::None, true, "00:00:00"},
+            },
+        },
+        {
             "map_sound.play", NewElementTemplateCategory::Sound, 0,
             "mapSound.play", "",
             "Sound[soundKey].Play();",

@@ -387,6 +387,18 @@ bool optional_number_present(const MapEditChange* change, const char* key,
     return fallback.kind != KV_VALUE_NULL;
 }
 
+void write_pretrain(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                    const KvPreTrainRow& row, const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    out.label("passTime");
+    if (const std::string* input = changed_field(change, "passTime")) {
+        out.value(pretrain_time_from_edit_text(*input));
+    } else {
+        out.value(snapshot, row.pass_time);
+    }
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
 void write_beacon(SemanticWriter& out, const KvMapSnapshot& snapshot,
                   const KvBeaconRow& row, const MapEditChange* change = nullptr) {
     field(out, "distance", changed_number(change, "distance", row.distance));
@@ -786,6 +798,8 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "x", "y", "r", "lx", "ly", "lr"};
     } else if (target.row_kind == "beacon.put") {
         allowed = {"distance", "type", "section", "sendData"};
+    } else if (target.row_kind == "preTrain.pass") {
+        allowed = {"distance", "passTime"};
     } else if (target.row_kind == "mapSound.play") {
         allowed = {"distance", "soundKey"};
     } else if (target.row_kind == "mapSound3D.put") {
@@ -1156,9 +1170,7 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         const KvPreTrainRow& row = snapshot.pretrains[i];
         emit_element(output, full, snapshot, row.metadata, "preTrain.pass", "preTrain",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, snapshot, "passTime", row.pass_time);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_pretrain(out, snapshot, row);
         });
     }
     size_t sound_index = 0;
@@ -1398,6 +1410,11 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("beacon.put target row is out of bounds");
         }
         write_beacon(out, snapshot, snapshot.beacons[target.row_index], &change);
+    } else if (target.row_kind == "preTrain.pass") {
+        if (target.row_index >= snapshot.pretrain_count || !snapshot.pretrains) {
+            throw std::runtime_error("preTrain.pass target row is out of bounds");
+        }
+        write_pretrain(out, snapshot, snapshot.pretrains[target.row_index], &change);
     } else if (target.row_kind == "mapSound.play") {
         if (target.row_index >= snapshot.map_sound_count || !snapshot.map_sounds) {
             throw std::runtime_error("mapSound.play target row is out of bounds");
@@ -1552,6 +1569,7 @@ std::string insert_semantic_container(const std::string& row_kind) {
     if (row_kind == "otherTrack.change") return "otherTrack.change";
     if (row_kind == "irregularity.change") return "irregularity";
     if (row_kind == "beacon.put") return "beacon";
+    if (row_kind == "preTrain.pass") return "preTrain";
     if (row_kind == "mapSound.play") return "mapSound";
     if (row_kind == "mapSound3D.put") return "mapSound3D";
     if (row_kind == "rollingNoise.change") return "rollingNoise";
@@ -1767,6 +1785,10 @@ std::string expected_insert_semantic(MapContext& ctx,
         KvBeaconRow row{};
         path_row(row);
         write_beacon(out, fake.snapshot, row, &change);
+    } else if (row_kind == "preTrain.pass") {
+        KvPreTrainRow row{};
+        path_row(row);
+        write_pretrain(out, fake.snapshot, row, &change);
     } else if (row_kind == "mapSound.play") {
         KvMapSoundRow row{};
         path_row(row);

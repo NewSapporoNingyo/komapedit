@@ -368,6 +368,28 @@ Value track_key_from_display_text(const std::string& text) {
     return Value::str(trimmed);
 }
 
+Value pretrain_time_from_edit_text(const std::string& text) {
+    const std::string input = trim_field_copy(text);
+    double seconds = 0.0;
+    if (!input.empty() && parse_finite_number(input, seconds)) {
+        return Value::num(seconds);
+    }
+    const size_t colon = input.find(':');
+    // Hours may exceed one day. Keep the clock form as a string instead of
+    // normalizing it to seconds or imposing an undocumented 24-hour limit.
+    bool clock = colon != std::string::npos && colon >= 2 &&
+        input.size() - colon == 6 && input[colon + 3] == ':';
+    for (size_t i = 0; clock && i < input.size(); ++i) {
+        if (i == colon || i == colon + 3) continue;
+        clock = input[i] >= '0' && input[i] <= '9';
+    }
+    if (clock && input[colon + 1] <= '5' && input[colon + 4] <= '5') {
+        return Value::str(input);
+    }
+    throw std::runtime_error(
+        "PreTrain.Pass passTime requires hh:mm:ss (without quotes) or finite seconds");
+}
+
 const Value& arg_or_null(const std::vector<Value>& values, size_t index) {
     static const Value null_value = Value::null();
     return index < values.size() ? values[index] : null_value;

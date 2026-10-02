@@ -158,6 +158,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### User Interface and Utilities
 
+- [x] Add source-backed `PreTrain.Pass` distance/time editing and deferred deletion through the existing 2D/3D marker menus, plus a Signal-category New Map Element template. A single time field accepts unquoted `hh:mm:ss` or finite seconds and preserves the value type and untouched expressions. Reuse Apply/Save/Revert, stable edit IDs, semantic validation, and encoding-aware writeback without changing the public ABI. Add typed snapshot/edit coverage and memory-only `--debug-headless-pretrain-edit` validation.
+
 - [x] Make the New Map Element and New File wizards independently resizable in both axes while retaining their `980x660` first-use default; replace the fixed template/form split with a stretch-weighted, mouse-resizable two-column layout whose window geometry and per-wizard column weights are restored through the existing `settings/imgui.ini` lifecycle.
 - [x] Add inclusive stage timing and operation totals to Apply/Save/Delete console diagnostics and the existing trilingual status messages, including required deferred Inspector/3D refreshes. Coalesce transaction refreshes, let full hydration/scene rebuilds supersede partial work, construct distance indices on demand, and move encoded Save bytes without weakening source validation or transactional writeback. Add a real-route Debug edit benchmark with 3D off/on, independent temporary Save copies, source-integrity checks, and refresh/rollback assertions. Large-route parsing and safety validation can still exceed one second; Save has no demonstrated overall speedup.
 
@@ -345,6 +347,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 为 `Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 加入基于源码的编辑和延迟删除，并在三语“光照效果”界面加入固定里程 `0` 的“效果”向导模板。根地图及全部 Include 中每类仍只允许一条基础语法正确的语句；RGB 范围、Direction 里程、完整重解析/语义证明、原始表达式保持及内存 Apply/Save/Revert 行为均继续校验。不实现标记或 3D 光照模拟
 
 ### 用户界面与辅助功能
+
+- [x] 为 `PreTrain.Pass` 接入基于源码的里程／时间编辑与延迟删除，复用现有 2D／3D 标记菜单，并在新建地图元素向导的“信号”分类加入模板。单个时间框识别不带引号的 `hh:mm:ss` 或有限秒数，保留参数类型及未修改的表达式；沿用 Apply/Save/Revert、稳定 edit ID、语义验证和编码感知写回，不修改公共 ABI。补充类型化快照／编辑合同及仅操作内存的 `--debug-headless-pretrain-edit` 验证。
 
 - [x] 将“新建地图元素向导”和“新建文件向导”改为长宽均可调整，同时保留首次使用时的 `980x660` 默认尺寸；以按比例伸缩、可用鼠标左右拖动的双栏布局替换固定模板区/表单区，并通过现有 `settings/imgui.ini` 生命周期分别恢复窗口几何信息和各向导的分栏权重。
 - [x] 优化编辑时的应用／保存速度：为 Apply／Save／Delete 增加控制台分段计时、执行次数和总体用时，并在既有中／英／日状态文本后显示耗时，覆盖必要的延迟 Inspector／3D 刷新。合并事务内刷新，以完整模型／场景刷新覆盖局部工作，按需构造距离索引，并移动保存编码字节以避免复制，保留全部源码验证与事务写回保护。新增支持 3D 关闭／开启的真实线路 Debug 编辑基准，Save 使用独立临时副本，核对源文件完整性及刷新／回滚断言。大型线路的解析与安全验证仍可能超过一秒；尚未测得 Save 总体提速。

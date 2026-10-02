@@ -1085,6 +1085,15 @@ HeadlessNewElementEditOptions parse_headless_new_element_edit_options(
         [](HeadlessNewElementEditOptions& options) { options.commit = true; });
 }
 
+HeadlessPreTrainEditOptions parse_headless_pretrain_edit_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_required_map_edit_options<HeadlessPreTrainEditOptions>(
+        args, "--debug-headless-pretrain-edit",
+        [](HeadlessPreTrainEditOptions& options) {
+            options.error = "--debug-headless-pretrain-edit is memory-apply only";
+        });
+}
+
 HeadlessLightEditOptions parse_headless_light_edit_options(
     const std::vector<std::string>& args) {
     return parse_headless_required_map_edit_options<HeadlessLightEditOptions>(

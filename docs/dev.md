@@ -310,6 +310,7 @@ build\komapedit.exe --debug-headless-fresh-resource-list-workflow <map-path> --h
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-light-edit <map-path> --headless-output build\headless-light-edit.txt
+build\komapedit.exe --debug-headless-pretrain-edit <map-path> --headless-output build\headless-pretrain-edit.txt
 build\komapedit.exe --debug-headless-legacy-fog-edit <map-path> --unit-distance 25 --headless-output build\headless-legacy-fog-edit.txt
 build\komapedit.exe --debug-headless-sparse-new-element <map-path> --headless-output build\sparse-new-element.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -379,6 +380,8 @@ The New Map Element command also verifies Structure Model, Sound File, and 3D So
 At minimum, validate the affected combination of normal and Include map loading, reload, plan/profile/radius charts, station jump, measurement, CSV export, model preview/error handling, 3D tracks/objects/markers/camera/overlay, edit Apply/Revert/Save/Reload, source round trip, encodings/newlines, inline-list drafts, settings persistence, and release contents. Changes to disk writeback require save-then-reload comparison. Performance-sensitive changes require repeatable before/after runs on the same route, parameters, build type, and load profile.
 
 Because `komapedit.exe` is a GUI-subsystem executable, PowerShell validation that captures output should launch it with `Start-Process -Wait -WindowStyle Hidden -PassThru` and `--headless-output`.
+
+`--debug-headless-pretrain-edit`, implemented in `src/main_window/headless_pretrain.cpp`, requires a map with existing PreTrain.Pass rows. It merges preview/edit metadata through the production path, then checks every existing Inspector target, repeated clock/seconds Apply, distance moves, invalid input, deferred deletion, wizard defaults and both forms, editing/cancelling unsaved inserts, and Revert. It checks 2D context identities and labels plus the shared 3D marker construction/refresh data. The command rejects `--commit` and compares all loaded source bytes. It does not simulate UI clicks; full-screen Computer Use acceptance is separate. `typed_snapshot_contract` and `typed_edit_contract` cover typed values, Include expressions, duplicate-distance identity, encoding/BOM/newline preservation, temporary-fixture Save/reload and disk concurrency guards. The existing public ABI is unchanged; the editor's `passTime` field recognizes unquoted hh:mm:ss or finite seconds without imposing a 24-hour or time-order limit.
 
 ## Build scripts, dependencies, and distribution
 

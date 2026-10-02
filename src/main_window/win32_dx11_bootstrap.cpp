@@ -423,6 +423,17 @@ int main(int, char**) {
         }
         return App::run_debug_headless_legacy_fog_edit(legacy_fog_edit);
     }
+    HeadlessPreTrainEditOptions pretrain_edit = parse_headless_pretrain_edit_options(args);
+    if (pretrain_edit.requested) {
+        if (!pretrain_edit.error.empty()) {
+            std::cerr << pretrain_edit.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-pretrain-edit <map-path> "
+                         "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_pretrain_edit(pretrain_edit);
+    }
+
     HeadlessLightEditOptions light_edit = parse_headless_light_edit_options(args);
     if (light_edit.requested) {
         if (!light_edit.error.empty()) {

@@ -285,6 +285,9 @@ void App::render_map_element_field_inputs(
             render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
                                        field.source_distance_string);
         }
+        if (inspector.row_kind == "preTrain.pass" && field.key == "passTime") {
+            ImGui::TextWrapped("%s", tr("hint.pretrain_time").c_str());
+        }
     }
     if (render_optional_insertion_argument_toggles) {
         normalize_optional_insertion_argument_enablement(inspector);

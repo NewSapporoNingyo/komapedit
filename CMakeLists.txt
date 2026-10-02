@@ -335,6 +335,7 @@ if(KOMAPEDIT_DEBUG_BUILD)
     target_sources(komapedit PRIVATE
         src/main_window/debug_headless.cpp
         src/main_window/headless_entrypoints.cpp
+        src/main_window/headless_pretrain.cpp
         src/main_window/legacy_fog_edit_validation.cpp
         src/main_window/edit_benchmark.cpp
         src/canvas3d/tests/scene_render_contract.cpp

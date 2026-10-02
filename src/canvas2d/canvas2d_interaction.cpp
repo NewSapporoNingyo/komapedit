@@ -332,6 +332,7 @@ std::vector<PlanContextMenuEntry> App::collect_plan_context_entries(
             case PlanMarkerKind::Signal: return std::string("signal.put");
             case PlanMarkerKind::Section: return std::string("section.begin");
             case PlanMarkerKind::Beacon: return std::string("beacon.put");
+            case PlanMarkerKind::PreTrain: return std::string("preTrain.pass");
             case PlanMarkerKind::Irregularity: return std::string("irregularity.change");
             case PlanMarkerKind::MapSound: return std::string("mapSound.play");
             case PlanMarkerKind::MapSound3D: return std::string("mapSound3D.put");
@@ -441,6 +442,7 @@ std::vector<PlanContextMenuEntry> App::collect_plan_context_entries(
     add_plan_markers(data.section_markers, PlanMarkerKind::Section);
     add_plan_markers(data.signal_markers, PlanMarkerKind::Signal);
     add_plan_markers(data.beacon_markers, PlanMarkerKind::Beacon);
+    add_plan_markers(data.pretrain_markers, PlanMarkerKind::PreTrain);
     add_plan_markers(data.adhesion_markers, PlanMarkerKind::Adhesion);
     add_plan_markers(data.irregularity_markers, PlanMarkerKind::Irregularity);
     add_plan_markers(data.rolling_noise_markers, PlanMarkerKind::RollingNoise);
@@ -589,6 +591,16 @@ void App::render_plan_marker_context_menu(
                 render_standard_menu_items("menu.locate_in_beacon_list",
                                            beacon_marker_cache_.size(), "beacon.put",
                                            [&](size_t row) { locate_beacon_row_in_list(row); });
+                break;
+            case PlanMarkerKind::PreTrain:
+                ImGui::BeginDisabled(!can_edit);
+                if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+                    request_element_inspector(entry.edit_id, "preTrain.pass");
+                }
+                if (ImGui::MenuItem(tr("button.delete").c_str())) {
+                    request_element_delete(entry.edit_id, "preTrain.pass");
+                }
+                ImGui::EndDisabled();
                 break;
             case PlanMarkerKind::OtherTrainStop: {
                 const bool can_locate = entry.row_index < other_train_stop_marker_cache_.size() &&

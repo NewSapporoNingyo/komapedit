@@ -67,6 +67,7 @@ struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
 struct HeadlessLightEditOptions;
+struct HeadlessPreTrainEditOptions;
 struct HeadlessLegacyFogEditOptions;
 struct HeadlessCurveParameterEditOptions;
 struct HeadlessStationPutMarginEditOptions;
@@ -692,6 +693,7 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "signal.aspect") return &model.signal_aspects;
     if (row_kind == "irregularity.change") return &model.irregularities;
     if (row_kind == "beacon.put") return &model.beacons;
+    if (row_kind == "preTrain.pass") return &model.pretrains;
     if (row_kind == "mapSound.play") return &model.map_sounds;
     if (row_kind == "mapSound3D.put") return &model.map_sound_3d;
     if (row_kind == "rollingNoise.change") return &model.rolling_noises;
@@ -1851,6 +1853,8 @@ public:
         const HeadlessNewElementEditOptions& options);
     static int run_debug_headless_light_edit(
         const HeadlessLightEditOptions& options);
+    static int run_debug_headless_pretrain_edit(
+        const HeadlessPreTrainEditOptions& options);
     static int run_debug_headless_legacy_fog_edit(
         const HeadlessLegacyFogEditOptions& options);
     static int run_debug_headless_curve_parameter_edit(

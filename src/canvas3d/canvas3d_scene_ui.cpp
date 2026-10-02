@@ -419,6 +419,7 @@ bool Canvas3D::Impl::scene_marker_has_edit_target(const Canvas3DSceneMarker& mar
              marker.row_kind == "station.put") ||
            marker.row_kind == "curve" || marker.row_kind == "gradient" ||
            marker.row_kind == "otherTrack.change" ||
+           marker.row_kind == "preTrain.pass" ||
            scene_marker_has_list_target(marker);
 }
 

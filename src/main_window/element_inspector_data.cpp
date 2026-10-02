@@ -98,7 +98,8 @@ bool row_kind_supports_delete(const std::string& row_kind) {
         row_kind == "structure.between" || row_kind == "station.put" ||
         row_kind == "signal.put" || row_kind == "repeater" ||
         row_kind == "irregularity.change" ||
-        row_kind == "beacon.put" || row_kind == "mapSound.play" ||
+        row_kind == "beacon.put" || row_kind == "preTrain.pass" ||
+        row_kind == "mapSound.play" ||
         row_kind == "mapSound3D.put" || row_kind == "rollingNoise.change" ||
         row_kind == "flangeNoise.change" || row_kind == "jointNoise.play" ||
         row_kind == "background.change" || row_kind == "adhesion.change" ||
@@ -952,7 +953,7 @@ void set_inspector_row_field_value(TableRow& row,
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
-    static constexpr std::array<const char*, 24> k_distance_row_kinds = {
+    static constexpr std::array<const char*, 25> k_distance_row_kinds = {
         "station.put",
         "structure.put",
         "structure.between",
@@ -960,6 +961,7 @@ bool row_kind_has_source_distance_string(const std::string& row_kind) {
         "signal.put",
         "irregularity.change",
         "beacon.put",
+        "preTrain.pass",
         "mapSound.play",
         "mapSound3D.put",
         "rollingNoise.change",
@@ -1406,6 +1408,9 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         for (const char* key : {"type", "section", "sendData"}) {
             add_row_field(key, key, MapElementNumericConstraint::Finite, true);
         }
+    } else if (request.row_kind == "preTrain.pass") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("passTime", "passTime", MapElementNumericConstraint::None, true);
     } else if (request.row_kind == "mapSound.play") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("soundKey", "soundKey", MapElementNumericConstraint::None, true);

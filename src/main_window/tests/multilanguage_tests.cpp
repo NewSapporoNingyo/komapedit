@@ -40,7 +40,7 @@ bool expect_no_value_fragment(const Map& translations, const char* fragment) {
 }
 
 bool same_keys(const Translation& translation) {
-    constexpr std::size_t expected_key_count = 580;
+    constexpr std::size_t expected_key_count = 582;
     if (translation.en.size() != expected_key_count ||
         translation.zh.size() != expected_key_count ||
         translation.ja.size() != expected_key_count) {

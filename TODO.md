@@ -22,7 +22,6 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 变量编辑功能
 - [ ] 可引用变量、运算符、数学函数设置参数
 - [ ] 变量新建功能
-- [ ] Pretrain（先行列车）语句编辑与新建
 - [ ] 他列车定义文件编辑与新建
 - [ ] 他列车启用时间编辑与新建
 - [ ] 他列车停止点编辑与新建

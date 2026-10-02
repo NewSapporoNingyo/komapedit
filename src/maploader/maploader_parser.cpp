@@ -1960,7 +1960,7 @@ private:
         row.pass_time = a[0];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
-        attach_active_noneditable_ref(ctx_, row);
+        attach_active_edit_ref(ctx_, row);
         ctx_.pretrains.push_back(std::move(row));
     }
 

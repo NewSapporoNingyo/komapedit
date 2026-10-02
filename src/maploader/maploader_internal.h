@@ -234,6 +234,7 @@ std::string truncated_integer_or_number_text(double value);
 std::string key_text(const Value& value);
 std::string track_key_display_text(const Value& value);
 Value track_key_from_display_text(const std::string& text);
+Value pretrain_time_from_edit_text(const std::string& text);
 const Value& arg_or_null(const std::vector<Value>& values, size_t index = 0);
 inline bool csv_comment_starts_at(std::string_view text, size_t index) {
     return index < text.size() && (text[index] == '#' ||

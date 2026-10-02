@@ -299,6 +299,14 @@ struct HeadlessNewElementEditOptions {
     std::string error;
 };
 
+struct HeadlessPreTrainEditOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessLightEditOptions {
     bool requested = false;
     std::string path;
@@ -433,6 +441,8 @@ parse_headless_fresh_resource_list_workflow_options(
 HeadlessNewElementEditOptions parse_headless_new_element_edit_options(
     const std::vector<std::string>& args);
 HeadlessLightEditOptions parse_headless_light_edit_options(
+    const std::vector<std::string>& args);
+HeadlessPreTrainEditOptions parse_headless_pretrain_edit_options(
     const std::vector<std::string>& args);
 HeadlessLegacyFogEditOptions parse_headless_legacy_fog_edit_options(
     const std::vector<std::string>& args);

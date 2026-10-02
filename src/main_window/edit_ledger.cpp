@@ -567,8 +567,9 @@ void App::refresh_local_preview_after_edits(const std::map<std::string, std::str
     }
     Canvas3DSceneMapRefreshOptions map_refresh;
     map_refresh.route_stations = has("station.put") || has("station.list");
-    static constexpr std::array<const char*, 21> k_marker_row_kinds = {
+    static constexpr std::array<const char*, 22> k_marker_row_kinds = {
         "station.put", "station.list", "irregularity.change", "beacon.put",
+        "preTrain.pass",
         "mapSound.play", "mapSound3D.put", "rollingNoise.change",
         "flangeNoise.change", "jointNoise.play", "background.change",
         "adhesion.change", "cabIlluminance.change", "fog.change",

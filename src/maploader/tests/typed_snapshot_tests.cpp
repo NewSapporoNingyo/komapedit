@@ -116,6 +116,8 @@ struct TempFixture {
         if (sound3d) map << "Sound3D.Load('sounds3d.csv');\n";
         if (snapshot_arrays) {
             map << "$snapshotContract=1;\n"
+                << "PreTrain.Pass('13:00:00');\n"
+                << "pretrain.pass(46800.25);\n"
                 << "Curve.Change(800);\n"
                 << "Gradient.Begin(10);\n"
                 << "DrawDistance.Change(600);\n"
@@ -497,6 +499,14 @@ int snapshot_contract() {
               "other-track Position typed row");
     }
     check(first.draw_distance_count == 1, "draw-distance fixture row present");
+    check(first.pretrain_count == 2, "PreTrain snapshot has both official forms");
+    if (first.pretrain_count == 2) {
+        check(first.pretrains[0].pass_time.kind == KV_VALUE_STRING &&
+                  map_string(first, first.pretrains[0].pass_time.string_value) == "13:00:00" &&
+                  first.pretrains[1].pass_time.kind == KV_VALUE_NUMBER &&
+                  first.pretrains[1].pass_time.number_value == 46800.25,
+              "PreTrain snapshot preserves clock and numeric value types");
+    }
     check(first.legacy_fog_count == 1, "legacy fog fixture row present");
     if (first.legacy_fog_count == 1) {
         const KvLegacyFogRow& legacy_fog = first.legacy_fogs[0];
@@ -9796,7 +9806,192 @@ int patch_sources_benchmark(size_t repetitions) {
     return failures == 0 ? 0 : 1;
 }
 
+void pretrain_edit_contract() {
+    struct EncodingCase {
+        const char* header;
+        const char* newline;
+        int utf16; // 0 = byte encoding, 1 = LE, 2 = BE
+        const char* bom;
+        const char* comment;
+    };
+    const EncodingCase encodings[] = {
+        {"utf-8", "\n", 0, "", u8"日本"},
+        {"utf-8", "\r\n", 0, "\xef\xbb\xbf", u8"日本"},
+        {"cp932", "\r\n", 0, "", "\x93\xfa\x96\x7b"},
+        {"utf-16le", "\r\n", 1, "\xff\xfe", "preserve"},
+        {"utf-16be", "\r\n", 2, "\xfe\xff", "preserve"},
+        {"utf-8", "\r", 0, "", u8"日本"},
+    };
+    for (const EncodingCase& encoding : encodings) {
+        TempFixture fixture;
+        const auto child = fixture.directory / "pretrain.txt";
+        const std::string child_path = child.u8string();
+        const std::string root = "BveTs Map 2.02:utf-8\n$pass='13:00:00';\n"
+            "include 'pretrain.txt';\n0;\nCurve.SetGauge(1.067);\n";
+        std::string decoded = std::string("BveTs Map 2.02:") + encoding.header + "\n" +
+            "# " + encoding.comment + "\n100;\n"
+            "pReTrAiN.PaSs($pass); // keep expression\n"
+            "PreTrain.Pass(46800 + 0.25);\nBeacon.Put(1,2,3);\n"
+            "200;\nPreTrain.Pass('25:01:02');\n300;\n";
+        std::string source;
+        for (const char ch : decoded) {
+            if (ch == '\n') source += encoding.newline;
+            else source += ch;
+        }
+        const auto encode = [&](const std::string& text) {
+            std::string bytes = encoding.bom;
+            for (const char ch : text) {
+                if (encoding.utf16 == 2) bytes += '\0';
+                bytes += ch;
+                if (encoding.utf16 == 1) bytes += '\0';
+            }
+            return bytes;
+        };
+        const auto read = [](const std::filesystem::path& path) {
+            std::ifstream input(path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(input), {});
+        };
+        const auto write = [](const std::filesystem::path& path, const std::string& bytes) {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        };
+        const std::string before = encode(source);
+        write(fixture.map_path, root);
+        write(child, before);
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                      KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "PreTrain encoded Include loads");
+        if (!handle.value) continue;
+        const auto snapshot = [&]() {
+            KvMapSnapshot result{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &result, sizeof(result)) != 0, "PreTrain snapshot");
+            return result;
+        };
+        const auto memory = [&]() {
+            const char* raw = kv_get_source_text(handle.value, child_path.c_str());
+            const std::string result = raw ? raw : "";
+            kv_free_string(raw);
+            return result;
+        };
+        KvMapSnapshot baseline = snapshot();
+        check(baseline.pretrain_count == 3, "PreTrain same-distance Include rows");
+        if (baseline.pretrain_count != 3) continue;
+        std::vector<std::string> ids;
+        for (std::uint64_t i = 0; i < baseline.pretrain_count; ++i) {
+            ids.push_back(map_string(baseline, baseline.pretrains[i].metadata.edit_id));
+        }
+        const std::string hash = map_string(baseline, baseline.source_files[
+            baseline.pretrains[0].metadata.source_file_index].source_hash);
+        check(!ids[0].empty() && ids[0] != ids[1] && ids[1] != ids[2],
+              "PreTrain has distinct stable identities");
+        KvEditTargetSnapshot target{};
+        check(kv_get_edit_target_typed(handle.value, utf8_view(ids[0]), &target,
+                                      sizeof(target)) && target.elements_for_statement == 1 &&
+                  arena_view(target.string_data, target.string_size, target.row_kind) ==
+                      "preTrain.pass" && target.source.include_stack.count > 0,
+              "PreTrain exposes editable Include provenance");
+        const auto apply = [&](const KvEditBatch& batch) {
+            KvEditReportSnapshot report{};
+            const bool ok = kv_edit_apply_to_memory_typed(handle.value, &batch,
+                &report, sizeof(report)) && report.ok && report.full_reparse_ok &&
+                report.non_target_changed_count == 0;
+            if (!ok) {
+                for (std::uint64_t i = 0; i < report.blocking_error_count; ++i) {
+                    std::cerr << arena_view(report.string_data, report.string_size,
+                                          report.blocking_errors[i]) << '\n';
+                }
+            }
+            return ok;
+        };
+        UpdateBatch move(ids[0], hash, "200", "distance");
+        check(apply(move.batch), "PreTrain distance move applies");
+        check(memory().find("pReTrAiN.PaSs($pass);") != std::string::npos,
+              "PreTrain distance-only edit preserves expression and spelling");
+        check(kv_edit_reset_memory(handle.value) != 0, "PreTrain distance reset");
+
+        UpdateBatch numeric(ids[0], hash, "46800.5", "passTime");
+        KvEditReportSnapshot dry{};
+        check(kv_edit_dry_run_typed(handle.value, &numeric.batch, &dry, sizeof(dry)) &&
+                  dry.ok && dry.full_reparse_ok, "PreTrain numeric dry run");
+        check(apply(numeric.batch), "PreTrain clock to seconds Apply");
+        KvMapSnapshot numeric_snapshot = snapshot();
+        check(numeric_snapshot.pretrains[0].pass_time.kind == KV_VALUE_NUMBER &&
+                  numeric_snapshot.pretrains[0].pass_time.number_value == 46800.5,
+              "PreTrain clock to seconds retains numeric type");
+        UpdateBatch clock(ids[0], hash, "25:01:03", "passTime");
+        check(apply(clock.batch), "PreTrain repeated Apply accepts baseline hash");
+        KvMapSnapshot clock_snapshot = snapshot();
+        check(clock_snapshot.pretrains[0].pass_time.kind == KV_VALUE_STRING &&
+                  map_string(clock_snapshot, clock_snapshot.pretrains[0].pass_time.string_value) ==
+                      "25:01:03", "PreTrain seconds to clock retains string type");
+        const std::string valid_memory = memory();
+        for (const char* bad : {"", "null", "NaN", "inf", "1e999", "12:60:00",
+                               "12:00:60", "1:02:03", "12:00", "'12:00:00'",
+                               "12:00:00;Beacon.Put(1,2,3)", "$pass", "46800+1"}) {
+            UpdateBatch invalid(ids[0], hash, bad, "passTime");
+            KvEditReportSnapshot report{};
+            check(!kv_edit_apply_to_memory_typed(handle.value, &invalid.batch,
+                        &report, sizeof(report)) || !report.ok,
+                  "PreTrain invalid update rejected");
+            SimpleInsertBatch invalid_insert(child_path, "pretrain-invalid",
+                {{"rowKind", "preTrain.pass"}, {"distance", "100"}, {"passTime", bad}});
+            check(!kv_edit_dry_run_typed(handle.value, &invalid_insert.batch,
+                        &report, sizeof(report)) || !report.ok,
+                  "PreTrain invalid insert rejected");
+            check(memory() == valid_memory, "PreTrain rejection leaves working copy intact");
+        }
+        UpdateBatch wrong_field(ids[0], hash, "1", "bogus");
+        check(!apply(wrong_field.batch), "PreTrain unknown field rejected");
+        SimpleEditBatch remove(ids[1], KV_EDIT_DELETE, hash);
+        check(apply(remove.batch), "PreTrain delete after repeated Apply");
+        check(snapshot().pretrain_count == 2, "PreTrain deletes only selected same-distance row");
+        for (const auto& item : {std::make_pair("pretrain-clock", "01:02:03"),
+                                 std::make_pair("pretrain-seconds", "3723.5")}) {
+            SimpleInsertBatch insert(child_path, item.first,
+                {{"rowKind", "preTrain.pass"}, {"distance", "100"},
+                 {"passTime", item.second}});
+            check(apply(insert.batch), "PreTrain official form insert");
+        }
+        const std::string inserted_id = "pretrain-seconds";
+        UpdateBatch inserted_edit(inserted_id, hash, "3724.5", "passTime");
+        check(apply(inserted_edit.batch), "PreTrain inserted row can be edited");
+        check(snapshot().pretrain_count == 4, "PreTrain update/delete/insert row count");
+        check(read(child) == before && read(fixture.map_path) == root,
+              "PreTrain Apply never writes source files");
+        KvEditReportSnapshot saved{};
+        check(kv_edit_commit_typed(handle.value, &saved, sizeof(saved)) &&
+                  saved.ok && saved.full_reparse_ok, "PreTrain Save succeeds");
+        const std::string committed = read(child);
+        check(committed.compare(0, std::string(encoding.bom).size(), encoding.bom) == 0 &&
+                  committed.find(encode(std::string("# ") + encoding.comment +
+                      encoding.newline).substr(std::string(encoding.bom).size())) !=
+                      std::string::npos && read(fixture.map_path) == root,
+              "PreTrain Save preserves encoding BOM comment newline and parent");
+        MapHandle reloaded(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot reload{};
+        check(reloaded.value && kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                  &reload, sizeof(reload)) && reload.pretrain_count == 4 &&
+                  reload.beacon_count == 1, "PreTrain saved rows survive fresh reload");
+        KvMapSnapshot current = snapshot();
+        const std::string current_hash = map_string(current, current.source_files[
+            current.pretrains[0].metadata.source_file_index].source_hash);
+        const std::string current_id = map_string(current, current.pretrains[0].metadata.edit_id);
+        UpdateBatch conflict(current_id, current_hash, "999", "passTime");
+        check(apply(conflict.batch), "PreTrain prepares guarded Save");
+        const std::string external = committed + encode(
+            std::string("# external") + encoding.newline).substr(std::string(encoding.bom).size());
+        write(child, external);
+        KvEditReportSnapshot rejected{};
+        check((!kv_edit_commit_typed(handle.value, &rejected, sizeof(rejected)) ||
+                   !rejected.ok) && read(child) == external,
+              "PreTrain Save rejects disk conflict without overwriting it");
+    }
+}
+
 int edit_contract() {
+    pretrain_edit_contract();
     untouched_object_key_contract();
     section_sparse_bounds_contract();
     patch_sources_preview_contract();
