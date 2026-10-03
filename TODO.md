@@ -15,6 +15,7 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
 - [ ] 通过 `kme.json` 在资源文件列表中标记文件类型和用途
 - [ ] 通过在地图中插入被BVE忽略但本项目可读的”//--kme--“开头的注释，标记特定地图元素
+- [ ] “message from creator”功能：用户第一次打开线路时，通过识别地图文件中的“//--kme--message-from-creator:content”，在弹出窗口中显示自定义消息，可显示地图介绍、作者信息、版权声明等内容。
 - [ ] 可将多个地图语句设为1组，通过 `kme.json` 保存地图元素预设组，应用后生成普通 BVE map 语句
 - [ ] 可将多个不同distance的地图语句设为1组，以1个语句作为参照，记录其它语句的相对位置
 - [ ] 优化地图语句移动和插入逻辑，减少手动选择插入位置的概率，并确保文件末尾里程可变
