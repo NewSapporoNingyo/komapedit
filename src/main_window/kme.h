@@ -515,6 +515,18 @@ struct CachedVariableRow {
     std::string file_path;
 };
 
+struct CreatorMessageTableLayout {
+    bool valid = false;
+    ImFont* font = nullptr;
+    float font_size = 0.0f;
+    float width = 0.0f;
+    ImVec2 padding;
+    float frame_height = 0.0f;
+    Language language = Language::Zh;
+    std::vector<std::string> text;
+    std::vector<float> offsets;
+};
+
 struct TableUiCache {
     bool valid = false;
     float font_size = 0.0f;
@@ -533,6 +545,7 @@ struct TableUiCache {
     size_t section_speed_limit_value_columns = 0;
     std::vector<CachedVariableRow> variable_rows;
     std::vector<CachedTableRow> creator_message_rows;
+    CreatorMessageTableLayout creator_message_layout;
     std::vector<CachedRepeaterRow> repeater_rows;
     std::vector<CachedTableRow> signal_aspect_rows;
     std::vector<EditableListDisplayRow> signal_aspect_display_rows;
@@ -1856,6 +1869,13 @@ struct CreatorMessageDraft {
     bool deleted = false;
 };
 
+struct CreatorMessageCellEdit {
+    std::string edit_id;
+    std::string baseline;
+    std::string buffer;
+    bool fresh = false;
+};
+
 struct CreatorMessagePopupState {
     bool requested = false;
     bool suppressed = false;
@@ -2047,6 +2067,7 @@ private:
     std::map<std::string, CreatorMessageDraft> creator_message_drafts_;
     TableFindState creator_message_find_;
     std::string creator_message_selected_id_;
+    CreatorMessageCellEdit creator_message_cell_edit_;
 
     void* handle_ = nullptr;
     MapModel model_;
@@ -2784,6 +2805,11 @@ private:
     bool has_creator_message_drafts() const;
     void clear_creator_message_drafts();
     bool set_creator_message_draft(const std::string& edit_id, std::string content, bool deleted);
+    bool begin_creator_message_cell_edit(const std::string& edit_id);
+    bool commit_creator_message_cell_edit();
+    bool stage_creator_message_delete(const std::string& edit_id);
+    void run_creator_message_find();
+    void ensure_creator_message_layout(float width);
     bool apply_creator_message_drafts();
     void refresh_creator_message_history(bool request_popup);
     void confirm_creator_message_popup();

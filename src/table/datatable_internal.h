@@ -206,6 +206,10 @@ struct EditableCellInteraction {
 EditableCellInteraction render_editable_cell_button(
     const std::string& display, bool selected, ImU32 text_color,
     float width, float height);
+bool render_editable_cell_input(std::string& buffer, bool& fresh);
+std::string wrap_table_cell_text(std::string_view text, float width);
+std::pair<size_t, size_t> visible_wrapped_table_rows(
+    const std::vector<float>& offsets, float top, float bottom);
 bool is_invalid_track_key_row(const TableRow& row);
 
 inline constexpr float k_show_column_width = 56.0f;

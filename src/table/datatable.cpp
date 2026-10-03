@@ -15,6 +15,7 @@
 #include "canvas3D.h"
 #include "text_decoder.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "misc/cpp/imgui_stdlib.h"
 #include "repeater_linkage.h"
 
@@ -642,6 +643,80 @@ float find_input_width(float available_width,
     return std::max(1.0f, std::min(k_find_input_max_width, width));
 }
 
+
+bool render_editable_cell_input(std::string& buffer, bool& fresh) {
+    if (fresh) {
+        ImGui::SetKeyboardFocusHere(0);
+        fresh = false;
+    }
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    const bool returned = ImGui::InputText(
+        "##cell_edit", &buffer,
+        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+    return returned || ImGui::IsItemDeactivated();
+}
+
+std::string wrap_table_cell_text(std::string_view text, float width) {
+    width = std::max(1.0f, width);
+    ImFontBaked* font = ImGui::GetFontBaked();
+    const float scale = ImGui::GetFontSize() / font->Size;
+    std::string wrapped;
+    wrapped.reserve(text.size());
+    float line_width = 0.0f;
+    const char* const end = text.data() + text.size();
+    for (const char* cursor = text.data(); cursor < end;) {
+        // Keep ordinary ASCII words together; CJK characters and oversized
+        // words can break at complete UTF-8 code points. Preserve every byte.
+        const char* word_end = cursor;
+        float word_width = 0.0f;
+        while (word_end < end && static_cast<unsigned char>(*word_end) > ' ' &&
+               static_cast<unsigned char>(*word_end) < 0x80) {
+            word_width += font->GetCharAdvance(static_cast<ImWchar>(*word_end)) * scale;
+            ++word_end;
+        }
+        if (word_end > cursor && word_width <= width) {
+            if (line_width > 0.0f && line_width + word_width > width) {
+                wrapped += '\n';
+                line_width = 0.0f;
+            }
+            wrapped.append(cursor, static_cast<size_t>(word_end - cursor));
+            line_width += word_width;
+            cursor = word_end;
+            continue;
+        }
+        // Consume a whole oversized word in this pass, avoiding repeated scans.
+        if (word_end == cursor) {
+            unsigned int codepoint = 0;
+            word_end = cursor + ImTextCharFromUtf8(&codepoint, cursor, end);
+            if (word_end == cursor) break;
+        }
+        while (cursor < word_end) {
+            unsigned int codepoint = 0;
+            const int count = ImTextCharFromUtf8(&codepoint, cursor, end);
+            if (count <= 0) return wrapped;
+            const float advance = font->GetCharAdvance(static_cast<ImWchar>(codepoint)) * scale;
+            if (codepoint != '\n' && line_width > 0.0f && line_width + advance > width) {
+                wrapped += '\n';
+                line_width = 0.0f;
+            }
+            wrapped.append(cursor, static_cast<size_t>(count));
+            line_width = codepoint == '\n' ? 0.0f : line_width + advance;
+            cursor += count;
+        }
+    }
+    return wrapped;
+}
+
+std::pair<size_t, size_t> visible_wrapped_table_rows(
+    const std::vector<float>& offsets, float top, float bottom) {
+    if (offsets.size() < 2) return {0, 0};
+    const size_t count = offsets.size() - 1;
+    const size_t first = std::min(count - 1, static_cast<size_t>(
+        std::upper_bound(offsets.begin() + 1, offsets.end(), top) - offsets.begin() - 1));
+    const size_t last = std::min(count, std::max(first + 1, static_cast<size_t>(
+        std::lower_bound(offsets.begin(), offsets.end(), bottom) - offsets.begin())));
+    return {first, last};
+}
 
 EditableCellInteraction render_editable_cell_button(
     const std::string& display, bool selected, ImU32 text_color,

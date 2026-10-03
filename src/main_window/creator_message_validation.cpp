@@ -8,12 +8,14 @@
 #include "app_settings.h"
 #include "debug_headless.h"
 #include "maploader.h"
+#include "../table/datatable_internal.h"
 #include "imgui.h"
 #include "implot.h"
 
 #include <windows.h>
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -264,6 +266,68 @@ int App::run_debug_headless_creator_message(const HeadlessCreatorMessageOptions&
                 read_creator_message_source(child_path) == original_child);
         }
 
+        *out << "stage=cell-edit-and-wrapped-layout\n";
+        require("cell_edit_begins", app.begin_creator_message_cell_edit(row_id("Root message")));
+        app.creator_message_cell_edit_.buffer = "Cell draft";
+        require("active_cell_blocks_save", app.has_creator_message_drafts() && !app.save_pending_edits(false));
+        app.request_edit_ui_operation(PendingEditUiOperation::ApplyCreatorMessages);
+        require("cell_apply_deferred", app.edit_ui_operation_pending() && !row_id("Root message").empty());
+        app.pending_edit_ui_operation_.progress_presented = true;
+        app.process_pending_edit_ui_operation();
+        require("one_apply_collects_active_cell", !row_id("Cell draft").empty() &&
+            app.creator_message_cell_edit_.edit_id.empty() && !app.has_creator_message_drafts() &&
+            read_creator_message_source(map_path) == original_map);
+        require("cell_apply_reverted", app.revert_all_pending_edits() && !row_id("Root message").empty());
+        require("cell_revert_begins", app.begin_creator_message_cell_edit(row_id("Root message")));
+        app.creator_message_cell_edit_.buffer = "Unfinished input";
+        require("revert_clears_active_input", app.revert_all_pending_edits() &&
+            app.creator_message_cell_edit_.edit_id.empty() && !app.has_unsaved_edit_state());
+        const std::string root_id = row_id("Root message");
+        require("context_delete_staged", app.stage_creator_message_delete(root_id) &&
+            !row_id("Root message").empty() && app.creator_message_drafts_.at(root_id).deleted);
+        require("pending_delete_not_editable", !app.begin_creator_message_cell_edit(root_id) &&
+            !app.stage_creator_message_delete(root_id));
+        app.ensure_table_cache();
+        snprintf(app.creator_message_find_.query, sizeof(app.creator_message_find_.query), "%s", "Root message");
+        app.run_creator_message_find();
+        require("search_excludes_deleted_draft", app.creator_message_find_.matches.empty());
+        require("context_delete_apply_memory_only", app.apply_creator_message_drafts() &&
+            row_id("Root message").empty() && read_creator_message_source(map_path) == original_map);
+        require("context_delete_reverted", app.revert_all_pending_edits() && !row_id("Root message").empty());
+        app.edit_mode_enabled_ = false;
+        require("readonly_cell_actions_blocked", !app.begin_creator_message_cell_edit(root_id) &&
+            !app.stage_creator_message_delete(root_id));
+        app.edit_mode_enabled_ = true;
+
+        const std::string long_text =
+            u8"中文消息日本語メッセージ English words " + std::string(180, 'X');
+        require("wrapped_draft_created", app.set_creator_message_draft(root_id, long_text, false));
+        app.ensure_table_cache();
+        app.ensure_creator_message_layout(240.0f);
+        const auto wide_offsets = app.table_cache_.creator_message_layout.offsets;
+        require("mixed_height_rows", wide_offsets.size() == 3 &&
+            wide_offsets[1] > wide_offsets[2] - wide_offsets[1]);
+        std::string unwrapped = app.table_cache_.creator_message_layout.text[0];
+        unwrapped.erase(std::remove(unwrapped.begin(), unwrapped.end(), '\n'), unwrapped.end());
+        require("wrapping_preserves_utf8_and_literal_text", unwrapped == long_text);
+        const auto visible = datatable_internal::visible_wrapped_table_rows(wide_offsets,
+            wide_offsets[1], wide_offsets[2]);
+        require("variable_height_visible_range", visible.first == 1 && visible.second == 2);
+        app.ensure_creator_message_layout(120.0f);
+        require("column_resize_rewraps", app.table_cache_.creator_message_layout.offsets[1] > wide_offsets[1]);
+        require("shorter_draft_invalidates_layout", app.set_creator_message_draft(root_id, "Short", false) &&
+            !app.table_cache_.creator_message_layout.valid);
+        app.ensure_creator_message_layout(120.0f);
+        require("shorter_draft_reduces_height", app.table_cache_.creator_message_layout.offsets[1] < wide_offsets[1]);
+        require("cell_search_begins", app.begin_creator_message_cell_edit(root_id));
+        app.creator_message_cell_edit_.buffer = "Search active input";
+        snprintf(app.creator_message_find_.query, sizeof(app.creator_message_find_.query), "%s", "Search active");
+        app.run_creator_message_find();
+        require("search_collects_active_cell", app.creator_message_find_.matches.size() == 1 &&
+            app.creator_message_cell_edit_.edit_id.empty());
+        require("layout_drafts_reverted", app.revert_all_pending_edits() &&
+            !app.table_cache_.creator_message_layout.valid && read_creator_message_source(map_path) == original_map);
+
         *out << "stage=wizard-create-and-save\n";
         const auto& templates = new_element_templates();
         require("other_category_template_last", !templates.empty() &&
@@ -387,6 +451,13 @@ int App::run_debug_headless_creator_message(const HeadlessCreatorMessageOptions&
         open(draft_state_path.u8string(), 0);
         require("same_row_post_save_edit_survives_reopen", app.model_.creator_messages.size() == 1 &&
             !row_id("C").empty());
+        app.confirm_creator_message_popup();
+
+        require("post_save_cell_edit_begins", app.begin_creator_message_cell_edit(row_id("C")));
+        app.creator_message_cell_edit_.buffer = "D";
+        require("post_save_active_cell_saved", app.apply_creator_message_drafts() && app.save_pending_edits(false));
+        open(draft_state_path.u8string(), 0);
+        require("post_save_cell_survives_reopen", !row_id("D").empty());
         app.confirm_creator_message_popup();
 
         *out << "stage=unsaved-creation-order\n";

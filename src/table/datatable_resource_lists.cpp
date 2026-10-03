@@ -131,17 +131,9 @@ void render_table_find_panel(TableFindState& state,
 template <typename ContextMenu>
 bool render_editable_cell_input(std::string& buffer, bool& fresh,
                                 ContextMenu&& render_context_menu) {
-    if (fresh) {
-        ImGui::SetKeyboardFocusHere(0);
-        fresh = false;
-    }
-    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
-    const bool returned = ImGui::InputText(
-        "##cell_edit", &buffer,
-        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-    ImGui::PopItemWidth();
+    const bool finished = datatable_internal::render_editable_cell_input(buffer, fresh);
     render_context_menu();
-    return returned || ImGui::IsItemDeactivated();
+    return finished;
 }
 } // namespace
 
