@@ -110,7 +110,8 @@ bool row_kind_supports_delete(const std::string& row_kind) {
         row_kind == "drawDistance.change" || row_kind == "speedlimit" ||
         row_kind == "section.begin" || row_kind == "section.speedLimit" ||
         row_kind == "curve" || row_kind == "gradient" ||
-        row_kind == "otherTrack.change" || row_kind == "include";
+        row_kind == "otherTrack.change" || row_kind == "include" ||
+        row_kind == "creator.message";
 }
 
 std::optional<RepeaterDeleteChain> repeater_delete_chain_for_edit_id(

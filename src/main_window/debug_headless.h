@@ -282,6 +282,15 @@ struct HeadlessScenarioLifecycleOptions {
     std::string error;
 };
 
+struct HeadlessCreatorMessageOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    int scenario_index = 0;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessFreshResourceListWorkflowOptions {
     bool requested = false;
     std::string path;
@@ -442,6 +451,8 @@ HeadlessNewFileWizardOptions parse_headless_new_file_wizard_options(
 HeadlessScenarioCreateOptions parse_headless_scenario_create_options(
     const std::vector<std::string>& args);
 HeadlessScenarioLifecycleOptions parse_headless_scenario_lifecycle_options(
+    const std::vector<std::string>& args);
+HeadlessCreatorMessageOptions parse_headless_creator_message_options(
     const std::vector<std::string>& args);
 HeadlessFreshResourceListWorkflowOptions
 parse_headless_fresh_resource_list_workflow_options(

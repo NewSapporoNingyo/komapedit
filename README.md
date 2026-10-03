@@ -121,7 +121,7 @@ creates or reads the following files there:
 
 - `settings/imgui.ini`: stores UI window positions and related ImGui layout data.
 - `settings/settings.ini`: stores UI language, font/component/station-marker sizes, 2D line widths, theme color, edit-mode warning state, and 3D canvas options such as automatic scene-preview loading on map open, fog, draw distance, gizmo size, camera speed, and performance warnings.
-- `settings/history.ini`: stores recent maps and background-image alignment parameters.
+- `settings/history.ini`: stores recent maps, background-image alignment parameters, and per-map Custom Message display preferences.
 
 The settings readers accept only the exact sections, keys, and value forms
 written by the current application. Obsolete aliases, values in the wrong
@@ -129,7 +129,7 @@ section, and loose value forms are ignored and use defaults. Loading an existing
 partial or obsolete file does not rewrite it; an explicit settings save writes a
 complete current-format file.
 
-The bundled executable requires maploader API v12 and loads maps only through
+The bundled executable requires maploader API v13 and loads maps only through
 `kv_load_map_ex()`. Earlier DLLs are rejected by the exact API-version check.
 Build and distribution-cleanup scripts do not migrate or delete obsolete
 root-level INIs or DLLs: if either is present, they stop and require a clean
@@ -200,7 +200,7 @@ Opens tables grouped by stations, structures, track geometry, signals, sounds, e
 - Under Track Geometry, `Gauge Setting Points`, `Cant Center Setting Points`, and `Transition Function Setting Points` independently show white rectangular `CG`, `CC`, and `CF` markers in the plan and matching white two-line boards in the 3D scene. These three options are off by default and are independent of `Curve Radius`.
 - `Section Markers` is off by default. When enabled, green `S` markers and their signal-index parameters appear in 2D and 3D.
 - `Own Track Markers` and `Show Current Position on Plan` control helper displays shared by the 3D scene and 2D plan.
-- `Other -> File Structure Diagram`, `Text Preview`, and `Console` open the corresponding tool windows.
+- `Other -> Custom Messages`, `File Structure Diagram`, `Text Preview`, and `Console` open the corresponding tool windows.
 
 Signal markers are also controlled by the `Show` checkbox in each `Ground Signal List` row. Other-train paths are controlled one at a time in the `Other Train List`.
 
@@ -470,7 +470,7 @@ After opening `Properties/Edit`, supported objects show an edit gizmo. Dragging 
 
 #### New Map Element Wizard
 
-Open the wizard from toolbar `Add Map Element`, or right-click the current mileage in the 3D scene's `Mileage Select` mode. First choose the target source file, then choose a template and enter its parameters. Every loaded non-resource-list map source file, including a blank or distance-free one, is eligible; when the selected source has zero or one numeric distance statement, insertion appends a canonical distance block after its existing text instead of moving existing statements.
+Open the wizard from toolbar `Add Map Element`, or right-click the current mileage in the 3D scene's `Mileage Select` mode. First choose the target source file, then choose a template and enter its parameters. Every loaded non-resource-list map source file, including a blank or distance-free one, is eligible. For distance-based elements, when the selected source has zero or one numeric distance statement, insertion appends a canonical distance block after its existing text instead of moving existing statements. Custom Messages use the header insertion rule below.
 
 The wizard provides the currently supported elements in these categories:
 
@@ -481,8 +481,9 @@ The wizard provides the currently supported elements in these categories:
 - **Signal**: `Signal.Put`, speed-limit Begin/End, Section, signal speed, and `Beacon.Put`.
 - **Sound**: Map sounds, 3D sound sources, rolling noise, flange noise, and joint noise.
 - **Effects**: Background, cab illuminance, fog, and draw distance.
+- **Other**: Custom Messages, stored as comments below the selected map file's header without a mileage field.
 
-`Apply` creates the element and refreshes the preview. `Apply and Edit` closes the wizard after a successful Apply and opens `Properties/Edit` for the primary new statement. A change-point wizard opened from a Repeater Inspector does not offer `Apply and Edit`.
+`Apply` creates the element and refreshes the preview. `Apply and Edit` closes the wizard after a successful Apply and opens `Properties/Edit` for the primary new statement, or the Custom Messages tab for a message. A change-point wizard opened from a Repeater Inspector does not offer `Apply and Edit`.
 
 Important rules:
 
@@ -493,6 +494,22 @@ Important rules:
 - The independent `Curve.Interpolate` template appears immediately after `Curve.*` in Track Geometry. Distance is required; radius and cant are included by default with value `0`. Uncheck cant for the radius-only form, or uncheck radius to disable cant too and create `Curve.Interpolate()`. New elements use the same 2D/3D markers, Properties/Edit, Delete, Apply/Revert, and global Save lifecycle.
 - Other-track templates generate only current `Track.*` forms. Optional trailing arguments must be enabled in order; for example, `radiusH` is required before `radiusV`. A new normalized trackKey creates another track. Numeric keys and quoted string keys remain distinct.
 - If the wizard cannot choose a safe source insertion point automatically, Text Preview highlights parser-approved boundaries for you to choose from. When this manual workflow is actually required, the App Console records an English warning with the stable failure-reason code and the available source context; an automatically reused cached choice remains silent.
+
+#### Custom Messages (Message from Creator)
+
+Choose `Other -> Custom Messages` in the New Map Element Wizard, select a loaded map source, and enter a single-line message. `Apply` stages it in memory; `Save` writes it to the selected Map file. The writer keeps one blank line after the header (reusing an existing blank line), appends to a consecutive message block there, and preserves the existing content:
+
+```plaintext
+BveTs Map 2.02
+
+//--kme--message-from-creator:"content"
+```
+
+This is komapedit metadata inside an ordinary BVE `//` comment. Contents are literal: leading/trailing spaces, quotes and backslashes are preserved, and escape sequences are not decoded. Empty messages are valid; actual line breaks and NUL are rejected. Files retain their encoding, BOM and line endings; unrepresentable text blocks saving.
+
+Opening a map, directly or through a Scenario, displays messages from the root Map and its loaded Includes. Repeated Includes show each physical message once; identical messages on different lines remain separate. Multiple messages have previous/next buttons. `OK` stores the `Do not show again` selection for the resolved root Map in `settings/history.ini`, independently of the recent-file limit. The preference survives message changes and temporary removal of every message. Reload, enabling editing and Apply do not reopen the popup.
+
+Open `Auxiliary Info -> Other -> Custom Messages` to view the source file, line and content even when automatic display is suppressed. With editing enabled, edit or delete messages in this tab, click its `Apply` button, then use `Save` on the top toolbar. Unapplied drafts block Save; the toolbar's `Revert` discards them and pending memory edits. The tab has no separate Save or Revert buttons. `Apply and Edit` in the message wizard opens this tab. Messages have no distance or 2D/3D marker.
 
 #### New File Wizard
 

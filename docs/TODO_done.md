@@ -160,6 +160,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### User Interface and Utilities
 
+- [x] Add Message from Creator using ordinary `//--kme--message-from-creator:"content"` comments. Create literal single-line messages from the New Map Element Wizard's Other category below a selected Map header, display root/loaded-Include messages once per physical location with popup pagination, and retain root-Map suppression in `history.ini` independently of recent-file history. The Auxiliary Info -> Other -> Custom Messages tab shows source locations and supports editing/deletion with in-tab Apply and toolbar Save/Revert through the shared source-backed lifecycle. Add typed contracts and isolated Debug headless coverage.
 - [x] Add source-backed `PreTrain.Pass` distance/time editing and deferred deletion through the existing 2D/3D marker menus, plus a Signal-category New Map Element template. A single time field accepts unquoted `hh:mm:ss` or finite seconds and preserves the value type and untouched expressions. Reuse Apply/Save/Revert, stable edit IDs, semantic validation, and encoding-aware writeback without changing the public ABI. Add typed snapshot/edit coverage and memory-only `--debug-headless-pretrain-edit` validation.
 
 - [x] Make the New Map Element and New File wizards independently resizable in both axes while retaining their `980x660` first-use default; replace the fixed template/form split with a stretch-weighted, mouse-resizable two-column layout whose window geometry and per-wizard column weights are restored through the existing `settings/imgui.ini` lifecycle.
@@ -352,6 +353,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 用户界面与辅助功能
 
+- [x] 通过普通 `//--kme--message-from-creator:"content"` 注释实现 Message from Creator。在新建地图元素向导的“其它”分类中，将单行原文消息插入所选 Map 文件头下方；弹窗分页展示主地图和已加载 Include 中的消息，同一物理位置只显示一次，并在 `history.ini` 中按主 Map 持久保存抑制偏好，不受最近文件列表限制。“辅助信息 -> 其它 -> 自定义消息”标签页显示源码位置，支持编辑、删除及页内“应用”，保存／撤销使用顶部工具栏并沿用共享源码编辑流程。补充类型化契约与隔离夹具的 Debug headless 验证。
 - [x] 为 `PreTrain.Pass` 接入基于源码的里程／时间编辑与延迟删除，复用现有 2D／3D 标记菜单，并在新建地图元素向导的“信号”分类加入模板。单个时间框识别不带引号的 `hh:mm:ss` 或有限秒数，保留参数类型及未修改的表达式；沿用 Apply/Save/Revert、稳定 edit ID、语义验证和编码感知写回，不修改公共 ABI。补充类型化快照／编辑合同及仅操作内存的 `--debug-headless-pretrain-edit` 验证。
 
 - [x] 将“新建地图元素向导”和“新建文件向导”改为长宽均可调整，同时保留首次使用时的 `980x660` 默认尺寸；以按比例伸缩、可用鼠标左右拖动的双栏布局替换固定模板区/表单区，并通过现有 `settings/imgui.ini` 生命周期分别恢复窗口几何信息和各向导的分栏权重。

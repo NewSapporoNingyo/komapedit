@@ -40,7 +40,7 @@ bool expect_no_value_fragment(const Map& translations, const char* fragment) {
 }
 
 bool same_keys(const Translation& translation) {
-    constexpr std::size_t expected_key_count = 595;
+    constexpr std::size_t expected_key_count = 602;
     if (translation.en.size() != expected_key_count ||
         translation.zh.size() != expected_key_count ||
         translation.ja.size() != expected_key_count) {
@@ -84,6 +84,12 @@ bool same_keys(const Translation& translation) {
 int main() {
     const Translation translation;
     bool ok = same_keys(translation);
+    ok = expect_value(translation.en, "frame.creator_messages", "Custom Messages") && ok;
+    ok = expect_value(translation.zh, "frame.creator_messages", "自定义消息") && ok;
+    ok = expect_value(translation.ja, "frame.creator_messages", "カスタムメッセージ") && ok;
+    ok = expect_value(translation.en, "creator_message.do_not_show", "Do not show again") && ok;
+    ok = expect_value(translation.zh, "creator_message.do_not_show", "下次不再显示") && ok;
+    ok = expect_value(translation.ja, "creator_message.do_not_show", "次回から表示しない") && ok;
     ok = expect_value(translation.en, "table.section_values_truncated",
         "Only the first {shown} parameters are shown (largest row: {total}). All parameters remain available in Properties/Edit.") && ok;
     ok = expect_value(translation.zh, "table.section_values_truncated",

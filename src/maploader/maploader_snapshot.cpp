@@ -42,7 +42,8 @@ public:
             ctx_.fogs.size() + ctx_.legacy_fogs.size() +
             ctx_.light_ambient.size() + ctx_.light_diffuse.size() +
             ctx_.light_direction.size() +
-            ctx_.draw_distances.size() + ctx_.speedlimits.size();
+            ctx_.draw_distances.size() + ctx_.speedlimits.size() +
+            ctx_.creator_messages.size();
         const size_t preview_row_count =
             ctx_.variable_assignments.size() + ctx_.resource_list_loads.size();
         storage_.string_arena.reserve(
@@ -60,12 +61,26 @@ public:
         add_other_trains();
         add_sections_signals_and_sounds();
         add_environment();
+        add_creator_messages();
         add_preview_rows();
         add_edit_registry();
         finalize();
     }
 
 private:
+    void add_creator_messages() {
+        storage_.creator_messages.reserve(ctx_.creator_messages.size());
+        for (const CreatorMessage& input : ctx_.creator_messages) {
+            KvCreatorMessageRow row{};
+            row.content = string_ref(input.content);
+            row.file_path = string_ref(input.file_path);
+            row.line = input.line;
+            row.order = input.order;
+            row.metadata = metadata(input.edit_ref, "creator.message");
+            storage_.creator_messages.push_back(row);
+        }
+    }
+
     KvStringRef string_ref(const std::string& text) {
         auto found = strings_.find(text);
         if (found != strings_.end()) return found->second;
@@ -780,6 +795,7 @@ private:
         add_elements("cabIlluminance.change", ctx_.cab_illuminance);
         add_elements("fog.change", ctx_.fogs);
         add_elements("light.ambient", ctx_.light_ambient);
+        add_elements("creator.message", ctx_.creator_messages);
         add_elements("light.diffuse", ctx_.light_diffuse);
         add_elements("light.direction", ctx_.light_direction);
         add_elements("legacyFog.change", ctx_.legacy_fogs);
@@ -863,6 +879,7 @@ private:
         bind(storage_.fogs, view.fogs, view.fog_count);
         bind(storage_.legacy_fogs, view.legacy_fogs, view.legacy_fog_count);
         bind(storage_.light_ambient, view.light_ambient, view.light_ambient_count);
+        bind(storage_.creator_messages, view.creator_messages, view.creator_message_count);
         bind(storage_.light_diffuse, view.light_diffuse, view.light_diffuse_count);
         bind(storage_.light_direction, view.light_direction, view.light_direction_count);
         bind(storage_.draw_distances, view.draw_distances, view.draw_distance_count);

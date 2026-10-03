@@ -325,6 +325,7 @@ void validate_arrays(const KvMapSnapshot& snapshot) {
     CHECK_ARRAY(values, value_count);
     CHECK_ARRAY(string_refs, string_ref_count);
     CHECK_ARRAY(file_structure, file_structure_count);
+    CHECK_ARRAY(creator_messages, creator_message_count);
     CHECK_ARRAY(source_files, source_file_count);
     CHECK_ARRAY(controlpoints, controlpoint_count);
     CHECK_ARRAY(curves, curve_count);
@@ -455,7 +456,7 @@ int scenario_route_contract();
 void light_contract();
 
 int snapshot_contract() {
-    static_assert(KV_MAPLOADER_API_VERSION == 12u, "maploader API contract version");
+    static_assert(KV_MAPLOADER_API_VERSION == 13u, "maploader API contract version");
     static_assert(KV_SCENARIO_EDIT_DOCUMENT_VERSION == 2u,
                   "Scenario edit document contract version");
     TempFixture fixture(true);
@@ -483,6 +484,9 @@ int snapshot_contract() {
     check(!kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION + 1,
                                &first, sizeof(first)),
           "wrong version rejected");
+    check(!kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION - 1,
+                               &first, sizeof(first)),
+          "previous map snapshot ABI rejected");
     check(!kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
                                &first, sizeof(first) - 1),
           "short output rejected");
@@ -10298,7 +10302,336 @@ void pretrain_edit_contract() {
     }
 }
 
+void creator_message_contract() {
+    const auto write = [](const std::filesystem::path& path, const std::string& bytes) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    };
+    const auto read = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), {});
+    };
+    const auto snapshot = [](void* handle) {
+        KvMapSnapshot value{};
+        check(kv_get_map_snapshot(handle, KV_MAP_SNAPSHOT_VERSION, &value, sizeof(value)) != 0,
+              "creator message typed snapshot");
+        validate_arrays(value);
+        return value;
+    };
+    const auto memory = [](void* handle, const std::string& path) {
+        const char* raw = kv_get_source_text(handle, path.c_str());
+        const std::string value = raw ? raw : "";
+        kv_free_string(raw);
+        return value;
+    };
+    const auto apply = [](void* handle, const KvEditBatch& batch) {
+        KvEditReportSnapshot report{};
+        const bool ok = kv_edit_apply_to_memory_typed(handle, &batch, &report, sizeof(report)) &&
+            report.ok && report.full_reparse_ok && report.non_target_changed_count == 0;
+        if (!ok) {
+            for (std::uint64_t i = 0; i < report.blocking_error_count; ++i) {
+                std::cerr << arena_view(report.string_data, report.string_size,
+                                       report.blocking_errors[i]) << '\n';
+            }
+        }
+        return ok;
+    };
+    TempFixture fixture;
+    const auto child = fixture.directory / "creator-child.txt";
+    const std::string child_path = child.u8string();
+    const std::string literal = "  creator \"quoted\" \\path # //  ";
+    const std::string child_before = "BveTs Map 2.02:utf-8\r\n\r\n"
+        " \t//--kme--message-from-creator:\"" + literal + "\"  \t\r\n"
+        "//--kme--message-from-creator:\"\"\r\n"
+        "//--kme--message-from-creator:\"duplicate\"\r\n"
+        "//--kme--message-from-creator:\"duplicate\"\r\n";
+    const std::string root_before = "BveTs Map 2.02:utf-8\n"
+        "//--kme--message-from-creator:\"root\"\n"
+        "$fake='first\n//--kme--message-from-creator:\"in string\"\nlast';\n"
+        "# //--kme--message-from-creator:\"hash comment\"\n"
+        "0; //--kme--message-from-creator:\"inline\"\n"
+        "//--kme--message-from-creator:\"missing quote\n"
+        "//--KME--message-from-creator:\"wrong case\"\n"
+        "Include 'Creator-child.txt';\nInclude 'creator-child.txt';\n"
+        "0; Beacon.Put(1,2,3);\n100;\n";
+    write(fixture.map_path, root_before);
+    write(child, child_before);
+    for (const std::uint32_t profile : {KV_LOAD_PREVIEW,
+                                        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA}) {
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, profile));
+        check(handle.value != nullptr, "creator message profile loads");
+        if (!handle.value) continue;
+        const auto value = snapshot(handle.value);
+        check(value.creator_message_count == 5,
+              "creator message lexer ignores strings, inline comments and malformed markers; Includes deduplicate");
+        if (value.creator_message_count != 5) continue;
+        check(map_string(value, value.creator_messages[1].content) == literal &&
+                  value.creator_messages[1].line == 3 &&
+                  map_string(value, value.creator_messages[1].file_path).find("Creator-child.txt") != std::string::npos &&
+                  map_string(value, value.creator_messages[2].content).empty(),
+              "creator message preserves literal content and original display path casing");
+        check(value.beacon_count == 1 && value.beacons[0].type.number_value == 1,
+              "creator messages do not alter map element semantics");
+        if (!(profile & KV_LOAD_EDIT_METADATA)) {
+            check(value.creator_messages[0].metadata.edit_id.length == 0,
+                  "creator messages are available without edit metadata");
+            continue;
+        }
+        const std::string id = map_string(value, value.creator_messages[1].metadata.edit_id);
+        const std::string hash = map_string(value, value.source_files[
+            value.creator_messages[1].metadata.source_file_index].source_hash);
+        check(!id.empty(), "creator message has stable editable identity");
+        KvEditTargetSnapshot target{};
+        check(kv_get_edit_target_typed(handle.value, utf8_view(id), &target, sizeof(target)) &&
+                  target.elements_for_statement == 1 && target.source.line == 3,
+              "creator message source target metadata");
+        UpdateBatch update(id, hash, "  changed \"inside\" \\literal  ", "content");
+        KvEditReportSnapshot dry{};
+        check(kv_edit_dry_run_typed(handle.value, &update.batch, &dry, sizeof(dry)) && dry.ok,
+              "creator message update dry run");
+        check(apply(handle.value, update.batch), "creator message duplicate Include update applies once");
+        auto changed = snapshot(handle.value);
+        check(changed.creator_message_count == 5 &&
+                  map_string(changed, changed.creator_messages[1].content) == "  changed \"inside\" \\literal  " &&
+                  map_string(changed, changed.creator_messages[1].metadata.edit_id) == id &&
+                  memory(handle.value, child_path).find("\"  \t\r\n") != std::string::npos &&
+                  read(child) == child_before,
+              "creator message update keeps identity, outside whitespace and disk bytes");
+        UpdateBatch repeated(id, hash, "second", "content");
+        check(apply(handle.value, repeated.batch), "creator message repeated Apply uses disk baseline hash");
+        UpdateBatch stale(id, "invalid-disk-hash", "blocked", "content");
+        KvEditReportSnapshot stale_report{};
+        check(!kv_edit_dry_run_typed(handle.value, &stale.batch, &stale_report, sizeof(stale_report)) ||
+                  !stale_report.ok, "creator message stale source hash is rejected");
+        SimpleEditBatch erase(id, KV_EDIT_DELETE, hash);
+        check(apply(handle.value, erase.batch), "creator message deletion from repeated Include");
+        check(snapshot(handle.value).creator_message_count == 4 && read(child) == child_before,
+              "creator message delete is physical and memory-only");
+        check(kv_edit_reset_memory(handle.value), "creator message Reset");
+        auto restored = snapshot(handle.value);
+        check(restored.creator_message_count == 5 &&
+                  map_string(restored, restored.creator_messages[1].metadata.edit_id) == id,
+              "creator message Reset restores content and identity");
+        std::vector<std::string> include_ids;
+        for (std::uint64_t i = 0; i < restored.statement_count; ++i) {
+            if (map_string(restored, restored.statements[i].statement_kind) == "Include") {
+                include_ids.push_back(map_string(restored, restored.statements[i].edit_id));
+            }
+        }
+        check(include_ids.size() == 2, "creator message repeated Include fixture");
+        if (include_ids.size() == 2) {
+            const std::string no_hash;
+            SimpleEditBatch remove_first(include_ids[0], KV_EDIT_DELETE, no_hash);
+            check(apply(handle.value, remove_first.batch), "removing first case-varied Include preserves physical messages");
+            const auto one_include = snapshot(handle.value);
+            check(one_include.creator_message_count == 5 &&
+                      map_string(one_include, one_include.creator_messages[1].file_path).find("creator-child.txt") != std::string::npos,
+                  "physical messages retain the surviving Include display path casing");
+            std::string remaining;
+            for (std::uint64_t i = 0; i < one_include.statement_count; ++i) {
+                if (map_string(one_include, one_include.statements[i].statement_kind) == "Include")
+                    remaining = map_string(one_include, one_include.statements[i].edit_id);
+            }
+            SimpleEditBatch remove_last(remaining, KV_EDIT_DELETE, no_hash);
+            check(apply(handle.value, remove_last.batch), "removing final Include removes physical messages");
+            check(snapshot(handle.value).creator_message_count == 1,
+                  "only root message survives removal of final Include");
+            check(kv_edit_reset_memory(handle.value), "creator message Include Reset");
+        }
+        for (const std::string invalid : {std::string("x\ny"), std::string("x\ry"),
+                                          std::string("x\0y", 3)}) {
+            UpdateBatch bad(id, hash, invalid, "content");
+            KvEditReportSnapshot report{};
+            check(!kv_edit_dry_run_typed(handle.value, &bad.batch, &report, sizeof(report)) || !report.ok,
+                  "creator message rejects line and NUL injection");
+        }
+    }
+
+    {
+        const auto ordered_child = fixture.directory / "creator-order-child.txt";
+        write(ordered_child, "BveTs Map 2.02:utf-8\n"
+            "//--kme--message-from-creator:\"child first\"\n$n=$n+1;\n");
+        const std::string ordered_root = "BveTs Map 2.02:utf-8\n"
+            "$n=0; $file='creator-order-child.txt';\nInclude $file;\n"
+            "//--kme--message-from-creator:\"parent after expression Include\"\n"
+            "Include 'creator-order-child.txt';\n"
+            "//--kme--message-from-creator:\"parent after literal Include\"\n"
+            "$last=$n; $n; Beacon.Put(1,2,$n);\n";
+        write(fixture.map_path, ordered_root);
+        for (const std::uint32_t profile : {KV_LOAD_PREVIEW,
+                                            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA}) {
+            MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, profile));
+            check(handle.value != nullptr, "creator message expanded Include order fixture loads");
+            if (!handle.value) continue;
+            const auto value = snapshot(handle.value);
+            const auto semantics_preserved = [](const KvMapSnapshot& current) {
+                bool final_variable = false;
+                for (std::uint64_t i = 0; i < current.variable_assignment_count; ++i) {
+                    const auto& assignment = current.variable_assignments[i];
+                    if (map_string(current, assignment.normalized_name) == "last") {
+                        final_variable = assignment.value.kind == KV_VALUE_NUMBER &&
+                            assignment.value.number_value == 2;
+                    }
+                }
+                return final_variable && current.beacon_count == 1 &&
+                    current.beacons[0].distance == 2 &&
+                    current.beacons[0].send_data.number_value == 2;
+            };
+            const bool ordered = value.creator_message_count == 3 &&
+                map_string(value, value.creator_messages[0].content) == "child first" &&
+                map_string(value, value.creator_messages[1].content) == "parent after expression Include" &&
+                map_string(value, value.creator_messages[2].content) == "parent after literal Include" &&
+                value.creator_messages[0].order < value.creator_messages[1].order &&
+                value.creator_messages[1].order < value.creator_messages[2].order;
+            check(ordered && semantics_preserved(value),
+                  "creator messages follow expanded Include order and preserve expression and variable semantics");
+            if (!ordered || !(profile & KV_LOAD_EDIT_METADATA)) continue;
+            const std::string id = map_string(value, value.creator_messages[1].metadata.edit_id);
+            const std::string no_hash;
+            UpdateBatch update(id, no_hash, "changed parent message", "content");
+            check(apply(handle.value, update.batch),
+                  "creator message after Include Apply proves unchanged non-target semantics");
+            const auto updated = snapshot(handle.value);
+            check(updated.creator_message_count == 3 && semantics_preserved(updated) &&
+                      map_string(updated, updated.creator_messages[1].metadata.edit_id) == id &&
+                      map_string(updated, updated.creator_messages[1].content) == "changed parent message" &&
+                      read(fixture.map_path) == ordered_root,
+                  "creator message after Include retains order, identity and memory-only Apply");
+        }
+    }
+
+    for (const std::string suffix : {std::string(""), std::string("\r\n0;\r\n100;\r\n"),
+                                    std::string("\r\n\r\n0;\r\n100;\r\n"),
+                                    std::string("\r\n\r\n//--kme--message-from-creator:\"existing\"\r\n0;\r\n100;\r\n")}) {
+        const std::string original = "BveTs Map 2.02:utf-8" + suffix;
+        write(fixture.map_path, original);
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "creator message header variant loads");
+        if (!handle.value) continue;
+        SimpleInsertBatch first(fixture.path_utf8(), "creator-first", {{"rowKind", "creator.message"}, {"content", "first"}});
+        SimpleInsertBatch second(fixture.path_utf8(), "creator-second", {{"rowKind", "creator.message"}, {"content", "second"}});
+        std::array<KvEditChange, 2> changes{first.change, second.change};
+        std::vector<KvEditField> fields = first.fields;
+        changes[1].fields.offset = fields.size();
+        fields.insert(fields.end(), second.fields.begin(), second.fields.end());
+        const KvEditBatch batch{changes.data(), changes.size(), fields.data(), fields.size()};
+        check(apply(handle.value, batch), "creator message same-batch header insert");
+        const std::string working = memory(handle.value, fixture.path_utf8());
+        const std::string nl = suffix.empty() ? "\n" : "\r\n";
+        const bool existing = suffix.find("existing") != std::string::npos;
+        const std::string expected_prefix = "BveTs Map 2.02:utf-8" + nl + nl +
+            (existing ? "//--kme--message-from-creator:\"existing\"" + nl : "") +
+            "//--kme--message-from-creator:\"first\"" + nl +
+            "//--kme--message-from-creator:\"second\"" + nl;
+        check(working.rfind(expected_prefix, 0) == 0 && read(fixture.map_path) == original,
+              "creator message header blank reuse and batch order preserve disk");
+        const std::string first_id = "creator-first";
+        const std::string no_hash;
+        UpdateBatch update_insert(first_id, no_hash, "edited", "content");
+        check(apply(handle.value, update_insert.batch), "creator message unsaved insert remains editable");
+        SimpleEditBatch delete_insert(second.change_id, KV_EDIT_DELETE, no_hash);
+        check(apply(handle.value, delete_insert.batch), "creator message unsaved insert can be deleted");
+        SimpleInsertBatch third(fixture.path_utf8(), "creator-third", {{"rowKind", "creator.message"}, {"content", "third"}});
+        check(apply(handle.value, third.batch), "creator message later creation appends to top block");
+        const std::string final_text = memory(handle.value, fixture.path_utf8());
+        check(final_text.find("edited\"") < final_text.find("third\""),
+              "creator message subsequent insert retains creation order");
+        KvEditReportSnapshot committed{};
+        check(kv_edit_commit_typed(handle.value, &committed, sizeof(committed)) && committed.ok,
+              "creator message Save commits validated source");
+        check(read(fixture.map_path) == final_text, "creator message Save bytes equal working copy");
+        MapHandle reload(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+        check(reload.value && snapshot(reload.value).creator_message_count == (existing ? 3u : 2u),
+              "creator message Save survives reload");
+    }
+
+    const std::string header = "BveTs Map 2.02:utf-8\r\n";
+    const std::string old_message = "//--kme--message-from-creator:\"existing\"";
+    const std::string new_message = "//--kme--message-from-creator:\"new\"\r\n";
+    const std::vector<std::pair<std::string, std::string>> header_edges = {
+        {header, header + "\r\n" + new_message},
+        {header + " \t", header + " \t\r\n" + new_message},
+        {header + " \t\r\n0;", header + " \t\r\n" + new_message + "0;"},
+        {header + old_message, header + "\r\n" + old_message + "\r\n" + new_message},
+        {header + old_message + "\r\n0;", header + "\r\n" + old_message + "\r\n" + new_message + "0;"},
+        {header + "\r\n" + old_message, header + "\r\n" + old_message + "\r\n" + new_message},
+    };
+    for (const auto& edge : header_edges) {
+        write(fixture.map_path, edge.first);
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "creator message header edge loads");
+        if (!handle.value) continue;
+        SimpleInsertBatch insert(fixture.path_utf8(), "creator-edge",
+            {{"rowKind", "creator.message"}, {"content", "new"}});
+        check(apply(handle.value, insert.batch), "creator message header edge Apply");
+        check(memory(handle.value, fixture.path_utf8()) == edge.second && read(fixture.map_path) == edge.first,
+              "creator message preserves blank whitespace, unterminated lines and old top-block order");
+    }
+    {
+        write(fixture.map_path, "BveTs Map 2.02:utf-8");
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "creator message mixed insert fixture load");
+        if (handle.value) {
+            SimpleInsertBatch light(fixture.path_utf8(), "creator-light",
+                {{"rowKind", "light.ambient"}, {"distance", "0"}, {"red", "0.1"}, {"green", "0.2"}, {"blue", "0.3"}});
+            SimpleInsertBatch message(fixture.path_utf8(), "creator-mixed",
+                {{"rowKind", "creator.message"}, {"content", "first"}});
+            std::array<KvEditChange, 2> changes{light.change, message.change};
+            std::vector<KvEditField> fields = light.fields;
+            changes[1].fields.offset = fields.size();
+            fields.insert(fields.end(), message.fields.begin(), message.fields.end());
+            const KvEditBatch batch{changes.data(), changes.size(), fields.data(), fields.size()};
+            check(apply(handle.value, batch), "creator message and Light shared-offset insertion");
+            const std::string working = memory(handle.value, fixture.path_utf8());
+            check(working.rfind("BveTs Map 2.02:utf-8\n\n//--kme--message-from-creator:\"first\"\nLight.Ambient", 0) == 0 &&
+                      snapshot(handle.value).light_ambient_count == 1,
+                  "creator message stays at header while mixed Light semantics validate");
+        }
+    }
+
+    struct Encoding { const char* name; const char* nl; int utf16; const char* bom; };
+    for (const Encoding encoding : {Encoding{"utf-8", "\n", 0, ""},
+             Encoding{"utf-8", "\r\n", 0, "\xef\xbb\xbf"},
+             Encoding{"cp932", "\r\n", 0, ""}, Encoding{"utf-16le", "\r\n", 1, "\xff\xfe"},
+             Encoding{"utf-16be", "\r\n", 2, "\xfe\xff"}, Encoding{"utf-8", "\r", 0, ""}}) {
+        const std::string decoded = std::string("BveTs Map 2.02:") + encoding.name + encoding.nl +
+            "0;" + encoding.nl + "100;" + encoding.nl;
+        const auto encode = [&](const std::string& ascii) {
+            std::string bytes = encoding.bom;
+            for (const char ch : ascii) {
+                if (encoding.utf16 == 2) bytes += '\0';
+                bytes += ch;
+                if (encoding.utf16 == 1) bytes += '\0';
+            }
+            return bytes;
+        };
+        const std::string before = encode(decoded);
+        write(fixture.map_path, before);
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "creator message encoded fixture load");
+        if (!handle.value) continue;
+        if (std::string(encoding.name) == "cp932") {
+            SimpleInsertBatch unrepresentable(fixture.path_utf8(), "creator-unrepresentable",
+                {{"rowKind", "creator.message"}, {"content", u8"\U0001f680"}});
+            KvEditReportSnapshot report{};
+            check(!kv_edit_dry_run_typed(handle.value, &unrepresentable.batch, &report, sizeof(report)) || !report.ok,
+                  "creator message blocks content outside original encoding");
+            check(read(fixture.map_path) == before, "creator message rejected encoding preserves disk");
+        }
+        SimpleInsertBatch insert(fixture.path_utf8(), "creator-encoded",
+            {{"rowKind", "creator.message"}, {"content", "encoding"}});
+        check(apply(handle.value, insert.batch), "creator message encoded insert Apply");
+        const std::string working = memory(handle.value, fixture.path_utf8());
+        KvEditReportSnapshot report{};
+        check(kv_edit_commit_typed(handle.value, &report, sizeof(report)) && report.ok,
+              "creator message encoded Save");
+        check(read(fixture.map_path) == encode(working),
+              "creator message preserves encoding, BOM and line endings byte for byte");
+    }
+}
+
 int edit_contract() {
+    creator_message_contract();
     pretrain_edit_contract();
     untouched_object_key_contract();
     section_sparse_bounds_contract();

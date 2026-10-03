@@ -164,8 +164,11 @@ std::string source_path(const KvMapSnapshot& snapshot, const KvRowMetadata& meta
 }
 
 void begin_element(SemanticWriter& out, const std::string& source,
-                   const std::string& container) {
-    field(out, "source", source);
+                   const std::string& container, std::string_view row_kind = {}) {
+    // A physical message may survive through a differently cased Include
+    // alias. Normalize only its comparison key, preserving displayed paths.
+    if (row_kind == "creator.message") field(out, "source", normalized_source_key(source));
+    else field(out, "source", source);
     field(out, "container", container);
 }
 
@@ -176,7 +179,7 @@ void emit_element(SemanticMapSnapshot& output, SemanticWriter& full,
                   Fn&& append_fields, bool expose_editable_element = true) {
     SemanticWriter canonical;
     const std::string source = source_path(snapshot, metadata);
-    begin_element(canonical, source, container);
+    begin_element(canonical, source, container, row_kind);
     append_fields(canonical);
     const std::string canonical_data = canonical.take();
     full.label("element");
@@ -501,6 +504,15 @@ void write_light_color(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+void write_creator_message(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                           const KvCreatorMessageRow& row,
+                           const MapEditChange* change = nullptr) {
+    const std::string* input = changed_field(change, "content");
+    // Message content is literal user text; unlike BVE keys it is never trimmed.
+    field(out, "content", input ? *input : text(snapshot, row.content));
+    field(out, "filePath", normalized_source_key(text(snapshot, row.file_path)));
+}
+
 void write_light_direction(SemanticWriter& out, const KvMapSnapshot& snapshot,
                            const KvLightDirectionRow& row,
                            const MapEditChange* change = nullptr) {
@@ -821,6 +833,8 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "density", "red", "green", "blue"};
     } else if (target.row_kind == "legacyFog.change") {
         allowed = {"distance", "start", "end", "red", "green", "blue"};
+    } else if (target.row_kind == "creator.message") {
+        allowed = {"content"};
     } else if (target.row_kind == "light.ambient" ||
                target.row_kind == "light.diffuse") {
         allowed = {"red", "green", "blue"};
@@ -1317,6 +1331,26 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         });
     }
 
+    // Physical messages have no evaluation-order effects. Canonical physical
+    // ordering keeps a repeated Include's surviving alias from moving unrelated
+    // messages during an Include update or deletion.
+    std::vector<std::pair<std::string, size_t>> message_indices;
+    message_indices.reserve(static_cast<size_t>(snapshot.creator_message_count));
+    for (size_t i = 0; i < snapshot.creator_message_count; ++i) {
+        message_indices.emplace_back(
+            normalized_source_key(text(snapshot, snapshot.creator_messages[i].file_path)), i);
+    }
+    std::stable_sort(message_indices.begin(), message_indices.end(), [&](const auto& a, const auto& b) {
+        return a.first != b.first ? a.first < b.first :
+            snapshot.creator_messages[a.second].line < snapshot.creator_messages[b.second].line;
+    });
+    for (const auto& index : message_indices) {
+        const size_t i = index.second;
+        const auto& row = snapshot.creator_messages[i];
+        emit_element(output, full, snapshot, row.metadata, "creator.message", "creator.message",
+                     i, [&](SemanticWriter& out) { write_creator_message(out, snapshot, row); });
+    }
+
     std::vector<std::string> variable_names;
     variable_names.reserve(ctx.variables.size());
     for (const auto& variable : ctx.variables) variable_names.push_back(variable.first);
@@ -1347,7 +1381,7 @@ std::string expected_target_semantic(MapContext& ctx,
                 ascii_lower(normalized_station_list_edit_value(station_key->second, 0));
         }
     }
-    begin_element(out, target.source_file, expected_container);
+    begin_element(out, target.source_file, expected_container, target.row_kind);
     if (target.row_kind == "structure.model") {
         if (target.row_index >= snapshot.structure_model_count || !snapshot.structure_models) {
             throw std::runtime_error("structure.model target row is out of bounds");
@@ -1470,6 +1504,11 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("legacyFog.change target row is out of bounds");
         }
         write_legacy_fog(out, snapshot, snapshot.legacy_fogs[target.row_index], &change);
+    } else if (target.row_kind == "creator.message") {
+        if (target.row_index >= snapshot.creator_message_count || !snapshot.creator_messages) {
+            throw std::runtime_error("creator.message target row is out of bounds");
+        }
+        write_creator_message(out, snapshot, snapshot.creator_messages[target.row_index], &change);
     } else if (target.row_kind == "light.ambient" ||
                target.row_kind == "light.diffuse") {
         const KvLightColorRow* rows = target.row_kind == "light.ambient"
@@ -1564,6 +1603,7 @@ struct FakeInsertSnapshotState {
 // row kinds the new-element wizard can insert. Container identity is part of
 // the element canonical, so it must match the reparser output exactly.
 std::string insert_semantic_container(const std::string& row_kind) {
+    if (row_kind == "creator.message") return "creator.message";
     if (row_kind == "structure.put") return "structure.data";
     if (row_kind == "structure.between") return "structure.between_data";
     if (row_kind == "repeater") return "repeater";
@@ -1722,8 +1762,12 @@ std::string expected_insert_semantic(MapContext& ctx,
     fake.snapshot.string_data = fake.arena.data();
     fake.snapshot.string_size = fake.arena.size();
     SemanticWriter out;
-    begin_element(out, target.file_path, insert_semantic_container(row_kind));
-    if (row_kind == "structure.put") {
+    begin_element(out, target.file_path, insert_semantic_container(row_kind), row_kind);
+    if (row_kind == "creator.message") {
+        KvCreatorMessageRow row{};
+        path_row(row);
+        write_creator_message(out, fake.snapshot, row, &semantic_change);
+    } else if (row_kind == "structure.put") {
         KvStructurePutRow row{};
         path_row(row);
         write_structure_put(out, fake.snapshot, row, &semantic_change);

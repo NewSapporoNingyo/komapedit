@@ -81,7 +81,7 @@ struct NewElementTemplateCategoryInfo {
     const char* label_key;
 };
 
-constexpr std::array<NewElementTemplateCategoryInfo, 7>
+constexpr std::array<NewElementTemplateCategoryInfo, 8>
     k_new_element_template_categories = {{
         {"scenery", NewElementTemplateCategory::Scenery, "aux.scenery"},
         {"station", NewElementTemplateCategory::Station, "aux.station"},
@@ -92,6 +92,7 @@ constexpr std::array<NewElementTemplateCategoryInfo, 7>
         {"signal", NewElementTemplateCategory::Signal, "aux.signal"},
         {"sound", NewElementTemplateCategory::Sound, "aux.sound"},
         {"effects", NewElementTemplateCategory::Effects, "aux.effects"},
+        {"other", NewElementTemplateCategory::Other, "aux.other"},
     }};
 
 struct NewFileTemplateCategoryInfo {
@@ -700,6 +701,13 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"value", "value", MapElementNumericConstraint::Finite, true, "0"},
             },
+        },
+        {
+            "creator.message", NewElementTemplateCategory::Other, 0,
+            "creator.message", "",
+            "//--kme--message-from-creator:\"content\"",
+            "new_element.usage.creator_message", false,
+            {{"content", "creator_message.content", MapElementNumericConstraint::None, false, ""}},
         },
     };
     return templates;
@@ -1322,7 +1330,7 @@ void App::rebuild_new_element_wizard_form() {
         MapElementEditFieldState field;
         field.key = spec.key;
         field.backend_key = spec.key;
-        field.label = spec.label;
+        field.label = tpl.row_kind == "creator.message" ? tr(spec.label) : spec.label;
         field.numeric_constraint = spec.constraint;
         field.key_source = map_element_key_source_for_field(form.row_kind, spec.key);
         field.required = spec.required;
@@ -1405,6 +1413,15 @@ bool App::apply_new_element_insert() {
     size_t repeater_structure_key_count = 0;
     for (MapElementEditFieldState& field : form.fields) {
         if (field.disabled) continue;
+        if (tpl.row_kind == "creator.message" && field.key == "content") {
+            const std::string value = edit_field_buffer_text(field);
+            if (value.find_first_of("\r\n") != std::string::npos ||
+                value.find('\0') != std::string::npos) {
+                set_program_status("status.creator_message.single_line");
+                return false;
+            }
+            continue;
+        }
         if (is_section_values_field(field)) {
             const std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
             if (value.empty()) {
@@ -1559,6 +1576,18 @@ bool App::apply_new_element_insert() {
         return false;
     }
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    // The ledger is keyed by identity, not creation order (insert-10 sorts
+    // before insert-2). Preserve message order across every baseline replay.
+    std::uint64_t message_insert_order = 0;
+    if (tpl.row_kind == "creator.message") {
+        for (const auto& entry : candidate) {
+            if (entry.second.operation == "insert" && entry.second.row_kind == "creator.message") {
+                message_insert_order = std::max(message_insert_order, entry.second.source_insert_order);
+            }
+        }
+        if (message_insert_order == std::numeric_limits<std::uint64_t>::max()) return false;
+        ++message_insert_order;
+    }
     std::string insert_base;
     std::string primary_insert_id;
     const auto insert_id_exists = [&](const std::string& base) {
@@ -1578,6 +1607,7 @@ bool App::apply_new_element_insert() {
         change.row_kind = std::string(tpl.row_kind);
         change.operation = "insert";
         change.target_file_path = wizard.target_file_path;
+        change.source_insert_order = message_insert_order;
         return change;
     };
 
@@ -1675,7 +1705,9 @@ bool App::apply_new_element_insert() {
             const std::string& backend_key =
                 field.backend_key.empty() ? field.key : field.backend_key;
             change.field_changes[backend_key] =
-                trim_gui_ascii_copy(edit_field_buffer_text(field));
+                tpl.row_kind == "creator.message"
+                    ? edit_field_buffer_text(field)
+                    : trim_gui_ascii_copy(edit_field_buffer_text(field));
         }
         if (tpl.fixed_distance_zero) {
             change.field_changes["distance"] = "0";
@@ -1697,7 +1729,7 @@ bool App::apply_new_element_insert() {
     }
 
     std::optional<MapElementInspectorRequest> created_element_request;
-    if (wizard.apply_then_open_created_element) {
+    if (wizard.apply_then_open_created_element && tpl.row_kind != "creator.message") {
         created_element_request = MapElementInspectorRequest{
             primary_insert_id, std::string(tpl.row_kind)};
         wizard.return_inspector_request = *created_element_request;
@@ -1715,6 +1747,10 @@ bool App::apply_new_element_insert() {
         }
         return false;
     }
+    if (wizard.apply_then_open_created_element && tpl.row_kind == "creator.message") {
+        show_creator_messages_window_ = true;
+        wizard.close_after_successful_apply = true;
+    }
     finish_new_element_wizard_after_successful_apply();
     set_program_status("status.edit.applied_to_preview");
     return true;
@@ -1729,6 +1765,20 @@ void App::render_new_element_wizard() {
     NewElementWizardState& wizard = new_element_wizard_;
     if (!wizard.target_candidates_built) {
         wizard.target_file_candidates = new_element_target_candidates(model_);
+        const auto& target_templates = new_element_templates();
+        const bool message_template = wizard.selected_template >= 0 &&
+            static_cast<size_t>(wizard.selected_template) < target_templates.size() &&
+            target_templates[static_cast<size_t>(wizard.selected_template)].row_kind == "creator.message";
+        if (message_template) {
+            std::set<std::string> map_paths;
+            for (const auto& node : model_.file_structure) {
+                map_paths.insert(normalized_path_key(node.absolute_path));
+            }
+            auto& candidates = wizard.target_file_candidates;
+            candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
+                [&](const std::string& path) { return !map_paths.count(normalized_path_key(path)); }),
+                candidates.end());
+        }
         wizard.target_candidates_built = true;
         if (wizard.target_file_path.empty() ||
             std::find(wizard.target_file_candidates.begin(),
@@ -1773,10 +1823,12 @@ void App::render_new_element_wizard() {
         const NewElementTemplate& tpl = templates[index];
         const int template_index = static_cast<int>(index);
         const std::string& usage = tr(tpl.usage_key);
-        const std::string template_label = std::string(tpl.syntax) +
+        const std::string template_label =
+            (tpl.row_kind == "creator.message" ? tr("frame.creator_messages") : std::string(tpl.syntax)) +
             "###NewElementTemplate_" + tpl.id;
         if (ImGui::Selectable(template_label.c_str(),
                               wizard.selected_template == template_index)) {
+            if (wizard.selected_template != template_index) wizard.target_candidates_built = false;
             wizard.selected_template = template_index;
         }
         if (ImGui::IsItemHovered()) {
@@ -1994,6 +2046,13 @@ void App::render_new_element_wizard() {
             update_own_track_wizard_field_enablement(wizard);
             render_field("endDistance");
         } else {
+            if (tpl.row_kind == "creator.message") {
+                if (MapElementEditFieldState* content =
+                        find_inspector_field(wizard.form, "content")) {
+                    content->label = tr("creator_message.content") +
+                        "###NewElementCreatorMessageContent";
+                }
+            }
             render_map_element_field_inputs(wizard.form, true);
         }
         ImGui::Separator();

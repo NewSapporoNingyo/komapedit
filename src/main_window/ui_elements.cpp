@@ -318,6 +318,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     dock_main_id_ = dock_main;
     dock_right_id_ = dock_right;
     ImGui::DockBuilderDockWindow("OtherTracks", dock_right);
+    ImGui::DockBuilderDockWindow("CreatorMessages", dock_right);
     ImGui::DockBuilderDockWindow("StationList", dock_right);
     ImGui::DockBuilderDockWindow("Structures", dock_right);
     ImGui::DockBuilderDockWindow("StructuresPutBetween", dock_right);
@@ -373,6 +374,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_signals_window = show_signals_window_;
     visibility.show_sections_window = show_sections_window_;
     visibility.show_variables_window = show_variables_window_;
+    visibility.show_creator_messages_window = show_creator_messages_window_;
     visibility.show_beacons_window = show_beacons_window_;
     visibility.show_irregularities_window = show_irregularities_window_;
     visibility.show_map_sounds_window = show_map_sounds_window_;
@@ -410,6 +412,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_signals_window_ = visibility.show_signals_window;
     show_sections_window_ = visibility.show_sections_window;
     show_variables_window_ = visibility.show_variables_window;
+    show_creator_messages_window_ = visibility.show_creator_messages_window;
     show_beacons_window_ = visibility.show_beacons_window;
     show_irregularities_window_ = visibility.show_irregularities_window;
     show_map_sounds_window_ = visibility.show_map_sounds_window;
@@ -914,6 +917,8 @@ void App::render_menu() {
                         &show_scene_current_position_on_plan_, scene_preview_started_);
         ImGui::Separator();
         ImGui::MenuItem(tr("aux.other").c_str(), nullptr, false, false);
+        ImGui::MenuItem(tr("frame.creator_messages").c_str(), nullptr,
+                        &show_creator_messages_window_);
         if (ImGui::MenuItem(tr("frame.file_structure_diagram").c_str(), nullptr,
                             &show_file_structure_window_) && show_file_structure_window_) {
             focus_file_structure_next_ = true;
@@ -1366,6 +1371,7 @@ void App::render() {
     render_signals_window();
     render_sections_window();
     render_variables_window();
+    render_creator_messages_window();
     render_scenario_file_window();
     render_beacons_window();
     render_irregularities_window();
@@ -1393,6 +1399,7 @@ void App::render() {
     render_new_element_wizard();
     render_new_file_wizard();
     render_popups();
+    render_creator_message_popup();
     process_distance_resolution_retry();
     finish_edit_timing();
     touch_input::apply_touch_scroll_to_hovered_window();

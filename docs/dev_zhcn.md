@@ -102,7 +102,7 @@ ctest --test-dir build --output-on-failure
 
 | 区域 | 主要文件与职责 |
 | --- | --- |
-| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v12 / 地图快照 v8 函数、定宽 POD 快照、Scenario v2 快照与 v2 直写草稿、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
+| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v13 / 地图快照 v9 函数、定宽 POD 快照、Scenario v2 快照与 v2 直写草稿、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
 | 地图生命周期 | `src/maploader/maploader.cpp`：C ABI 入口、句柄、重建、分发、源码读取与边界错误处理 |
 | 地图状态 | `maploader_internal.h`：`MapContext`、解析行、源码跨度、Include 栈、编辑引用、报告与计时 |
 | 解析 | `maploader_core.cpp`、`maploader_parser.cpp`、`text_decoder.cpp/.h`：语句、值、Include、变量、编码、源码锚点、唯一性检查 |
@@ -578,7 +578,8 @@ App / MapModel
 - 保持 `UNICODE`、`_UNICODE`、`NOMINMAX` 和 `WIN32_LEAN_AND_MEAN` 假设。
 - 异常、STL 类型、C++ 类或所有权不明确的指针不得跨越公共 C ABI。
 - DLL 通过 ABI 返回的已分配内存必须有配对释放函数。
-- 随附 EXE 要求 maploader API v12、地图快照 v8 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；`KvScenarioSnapshot` v2 独立分配并由 `kv_free_scenario_snapshot()` 释放，`KvScenarioEditDocument` 使用 v2 候选增删/换序语义，地图、场景几何、编辑目标和编辑报告各自的快照版本与结构尺寸仍独立管理。
+- 随附 EXE 要求 maploader API v13、地图快照 v9 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；`KvScenarioSnapshot` v2 独立分配并由 `kv_free_scenario_snapshot()` 释放，`KvScenarioEditDocument` 使用 v2 候选增删/换序语义，地图、场景几何、编辑目标和编辑报告各自的快照版本与结构尺寸仍独立管理。
+- 地图快照 v9 在 Preview 和 Edit 加载中均提供 `KvCreatorMessageRow` 视图。词法器采集独立的 `//--kme--message-from-creator:` 注释，保留物理来源及 Include 调用身份，发布前按物理消息去重。`creator.message` 类型化编辑接收原文 `content`；文件头插入复用源码补丁、完整重解析和提交流程，不修改里程。`creator_messages.cpp` 管理 GUI 草稿、表格及仅在打开时触发的弹窗。按主 Map 保存的状态共用历史写入器，规范字段为 `[CreatorMessages] count` 和 `[CreatorMessageN] path/has_messages/suppressed`；无消息时仍保留抑制偏好。
 - 强类型 ABI 输入视为调用期视图；嵌套快照存储由句柄持有，并按已记录的几何重建、编辑操作、重置、重解析和释放规则失效。
 - 公共 ABI 变更必须明确决定版本/结构尺寸，同步修改 EXE、DLL 和调用方，并记录所有权与有效期。
 
@@ -634,7 +635,7 @@ App 为每个待保存的既有行 update/delete 保留相对磁盘的原始行�
 - 普通应用 UI 的每一条用户可见文本都要同步加入简体中文、英语和日语，并保持工具栏/菜单措辞简短、语言切换时 ImGui ID 稳定。
 - 直接对应 BVE 地图语句参数的标签必须使用官方英文名称或缩写（例如 `distance`、`trackKey`、`x`、`ry`），不得通过本地化函数翻译。
 - 应用生成的诊断正文和 headless 输出必须全部使用英语；控制台窗口标题、按钮及其他周边普通 UI 仍保持三语。
-- 真正的偏好存入 `settings/settings.ini`，最近地图/背景对齐存入 `settings/history.ini`，布局存入 `settings/imgui.ini`。设置和布局仅在完整写入并关闭文件成功后推进已保存状态。`App::service_pending_persistence` 通过共享空闲等待机制服务两者独立的一秒重试期限，窗口被遮挡时也会处理。布局的待保存状态仍由 ImGui 请求标志持有，磁盘重试不要求持续渲染。
+- 应用偏好存入 `settings/settings.ini`，最近地图/背景对齐以及按主 Map 保存的消息显示偏好存入 `settings/history.ini`，布局存入 `settings/imgui.ini`。设置和布局仅在完整写入并关闭文件成功后推进已保存状态。`App::service_pending_persistence` 通过共享空闲等待机制服务两者独立的一秒重试期限，窗口被遮挡时也会处理。布局的待保存状态仍由 ImGui 请求标志持有，磁盘重试不要求持续渲染。
 - 设置与历史只接受保存端写出的精确节、键和值语法。未知项、旧项、错节项或格式错误项使用默认值；读取已有文件绝不自动重写，显式保存才输出完整规范格式。
 - 保持平移/缩放/旋转/适配、测量、网格、车站跳转、坐标变换、标记同步、上下文操作与背景图对齐行为。
 - hydration 将曲线参数行分类为带 row index 与 edit ID 的 `CurveGauge`、`CurveCenter` 和 `CurveFunction` 标记。平面图绘制独立白色矩形 `CG`/`CC`/`CF` 标记；场景绘制上方代码、下方求值参数的白色双行标牌。场景继续复用现有拾取与蓝色高亮样式。精确 `[View2D]` 键 `show_curve_gauge_markers`、`show_curve_center_markers` 和 `show_curve_function_markers` 默认关闭，分别更新标记可见性而不重建轨道或模型几何。
@@ -777,6 +778,8 @@ plan、scene 和 `--debug-headless-own-track-edit` 共用临时 Map/Include 合�
 `komapedit.exe` 是 GUI 子系统程序；PowerShell 中需要捕获输出时，应使用 `Start-Process -Wait -WindowStyle Hidden -PassThru` 并传入 `--headless-output`。
 
 `--debug-headless-pretrain-edit` 实现在 `src/main_window/headless_pretrain.cpp`，要求地图包含既有 PreTrain.Pass。它按正式路径合并预览／编辑元数据，检查每条既有语句的 Inspector 目标、时刻与秒数的重复 Apply、里程移动、非法输入、延迟删除、向导默认值和两种输入形式、新建后编辑／取消插入，以及 Revert。验证包括 2D 右键目标身份与标签，以及共享 3D 标记构建／刷新数据。命令拒绝 `--commit`，并比较全部已加载源文件的字节。它不模拟界面点击；采用全屏截图的 Computer Use 验收另行执行。`typed_snapshot_contract` 与 `typed_edit_contract` 覆盖类型值、Include 表达式、同里程身份、编码／BOM／换行保留、临时夹具 Save/reload 及磁盘并发保护。现有公共 ABI 不变；编辑字段 `passTime` 识别不带引号的 hh:mm:ss 或有限秒数，不附加 24 小时或时间先后限制。
+
+`--debug-headless-creator-message <map-or-scenario-path> [--scenario-index N] [--unit-distance M] --headless-output <report>` 只读加载指定文档，并在结束时核对全部源文件字节。独立临时夹具验证 Preview/Edit 元数据、向导创建、原文内容、草稿阻断 Save、Apply/Revert/Save/Reload、已加载 Include 的消息及自动弹窗与抑制状态。Include 物理消息去重和源码展开顺序由类型化 DLL 契约覆盖。写入仅发生于隔离的历史配置和地图文件，拒绝 `--commit`。规范消息历史字段解析与往返另运行 `--debug-headless-settings-persistence`；`has_messages` 和 `suppressed` 仅接受 `0` 或 `1`。二者都是显式 Debug 检查，与 CTest 及截图界面验证分别报告。
 
 ## 构建脚本、依赖与分发
 

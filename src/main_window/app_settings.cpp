@@ -383,7 +383,7 @@ void write_bool_settings(
 }
 
 static constexpr std::array<
-    std::pair<std::string_view, bool WindowVisibilitySettings::*>, 33>
+    std::pair<std::string_view, bool WindowVisibilitySettings::*>, 34>
     k_window_visibility_bool_fields{{
         {"show_othertracks_window", &WindowVisibilitySettings::show_othertracks_window},
         {"show_station_list_window", &WindowVisibilitySettings::show_station_list_window},
@@ -398,6 +398,7 @@ static constexpr std::array<
         {"show_signals_window", &WindowVisibilitySettings::show_signals_window},
         {"show_sections_window", &WindowVisibilitySettings::show_sections_window},
         {"show_variables_window", &WindowVisibilitySettings::show_variables_window},
+        {"show_creator_messages_window", &WindowVisibilitySettings::show_creator_messages_window},
         {"show_beacons_window", &WindowVisibilitySettings::show_beacons_window},
         {"show_irregularities_window", &WindowVisibilitySettings::show_irregularities_window},
         {"show_map_sounds_window", &WindowVisibilitySettings::show_map_sounds_window},
@@ -738,15 +739,19 @@ std::optional<int> parse_history_section_index(const std::string& section) {
     return index ? std::optional<int>(static_cast<int>(*index)) : std::nullopt;
 }
 
-std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& path) {
+HistoryState load_history_state(const std::filesystem::path& path) {
     ensure_history_file(path);
     std::ifstream in(path, std::ios::binary);
     if (!in) return {};
 
     const BackgroundHistory default_background;
     std::optional<size_t> recent_count;
+    std::optional<size_t> creator_count;
     std::map<int, RecentMapEntry> parsed;
+    std::map<size_t, CreatorMessageHistory> parsed_creator;
     bool in_recent_section = false;
+    bool in_creator_section = false;
+    std::optional<size_t> creator_index;
     int current_index = -1;
     std::string line;
     while (std::getline(in, line)) {
@@ -754,10 +759,19 @@ std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& pa
         if (trimmed_line.empty() || trimmed_line.front() == ';' || trimmed_line.front() == '#') continue;
         if (trimmed_line.front() == '[') {
             in_recent_section = false;
+            in_creator_section = false;
+            creator_index.reset();
             current_index = -1;
             if (trimmed_line.back() != ']') continue;
             std::string section = trimmed_line.substr(1, trimmed_line.size() - 2);
             in_recent_section = section == "Recent";
+            in_creator_section = section == "CreatorMessages";
+            if (section.rfind("CreatorMessage", 0) == 0 && !in_creator_section) {
+                creator_index = parse_decimal_index(
+                    std::string_view(section).substr(14),
+                    std::numeric_limits<size_t>::max() - 1);
+                if (creator_index) parsed_creator.try_emplace(*creator_index);
+            }
             auto index = in_recent_section
                 ? std::optional<int>{}
                 : parse_history_section_index(section);
@@ -773,6 +787,19 @@ std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& pa
             if (key == "count") {
                 recent_count = parse_decimal_index(value, k_max_recent_maps);
             }
+            continue;
+        }
+        if (in_creator_section) {
+            if (key == "count") {
+                creator_count = parse_decimal_index(value, std::numeric_limits<size_t>::max());
+            }
+            continue;
+        }
+        if (creator_index) {
+            CreatorMessageHistory& entry = parsed_creator[*creator_index];
+            if (key == "path") entry.path = normalized_storage_path(value);
+            else if (key == "has_messages") entry.has_messages = value == "1";
+            else if (key == "suppressed") entry.suppressed = value == "1";
             continue;
         }
         if (current_index < 0) continue;
@@ -799,11 +826,11 @@ std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& pa
         }
     }
 
-    if (!recent_count) return {};
-    std::vector<RecentMapEntry> entries;
+    HistoryState history;
+    std::vector<RecentMapEntry>& entries = history.recent_maps;
     std::set<std::string> seen;
     for (auto& kv : parsed) {
-        if (static_cast<size_t>(kv.first) >= *recent_count) continue;
+        if (!recent_count || static_cast<size_t>(kv.first) >= *recent_count) continue;
         RecentMapEntry entry = std::move(kv.second);
         if (entry.path.empty()) continue;
         std::string key = normalized_path_key(entry.path);
@@ -811,7 +838,17 @@ std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& pa
         entries.push_back(std::move(entry));
         if (entries.size() >= k_max_recent_maps) break;
     }
-    return entries;
+    seen.clear();
+    for (auto& pair : parsed_creator) {
+        if (!creator_count || pair.first >= *creator_count || pair.second.path.empty()) continue;
+        if (!seen.insert(normalized_path_key(pair.second.path)).second) continue;
+        history.creator_messages.push_back(std::move(pair.second));
+    }
+    return history;
+}
+
+std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& path) {
+    return load_history_state(path).recent_maps;
 }
 
 static bool write_history_entries(std::ostream& out, const std::vector<RecentMapEntry>& entries) {
@@ -843,9 +880,26 @@ static bool write_history_entries(std::ostream& out, const std::vector<RecentMap
 }
 
 bool save_history_entries(const std::filesystem::path& path, const std::vector<RecentMapEntry>& entries) {
+    HistoryState history = load_history_state(path);
+    history.recent_maps = entries;
+    return save_history_state(path, history);
+}
+
+bool save_history_state(const std::filesystem::path& path, const HistoryState& history) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) return false;
-    const bool written = write_history_entries(out, entries);
+    const bool written = write_history_entries(out, history.recent_maps);
+    if (!history.creator_messages.empty()) {
+        out << "[CreatorMessages]\ncount=" << history.creator_messages.size() << "\n\n";
+        for (size_t i = 0; i < history.creator_messages.size(); ++i) {
+            const CreatorMessageHistory& entry = history.creator_messages[i];
+            out << "[CreatorMessage" << i << "]\n"
+                << "path=" << normalized_storage_path(entry.path) << "\n"
+                << "has_messages=" << (entry.has_messages ? "1" : "0") << "\n"
+                << "suppressed=" << (entry.suppressed ? "1" : "0") << "\n\n";
+        }
+    }
+    out.flush();
     out.close();
     return written && static_cast<bool>(out);
 }

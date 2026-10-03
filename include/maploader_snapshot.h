@@ -12,8 +12,8 @@
 extern "C" {
 #endif
 
-#define KV_MAPLOADER_API_VERSION 12u
-#define KV_MAP_SNAPSHOT_VERSION 8u
+#define KV_MAPLOADER_API_VERSION 13u
+#define KV_MAP_SNAPSHOT_VERSION 9u
 #define KV_SCENARIO_SNAPSHOT_VERSION 2u
 #define KV_SCENARIO_EDIT_DOCUMENT_VERSION 2u
 #define KV_SCENE_GEOMETRY_SNAPSHOT_VERSION 1u
@@ -586,6 +586,17 @@ typedef struct KvSpeedLimitRow {
     KvRowMetadata metadata;
 } KvSpeedLimitRow;
 
+/* A komapedit message stored in an ordinary BVE Map line comment. One row
+ * represents one physical comment even when its file is included repeatedly.
+ * Strings and metadata have the same snapshot-owned lifetime as other rows. */
+typedef struct KvCreatorMessageRow {
+    KvStringRef content;
+    KvStringRef file_path;
+    int32_t line;
+    int32_t order;
+    KvRowMetadata metadata;
+} KvCreatorMessageRow;
+
 typedef struct KvSourceSpanRow {
     uint64_t source_file_index;
     uint64_t byte_start;
@@ -756,6 +767,8 @@ typedef struct KvMapSnapshot {
     uint64_t statement_count;
     const KvElementRow* elements;
     uint64_t element_count;
+    const KvCreatorMessageRow* creator_messages;
+    uint64_t creator_message_count;
 } KvMapSnapshot;
 
 typedef struct KvSceneTrackRow {

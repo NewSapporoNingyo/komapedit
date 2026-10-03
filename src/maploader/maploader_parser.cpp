@@ -117,6 +117,32 @@ private:
         return src_.compare(pos, token.size(), token) == 0;
     }
 
+    void collect_creator_message(size_t comment_start) {
+        constexpr std::string_view prefix(k_creator_message_prefix);
+        if (std::string_view(src_).substr(comment_start, prefix.size()) != prefix) return;
+        const auto line_it = std::upper_bound(
+            diagnostic_line_starts_.begin(), diagnostic_line_starts_.end(), comment_start);
+        const size_t line_start = line_it == diagnostic_line_starts_.begin()
+            ? 0 : *std::prev(line_it);
+        for (size_t i = line_start; i < comment_start; ++i) {
+            if (src_[i] != ' ' && src_[i] != '\t') return;
+        }
+        const TextLineSpan line = text_line_span(src_, comment_start);
+        const std::string raw = src_.substr(comment_start, line.content_end - comment_start);
+        CreatorMessage row;
+        if (!parse_creator_message_comment(raw, row.content)) return;
+        // Includes are normally merged at the next semantic statement. A
+        // visible message also needs its position in expanded source order.
+        flush_pending_includes();
+        row.file_path = loaded_.normalized_path;
+        row.line = diagnostic_line_column(comment_start).first;
+        row.order = ctx_.next_parse_order();
+        row.edit_ref = add_loaded_line_statement(
+            ctx_, loaded_, ctx_.include_stack, "Creator.Message", comment_start,
+            line.content_end, raw, {row.content}, true);
+        ctx_.creator_messages.push_back(std::move(row));
+    }
+
     void skip() {
         while (!eof()) {
             unsigned char c = static_cast<unsigned char>(src_[pos_]);
@@ -125,6 +151,7 @@ private:
             } else if (c == '#') {
                 pos_ = text_line_span(src_, pos_).next_begin;
             } else if (starts_with(pos_, "//")) {
+                collect_creator_message(pos_);
                 pos_ += 2;
                 pos_ = text_line_span(src_, pos_).next_begin;
             } else if (starts_with(pos_, "\xC2\xA0")) {
@@ -610,6 +637,7 @@ private:
         offset_row_edit_refs(child.fogs, statement_index_base);
         offset_row_edit_refs(child.legacy_fogs, statement_index_base);
         offset_row_edit_refs(child.light_ambient, statement_index_base);
+        offset_row_edit_refs(child.creator_messages, statement_index_base);
         offset_row_edit_refs(child.light_diffuse, statement_index_base);
         offset_row_edit_refs(child.light_direction, statement_index_base);
         offset_row_edit_refs(child.draw_distances, statement_index_base);
@@ -659,6 +687,7 @@ private:
         for (auto& row : child.fogs) offset_order(row.order);
         for (auto& row : child.legacy_fogs) offset_order(row.order);
         for (auto& row : child.light_ambient) offset_order(row.order);
+        for (auto& row : child.creator_messages) offset_order(row.order);
         for (auto& row : child.light_diffuse) offset_order(row.order);
         for (auto& row : child.light_direction) offset_order(row.order);
         for (auto& row : child.draw_distances) offset_order(row.order);
@@ -727,6 +756,7 @@ private:
         for (auto& row : child.fogs) ctx_.fogs.push_back(std::move(row));
         for (auto& row : child.legacy_fogs) ctx_.legacy_fogs.push_back(std::move(row));
         for (auto& row : child.light_ambient) ctx_.light_ambient.push_back(std::move(row));
+        for (auto& row : child.creator_messages) ctx_.creator_messages.push_back(std::move(row));
         for (auto& row : child.light_diffuse) ctx_.light_diffuse.push_back(std::move(row));
         for (auto& row : child.light_direction) ctx_.light_direction.push_back(std::move(row));
         for (auto& row : child.draw_distances) ctx_.draw_distances.push_back(std::move(row));
@@ -2687,6 +2717,23 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
         ScopedTimer timer(&ctx->timing.parse_seconds);
         Parser parser(*ctx, std::move(loaded));
         parser.parse();
+        {
+            std::unordered_map<std::string, size_t> physical_messages;
+            std::vector<CreatorMessage> unique;
+            unique.reserve(ctx->creator_messages.size());
+            for (auto& row : ctx->creator_messages) {
+                const std::string key = normalized_source_key(row.file_path) + "\n" +
+                    std::to_string(row.line);
+                const auto inserted = physical_messages.emplace(key, unique.size());
+                if (inserted.second) {
+                    if (row.edit_ref.valid()) row.include_refs.push_back(row.edit_ref);
+                    unique.push_back(std::move(row));
+                } else if (row.edit_ref.valid()) {
+                    unique[inserted.first->second].include_refs.push_back(row.edit_ref);
+                }
+            }
+            ctx->creator_messages = std::move(unique);
+        }
         validate_light_statements(*ctx);
         validate_station_put_statements(*ctx);
         const FirstResourceListLoads first_loads =

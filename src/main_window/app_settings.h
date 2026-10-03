@@ -32,6 +32,8 @@ bool save_imgui_layout(const std::filesystem::path& path);
 bool imgui_layout_save_pending();
 std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& path);
 bool save_history_entries(const std::filesystem::path& path, const std::vector<RecentMapEntry>& entries);
+HistoryState load_history_state(const std::filesystem::path& path);
+bool save_history_state(const std::filesystem::path& path, const HistoryState& history);
 void apply_ui_settings(float font_size, float component_size, ImVec4 theme_color, float dpi_scale, bool viewports_enabled);
 int normalize_view_2d_mode(int value);
 int normalize_grid_mode(int value);

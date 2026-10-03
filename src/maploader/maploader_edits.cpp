@@ -1570,6 +1570,31 @@ std::string build_light_ambient_statement(const MapEditChange& change,
     return build_light_color_statement(change, statement, row, "Light.Ambient");
 }
 
+const std::string& creator_message_content_field(const MapEditChange& change) {
+    for (const auto& field : change.field_changes) {
+        if (field.first != "content") {
+            throw std::runtime_error("unsupported creator message field: " + field.first);
+        }
+    }
+    const auto found = change.field_changes.find("content");
+    if (found == change.field_changes.end()) {
+        throw std::runtime_error("creator message requires a content field");
+    }
+    if (!valid_creator_message_content(found->second)) {
+        throw std::runtime_error("creator message content must be a single line without NUL");
+    }
+    return found->second;
+}
+
+std::string build_creator_message_statement(const MapEditChange& change,
+                                             const ParsedStatement& statement,
+                                             const CreatorMessage& row) {
+    const std::string& content = creator_message_content_field(change);
+    const size_t content_start = std::char_traits<char>::length(k_creator_message_prefix);
+    return statement.raw_text.substr(0, content_start) + content +
+        statement.raw_text.substr(content_start + row.content.size());
+}
+
 std::string build_light_diffuse_statement(const MapEditChange& change,
                                           const ParsedStatement& statement,
                                           const LightColor& row) {
@@ -2050,7 +2075,56 @@ struct ReferenceInsertionPlan {
     std::string statement;
     size_t identity_begin = 0;
     size_t identity_end = 0;
+    bool needs_blank_line = false;
+    size_t blank_line_offset = k_no_source_ref;
 };
+
+ReferenceInsertionPlan plan_creator_message_insertion(
+    const MapContext& ctx, size_t source_file_index, const SourcePatch& patch,
+    const std::string& statement_text) {
+    const std::string& source_key = ctx.source_files[source_file_index].source_key;
+    const bool map_source = std::any_of(
+        ctx.file_structure.begin(), ctx.file_structure.end(), [&](const auto& file) {
+            return normalized_source_key(file.absolute_path) == source_key;
+        });
+    if (!map_source) throw std::runtime_error("creator message target must be a loaded Map file");
+    const TextLineSpan header = text_line_span(patch.text, 0);
+    ReferenceInsertionPlan plan;
+    plan.offset = header.next_begin;
+    plan.statement = statement_text;
+    plan.identity_end = statement_text.size();
+    plan.needs_blank_line = true;
+    if (header.has_terminator() && plan.offset < patch.text.size()) {
+        const TextLineSpan blank = text_line_span(patch.text, plan.offset);
+        const std::string_view value(patch.text.data() + plan.offset,
+                                     blank.content_end - plan.offset);
+        if (value.find_first_not_of(" \t") == std::string_view::npos) {
+            // statement_insertion_text supplies an unterminated final blank
+            // line's terminator without replacing its original whitespace.
+            plan.offset = blank.next_begin;
+            plan.needs_blank_line = false;
+        }
+    }
+    const size_t block_start = plan.offset;
+    while (plan.offset < patch.text.size()) {
+        const TextLineSpan line = text_line_span(patch.text, plan.offset);
+        size_t start = plan.offset;
+        while (start < line.content_end &&
+               (patch.text[start] == ' ' || patch.text[start] == '\t')) ++start;
+        std::string content;
+        if (!parse_creator_message_comment(std::string_view(
+                patch.text.data() + start, line.content_end - start), content)) break;
+        plan.offset = line.next_begin;
+        if (!line.has_terminator()) break;
+    }
+    if (plan.needs_blank_line && plan.offset != block_start) {
+        // A hand-authored block may start directly after the header. Supply
+        // its missing separator independently, then append to the old block.
+        plan.blank_line_offset = block_start;
+        plan.needs_blank_line = false;
+    }
+    return plan;
+}
 
 struct ResourceListContentInsertionPlan {
     size_t offset = 0;
@@ -2473,6 +2547,8 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
             ctx, ctx.legacy_fogs, "legacyFog.change", edit_id, target) ||
         find_simple_target<decltype(ctx.light_ambient), build_light_ambient_statement>(
             ctx, ctx.light_ambient, "light.ambient", edit_id, target) ||
+        find_simple_target<decltype(ctx.creator_messages), build_creator_message_statement>(
+            ctx, ctx.creator_messages, "creator.message", edit_id, target) ||
         find_simple_target<decltype(ctx.light_diffuse), build_light_diffuse_statement>(
             ctx, ctx.light_diffuse, "light.diffuse", edit_id, target) ||
         find_simple_target<decltype(ctx.light_direction), build_light_direction_statement>(
@@ -2561,6 +2637,9 @@ const KvEditTargetSnapshot& build_edit_target_snapshot(MapContext& ctx,
 std::string build_replacement_statement(const MapEditChange& change,
                                         const ParsedStatement& statement,
                                         const EditableTarget& target) {
+    if (target.row_kind == "creator.message" && !change.replacement_statement.empty()) {
+        throw std::runtime_error("creator message edits require structured content");
+    }
     const bool editable_csv_list =
         target.row_kind == "station.list" ||
         target.row_kind == "signal.aspect" ||
@@ -3101,6 +3180,10 @@ void validate_insert_change(const MapEditChange& change) {
     }
 
     const std::string& row_kind = change.row_kind;
+    if (row_kind == "creator.message") {
+        (void)creator_message_content_field(change);
+        return;
+    }
     if (row_kind == "include") {
         (void)include_path_from_change(change);
         return;
@@ -3331,6 +3414,10 @@ std::string build_insert_statement(const MapEditChange& change,
                                    std::string_view inserted_newline) {
     validate_insert_change(change);
     const std::string& row_kind = change.row_kind;
+    if (row_kind == "creator.message") {
+        return std::string(k_creator_message_prefix) +
+            creator_message_content_field(change) + "\"";
+    }
     if (row_kind == "include") {
         return "include '" + include_path_from_change(change) + "';";
     }
@@ -4114,6 +4201,15 @@ void collect_subtree_element_ids(
     exclude_rows(baseline.cab_illuminance, "cabIlluminance.change");
     exclude_rows(baseline.fogs, "fog.change");
     exclude_rows(baseline.light_ambient, "light.ambient");
+    for (const CreatorMessage& row : baseline.creator_messages) {
+        const bool all_removed = !row.include_refs.empty() && std::all_of(
+            row.include_refs.begin(), row.include_refs.end(), [&](const EditSourceRef& ref) {
+                return ref.valid() && ref.statement_index < removed_statements.size() &&
+                    removed_statements[ref.statement_index];
+            });
+        if (all_removed) deletions->insert(
+            element_edit_id(baseline, row.edit_ref, "creator.message"));
+    }
     exclude_rows(baseline.light_diffuse, "light.diffuse");
     exclude_rows(baseline.light_direction, "light.direction");
     exclude_rows(baseline.legacy_fogs, "legacyFog.change");
@@ -4220,6 +4316,8 @@ struct PreparedEdit {
     std::string replacement_statement;
     std::string operation;
     bool has_custom_identity_range = false;
+    bool needs_blank_line = false;
+    size_t creator_blank_line_offset = k_no_source_ref;
     size_t identity_range_begin = 0;
     size_t identity_range_end = 0;
     bool tail_distance_block_insert = false;
@@ -6233,6 +6331,7 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->fogs, "fog.change");
         collect_candidate_rows(candidate->legacy_fogs, "legacyFog.change");
         collect_candidate_rows(candidate->light_ambient, "light.ambient");
+        collect_candidate_rows(candidate->creator_messages, "creator.message");
         collect_candidate_rows(candidate->light_diffuse, "light.diffuse");
         collect_candidate_rows(candidate->light_direction, "light.direction");
         collect_candidate_rows(candidate->draw_distances, "drawDistance.change");
@@ -7526,6 +7625,27 @@ MapEditReport build_edit_report(MapContext& ctx,
                     }
                     continue;
                 }
+                if (change.row_kind == "creator.message") {
+                    const auto insertion = plan_creator_message_insertion(
+                        ctx, target_file_index, target_patch, build_insert_statement(change));
+                    PreparedEdit edit;
+                    edit.change = &change;
+                    edit.input_ordinal = input_ordinal;
+                    edit.operation = "insert";
+                    edit.target.row_kind = change.row_kind;
+                    edit.target.elements_for_statement = 1;
+                    edit.source_file_index = target_file_index;
+                    edit.source_range = {insertion.offset, insertion.offset};
+                    edit.replacement_statement = insertion.statement;
+                    edit.has_custom_identity_range = true;
+                    edit.identity_range_begin = insertion.identity_begin;
+                    edit.identity_range_end = insertion.identity_end;
+                    edit.needs_blank_line = insertion.needs_blank_line;
+                    edit.creator_blank_line_offset = insertion.blank_line_offset;
+                    ++report.insert_count;
+                    prepared.push_back(std::move(edit));
+                    continue;
+                }
                 if (change.row_kind == "light.ambient" ||
                     change.row_kind == "light.diffuse" ||
                     change.row_kind == "light.direction") {
@@ -8000,6 +8120,7 @@ MapEditReport build_edit_report(MapContext& ctx,
         return edit.operation == "insert" &&
             (edit.target.row_kind == "include" ||
              edit.target.row_kind == "resourceList.load" ||
+             edit.target.row_kind == "creator.message" ||
              resource_list_edit_spec_for_content_row_kind(edit.target.row_kind) ||
              edit.target.row_kind == "light.ambient" ||
              edit.target.row_kind == "light.diffuse" ||
@@ -8007,10 +8128,14 @@ MapEditReport build_edit_report(MapContext& ctx,
     };
     std::map<std::pair<size_t, size_t>, std::vector<const PreparedEdit*>>
         direct_source_inserts;
+    std::set<std::pair<size_t, size_t>> creator_header_gaps;
 
     for (const PreparedEdit& edit : prepared) {
         if (is_direct_source_insert(edit)) {
             direct_source_inserts[{edit.source_file_index, edit.source_range.first}].push_back(&edit);
+            if (edit.creator_blank_line_offset != k_no_source_ref) {
+                creator_header_gaps.emplace(edit.source_file_index, edit.creator_blank_line_offset);
+            }
             continue;
         }
         if (edit.tail_distance_block_insert) continue;
@@ -8031,21 +8156,36 @@ MapEditReport build_edit_report(MapContext& ctx,
         }
     }
 
+    for (const auto& gap : creator_header_gaps) {
+        if (direct_source_inserts.find(gap) == direct_source_inserts.end()) {
+            add_source_replacement(gap.first, gap.second, gap.second,
+                                   newline_text(patches[gap.first].record->newline), nullptr);
+        }
+    }
     for (auto& entry : direct_source_inserts) {
         const size_t file_index = entry.first.first;
         const size_t offset = entry.first.second;
         std::vector<const PreparedEdit*>& inserts = entry.second;
         std::stable_sort(inserts.begin(), inserts.end(),
                          [](const PreparedEdit* left, const PreparedEdit* right) {
+                             const bool left_message = left->target.row_kind == "creator.message";
+                             const bool right_message = right->target.row_kind == "creator.message";
+                             if (left_message != right_message) return left_message;
                              return left->input_ordinal < right->input_ordinal;
                          });
 
         SourcePatch& patch = patches[file_index];
         const std::string nl = newline_text(patch.record->newline);
         std::string insertion_body;
+        if (creator_header_gaps.count(entry.first) != 0 ||
+            std::any_of(inserts.begin(), inserts.end(), [](const PreparedEdit* edit) {
+                return edit->needs_blank_line;
+            })) {
+            insertion_body = nl;
+        }
         std::vector<TextReplacementIdentity> identities;
         for (const PreparedEdit* insert : inserts) {
-            if (!insertion_body.empty()) insertion_body += nl;
+            if (!identities.empty()) insertion_body += nl;
             const size_t statement_begin = insertion_body.size();
             insertion_body += insert->replacement_statement;
             const auto identity_range =
@@ -8828,6 +8968,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "fog.change", ctx.fogs);
     append_committed_rows(ctx, report, "legacyFog.change", ctx.legacy_fogs);
     append_committed_rows(ctx, report, "light.ambient", ctx.light_ambient);
+    append_committed_rows(ctx, report, "creator.message", ctx.creator_messages);
     append_committed_rows(ctx, report, "light.diffuse", ctx.light_diffuse);
     append_committed_rows(ctx, report, "light.direction", ctx.light_direction);
     append_committed_rows(ctx, report, "drawDistance.change", ctx.draw_distances);

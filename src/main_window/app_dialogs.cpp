@@ -1430,6 +1430,7 @@ void App::confirm_scenario_route_selection() {
         scenario_route_pick_.items[static_cast<size_t>(scenario_route_pick_.selected)];
     const bool preserve_settings = scenario_route_pick_.preserve_settings;
     const bool record_history = scenario_route_pick_.record_history;
+    const bool notify_creator_messages = scenario_route_pick_.notify_creator_messages;
     const bool preserve_models = scenario_route_pick_.preserve_scene_preview_models;
     const bool preserve_camera = scenario_route_pick_.preserve_scene_preview_camera;
     auto view_to_restore = std::move(scenario_route_pick_.view_to_restore);
@@ -1437,5 +1438,6 @@ void App::confirm_scenario_route_selection() {
     if (scenario_route_pick_.background_to_restore) background = *scenario_route_pick_.background_to_restore;
     scenario_route_pick_ = ScenarioRoutePickState{};
     begin_map_load(chosen.resolved_path, preserve_settings, record_history,
-                   std::move(background), preserve_models, preserve_camera, std::move(view_to_restore));
+                   std::move(background), preserve_models, preserve_camera, std::move(view_to_restore),
+                   notify_creator_messages);
 }

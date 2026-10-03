@@ -567,6 +567,40 @@ HeadlessScenarioLifecycleOptions parse_headless_scenario_lifecycle_options(
     return options;
 }
 
+HeadlessCreatorMessageOptions parse_headless_creator_message_options(
+    const std::vector<std::string>& args) {
+    HeadlessCreatorMessageOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-creator-message") {
+            options.requested = true;
+            const std::string* value = take_option_value(
+                args, i, arg, "a map or scenario path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--scenario-index") {
+            if (!parse_integer_option(args, i, arg, 0, 1000000,
+                    "--scenario-index must be between 0 and 1000000",
+                    options.scenario_index, options.error)) return options;
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a number",
+                    "--unit-distance must be a positive finite number",
+                    options.unit_distance, options.error,
+                    [](double value) { return value > 0.0 && std::isfinite(value); })) return options;
+        } else if (arg == "--headless-output") {
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.error = "--debug-headless-creator-message writes only its own fixtures";
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-creator-message requires a map or scenario path";
+    }
+    return options;
+}
+
 HeadlessFreshResourceListWorkflowOptions
 parse_headless_fresh_resource_list_workflow_options(
     const std::vector<std::string>& args) {
@@ -2856,6 +2890,7 @@ int run_debug_headless_settings_persistence(
         canonical.edit_mode_warning_suppressed = true;
         canonical.window_visibility.show_station_list_window = true;
         canonical.window_visibility.show_lighting_window = true;
+        canonical.window_visibility.show_creator_messages_window = true;
         canonical.window_visibility.show_console_window = false;
         canonical.view_2d.show_stations = false;
         canonical.view_2d.show_speedlimits = true;
@@ -2876,8 +2911,8 @@ int run_debug_headless_settings_persistence(
         canonical.view_3d.scene_instance_critical_warning_threshold = 6200;
         check(save_user_settings(canonical), "canonical_save");
         const std::string canonical_text = read_text(canonical_path);
-        check(std::count(canonical_text.begin(), canonical_text.end(), '=') == 85,
-              "canonical_key_count_85");
+        check(std::count(canonical_text.begin(), canonical_text.end(), '=') == 86,
+              "canonical_key_count_86");
         check(canonical_text.find("show_curve_gauge_markers=true\n") !=
                   std::string::npos &&
               canonical_text.find("show_curve_center_markers=true\n") !=
@@ -2909,6 +2944,9 @@ int run_debug_headless_settings_persistence(
               "canonical_edit_flags");
         check(canonical_loaded.window_visibility == canonical.window_visibility,
               "canonical_window_visibility");
+        check(canonical_loaded.window_visibility.show_creator_messages_window &&
+                  canonical_text.find("show_creator_messages_window=true\n") != std::string::npos,
+              "canonical_creator_messages_visibility");
         check(canonical_loaded.view_2d == canonical.view_2d, "canonical_view_2d");
         check(canonical_loaded.view_3d == canonical.view_3d, "canonical_view_3d");
 
@@ -2955,7 +2993,7 @@ int run_debug_headless_settings_persistence(
         check(save_user_settings(alias_loaded), "explicit_save_after_legacy_load");
         const std::string rewritten_alias_text = read_text(alias_path);
         check(std::count(
-                  rewritten_alias_text.begin(), rewritten_alias_text.end(), '=') == 85 &&
+                  rewritten_alias_text.begin(), rewritten_alias_text.end(), '=') == 86 &&
                   rewritten_alias_text.find("lang=") == std::string::npos &&
                   rewritten_alias_text.find("enable_edit=") == std::string::npos,
               "explicit_save_writes_canonical_schema");
@@ -3104,6 +3142,57 @@ int run_debug_headless_settings_persistence(
               "leading_zero_count_fixture_write");
         check(load_history_entries(leading_zero_count_path).empty(),
               "history_count_leading_zero_rejected");
+
+        *out << "stage=creator_message_history\n";
+        const auto creator_history_path = temp_root / "history_creator_messages.ini";
+        HistoryState creator_history;
+        creator_history.recent_maps = {first_history};
+        creator_history.creator_messages = {
+            {narrow_path(temp_root / "message-none.txt"), false, false},
+            {narrow_path(temp_root / "message-show.txt"), true, false},
+            {narrow_path(temp_root / "message-hidden.txt"), true, true},
+            {narrow_path(temp_root / "message-removed.txt"), false, true},
+        };
+        check(save_history_state(creator_history_path, creator_history),
+              "creator_history_save");
+        const auto creator_roundtrip = load_history_state(creator_history_path);
+        bool creator_states_match = creator_roundtrip.creator_messages.size() ==
+            creator_history.creator_messages.size();
+        if (creator_states_match) {
+            for (size_t i = 0; i < creator_history.creator_messages.size(); ++i) {
+                const auto& expected = creator_history.creator_messages[i];
+                const auto& actual = creator_roundtrip.creator_messages[i];
+                creator_states_match = creator_states_match &&
+                    normalized_path_key(actual.path) == normalized_path_key(expected.path) &&
+                    actual.has_messages == expected.has_messages && actual.suppressed == expected.suppressed;
+            }
+        }
+        check(creator_states_match, "creator_history_three_states_and_retained_preference");
+        check(creator_roundtrip.recent_maps.size() == 1 &&
+                  creator_roundtrip.recent_maps.front().background.x == first_history.background.x,
+              "creator_history_preserves_recent_background");
+        check(save_history_entries(creator_history_path, {second_history}) &&
+                  load_history_state(creator_history_path).creator_messages.size() == 4,
+              "recent_history_save_preserves_creator_preferences");
+
+        const auto malformed_creator_path = temp_root / "history_creator_malformed.ini";
+        const std::string malformed_creator_text =
+            "[CreatorMessages]\ncount=2\n"
+            "[CreatorMessage00]\npath=ignored-leading-zero\nhas_messages=1\nsuppressed=1\n"
+            "[CreatorMessage0]\npath=" + current_path + "\nhas_messages=true\nsuppressed=01\n"
+            "[CreatorMessage1]\npath=" + first_history.path + "\nhas_messages=1\nsuppressed=1\n"
+            "[CreatorMessage2]\npath=ignored-out-of-count\nhas_messages=1\nsuppressed=1\n"
+            "[Map0]\nhas_messages=1\nsuppressed=1\n";
+        check(write_text(malformed_creator_path, malformed_creator_text), "creator_invalid_fixture_write");
+        const auto malformed_creator = load_history_state(malformed_creator_path);
+        check(malformed_creator.creator_messages.size() == 2 &&
+                  !malformed_creator.creator_messages[0].has_messages &&
+                  !malformed_creator.creator_messages[0].suppressed &&
+                  malformed_creator.creator_messages[1].has_messages &&
+                  malformed_creator.creator_messages[1].suppressed && malformed_creator.recent_maps.empty(),
+              "creator_history_rejects_noncanonical_sections_values_and_wrong_owner");
+        check(read_text(malformed_creator_path) == malformed_creator_text,
+              "creator_history_load_does_not_rewrite");
     } catch (const std::exception& e) {
         *out << "exception=\"" << e.what() << "\"\n";
         exit_code = 3;

@@ -128,6 +128,7 @@ void App::request_edit_ui_operation(PendingEditUiOperation operation) {
 
     const bool apply_operation = operation == PendingEditUiOperation::ApplyInspector ||
         operation == PendingEditUiOperation::ApplyNewElement ||
+        operation == PendingEditUiOperation::ApplyCreatorMessages ||
         operation == PendingEditUiOperation::ApplyOtherTrackRename;
     if (apply_operation && !edit_actions_available()) return;
     if (operation == PendingEditUiOperation::ApplyInspector &&
@@ -175,6 +176,9 @@ void App::process_pending_edit_ui_operation() {
         break;
     case PendingEditUiOperation::ApplyNewElement:
         apply_new_element_insert();
+        break;
+    case PendingEditUiOperation::ApplyCreatorMessages:
+        apply_creator_message_drafts();
         break;
     case PendingEditUiOperation::ApplyOtherTrackRename:
         apply_other_track_rename();
@@ -551,6 +555,10 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
 void App::refresh_local_preview_after_edits(const std::map<std::string, std::string>& targets) {
     if (targets.empty()) return;
     GuiTiming::Stage timing("refresh.local");
+    if (targets.size() == 1 && targets.count("creator.message") != 0) {
+        invalidate_table_cache();
+        return;
+    }
     const auto has = [&](const char* kind) { return targets.count(kind) != 0; };
     if (has("station.put") || has("station.list")) {
         normalize_station_preview_rows(model_);
@@ -988,14 +996,15 @@ TypedEditBatchStorage typed_edit_batch(
         "rowKind", sizeof("rowKind") - 1};
     static constexpr KvUtf8View k_repeater_pair_id_field_name{
         "repeaterPairId", sizeof("repeaterPairId") - 1};
-    const auto is_resource_list_content_insert = [](
+    const auto is_ordered_source_insert = [](
         const MapElementPendingChange& change) {
         return change.operation == "insert" &&
             (change.row_kind == "station.list" ||
              change.row_kind == "structure.model" ||
              change.row_kind == "signal.aspect" ||
              change.row_kind == "sound.list" ||
-             change.row_kind == "sound3D.list");
+             change.row_kind == "sound3D.list" ||
+             change.row_kind == "creator.message");
     };
     std::vector<const MapElementPendingChange*> ordered;
     ordered.reserve(inputs.size());
@@ -1004,7 +1013,7 @@ TypedEditBatchStorage typed_edit_batch(
         insert_groups;
     for (size_t index = 0; index < ordered.size(); ++index) {
         const MapElementPendingChange& change = *ordered[index];
-        if (is_resource_list_content_insert(change)) {
+        if (is_ordered_source_insert(change)) {
             insert_groups[{change.target_file_path, change.insert_before_edit_id}]
                 .push_back(index);
         }
@@ -1014,8 +1023,8 @@ TypedEditBatchStorage typed_edit_batch(
         std::stable_sort(indices.begin(), indices.end(), [&](size_t left, size_t right) {
             const MapElementPendingChange& a = *ordered[left];
             const MapElementPendingChange& b = *ordered[right];
-            if (a.resource_list_insert_order != b.resource_list_insert_order) {
-                return a.resource_list_insert_order < b.resource_list_insert_order;
+            if (a.source_insert_order != b.source_insert_order) {
+                return a.source_insert_order < b.source_insert_order;
             }
             return a.change_id < b.change_id;
         });
@@ -1241,7 +1250,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 32> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 33> k_committed_row_kinds = {
         "curve", "gradient", "structure.model", "structure.put", "structure.between", "station.put",
         "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
         "signal.aspect", "irregularity.change",
@@ -1252,6 +1261,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         "legacyFog.change",
         "drawDistance.change", "speedlimit",
         "section.begin", "section.speedLimit", "otherTrack.change",
+        "creator.message",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
@@ -1539,6 +1549,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     const bool signal_aspects_hydrated =
         affected_row_kinds.find("signal.aspect") !=
         affected_row_kinds.end();
+    const bool creator_messages_hydrated =
+        affected_row_kinds.count("creator.message") != 0;
     const bool alignment_hydrated =
         affected_row_kinds.find("curve") != affected_row_kinds.end() ||
         affected_row_kinds.find("gradient") != affected_row_kinds.end() ||
@@ -1584,7 +1596,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
         return refreshed;
     };
-    if (!full_insert_hydration && (signal_aspects_hydrated || alignment_hydrated)) {
+    if (!full_insert_hydration &&
+        (signal_aspects_hydrated || alignment_hydrated || creator_messages_hydrated)) {
         GuiTiming::Stage partial_refresh("snapshot.partial_refresh");
         KvMapSnapshot snapshot{};
         GuiTiming::Stage snapshot_fetch("snapshot.get");
@@ -1597,6 +1610,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             snapshot.structure_size < sizeof(KvMapSnapshot) ||
             (signal_aspects_hydrated && snapshot.signal_aspect_count != 0 &&
              !snapshot.signal_aspects) ||
+            (creator_messages_hydrated && snapshot.creator_message_count != 0 &&
+             !snapshot.creator_messages) ||
             (alignment_hydrated &&
              ((snapshot.curve_count != 0 && !snapshot.curves) ||
               (snapshot.gradient_count != 0 && !snapshot.gradients) ||
@@ -1613,6 +1628,9 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
         if (signal_aspects_hydrated) {
             model_.signal_aspects = hydrate_signal_aspect_rows(snapshot);
+        }
+        if (creator_messages_hydrated) {
+            model_.creator_messages = hydrate_creator_message_rows(snapshot);
         }
         if (alignment_hydrated) {
             MapModel refreshed = hydrate_preview_snapshot(snapshot);
@@ -1687,6 +1705,9 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     if (signal_aspects_hydrated) {
         note_refresh_target("signal.aspect", std::string{}, true);
     }
+    if (creator_messages_hydrated) {
+        note_refresh_target("creator.message", std::string{}, true);
+    }
     if (alignment_hydrated) {
         note_refresh_target("curve", std::string{}, true);
         note_refresh_target("gradient", std::string{}, true);
@@ -1701,6 +1722,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     for (const auto& kv : pending_edit_changes_) {
         if (changes.find(kv.first) != changes.end()) continue;
         if ((signal_aspects_hydrated && kv.second.row_kind == "signal.aspect") ||
+            (creator_messages_hydrated && kv.second.row_kind == "creator.message") ||
             (alignment_hydrated &&
              (kv.second.row_kind == "curve" || kv.second.row_kind == "gradient" ||
               kv.second.row_kind == "otherTrack.change")) ||
@@ -1716,6 +1738,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
 
     for (const auto& kv : changes) {
         if ((signal_aspects_hydrated && kv.second.row_kind == "signal.aspect") ||
+            (creator_messages_hydrated && kv.second.row_kind == "creator.message") ||
             (alignment_hydrated &&
              (kv.second.row_kind == "curve" || kv.second.row_kind == "gradient" ||
               kv.second.row_kind == "otherTrack.change")) ||
@@ -1838,6 +1861,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
         open_element_inspector(*inspector_request);
     }
     set_program_status("status.edit.saved");
+    refresh_creator_message_history(false);
     edit_timing_outcome_ = "success";
     return true;
 }

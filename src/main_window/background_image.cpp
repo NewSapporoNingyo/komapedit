@@ -430,7 +430,7 @@ void TextureImage::release() {
     path.clear();
 }
 void App::save_history() {
-    if (!save_history_entries(history_path_, recent_maps_)) {
+    if (!save_history_state(history_path_, HistoryState{recent_maps_, creator_message_history_})) {
         KME_ADD_LOG("[WARN] Failed to save history.ini");
     }
 }

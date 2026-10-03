@@ -6,6 +6,7 @@
  */
 
 #include "kme.h"
+#include "datatable_internal.h"
 
 #include "canvas3D.h"
 
@@ -18,6 +19,7 @@ void App::invalidate_table_cache() {
     reset_signal_aspect_find_results();
     reset_sound_file_find_results(false);
     reset_sound_file_find_results(true);
+    datatable_internal::reset_table_find_results(creator_message_find_);
     structure_list_scroll_row_ = -1;
     structure_list_highlight_row_ = -1;
     repeater_list_scroll_row_ = -1;

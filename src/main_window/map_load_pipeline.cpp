@@ -199,6 +199,7 @@ void App::open_document(std::string path, bool record_history,
     if (path.empty() || load_state_.running || edit_ui_operation_pending()) return;
     PendingDocumentOpen request;
     request.path = std::move(path);
+    request.notify_creator_messages = true;
     request.record_history = record_history;
     request.background_to_restore = std::move(background_to_restore);
     if (has_unsaved_edit_state()) {
@@ -222,6 +223,7 @@ void App::reset_document_for_open(bool preserve_scene_preview) {
     file_path_.clear();
     edit_registry_loaded_ = false;
     clear_pending_edit_state();
+    creator_message_popup_ = CreatorMessagePopupState{};
     pending_include_file_change_request_.reset();
     pending_include_file_insert_request_.reset();
     pending_new_file_create_request_.reset();
@@ -282,7 +284,8 @@ void App::perform_open_document(PendingDocumentOpen request) {
         begin_map_load(std::move(request.path), request.preserve_settings, request.record_history,
                        std::move(request.background_to_restore),
                        request.preserve_scene_preview_models,
-                       request.preserve_scene_preview_camera, std::move(view_to_restore));
+                       request.preserve_scene_preview_camera, std::move(view_to_restore),
+                       request.notify_creator_messages);
         return;
     }
 
@@ -344,7 +347,8 @@ void App::perform_open_document(PendingDocumentOpen request) {
         begin_map_load(item.resolved_path, request.preserve_settings, request.record_history,
                        std::move(request.background_to_restore),
                        request.preserve_scene_preview_models,
-                       request.preserve_scene_preview_camera, std::move(view_to_restore));
+                       request.preserve_scene_preview_camera, std::move(view_to_restore),
+                       request.notify_creator_messages);
         KME_ADD_LOG("Opened via scenario: " + request.path);
         KME_ADD_LOG("Resolved route: " + item.route_text + " -> " + item.resolved_path);
         return;
@@ -356,6 +360,7 @@ void App::perform_open_document(PendingDocumentOpen request) {
     scenario_route_pick_.selected = 0;
     scenario_route_pick_.preserve_settings = request.preserve_settings;
     scenario_route_pick_.record_history = request.record_history;
+    scenario_route_pick_.notify_creator_messages = request.notify_creator_messages;
     scenario_route_pick_.preserve_scene_preview_models = request.preserve_scene_preview_models;
     scenario_route_pick_.preserve_scene_preview_camera = request.preserve_scene_preview_camera;
     scenario_route_pick_.view_to_restore = std::move(view_to_restore);
@@ -371,7 +376,8 @@ void App::begin_map_load(std::string path, bool preserve_settings, bool record_h
                          std::optional<BackgroundHistory> background_to_restore,
                          bool preserve_scene_preview_models,
                          bool preserve_scene_preview_camera,
-                         std::optional<MapViewRestoreState> view_to_restore) {
+                         std::optional<MapViewRestoreState> view_to_restore,
+                         bool notify_creator_messages) {
     if (path.empty() || load_state_.running || edit_ui_operation_pending()) return;
     auto load_started_at = std::chrono::steady_clock::now();
 
@@ -404,11 +410,12 @@ void App::begin_map_load(std::string path, bool preserve_settings, bool record_h
                                view_to_restore = std::move(view_to_restore), preserve_settings,
                                record_history, background_to_restore, load_started_at,
                                preserve_scene_preview_models,
-                               preserve_scene_preview_camera, load_options]() mutable {
+                               preserve_scene_preview_camera, notify_creator_messages, load_options]() mutable {
             LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2, load_options);
             result.started_at = load_started_at;
             result.preserve_settings = preserve_settings;
             result.record_history = record_history;
+            result.notify_creator_messages = notify_creator_messages;
             result.preserve_scene_preview_models = preserve_scene_preview_models;
             result.preserve_scene_preview_camera = preserve_scene_preview_camera;
             result.background_to_restore = background_to_restore;
@@ -542,6 +549,7 @@ void App::apply_load_result(LoadResult result) {
     if (result.record_history) {
         touch_recent_map(scenario_source_path_.empty() ? result.path : scenario_source_path_);
     }
+    refresh_creator_message_history(result.notify_creator_messages);
     if (scene_auto_load_on_map_open_ && !scene_preview_started_) {
         start_scene_preview();
     }
@@ -589,7 +597,7 @@ struct EditMetadataTableRows {
     std::vector<TableRow> MapModel::* member;
 };
 
-constexpr std::array<EditMetadataTableRows, 37> k_edit_metadata_table_rows = {{
+constexpr std::array<EditMetadataTableRows, 38> k_edit_metadata_table_rows = {{
     {"curve", &MapModel::curve_rows},
     {"gradient", &MapModel::gradient_rows},
     {"otherTrack.change", &MapModel::other_track_changes},
@@ -627,6 +635,7 @@ constexpr std::array<EditMetadataTableRows, 37> k_edit_metadata_table_rows = {{
     {"speedlimit", &MapModel::speed_limit_rows},
     {"section.begin", &MapModel::section_begins},
     {"section.speedLimit", &MapModel::section_speed_limits},
+    {"creator.message", &MapModel::creator_messages},
 }};
 
 constexpr size_t k_own_track_edit_metadata_row_count = 3;

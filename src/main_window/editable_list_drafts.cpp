@@ -314,7 +314,7 @@ bool build_editable_list_pending_changes(
             change.operation = "insert";
             change.target_file_path = row.target_source_file;
             change.expected_source_hash = row.target_expected_source_hash;
-            change.resource_list_insert_order =
+            change.source_insert_order =
                 static_cast<std::uint64_t>(row_index + 1);
             if (!append_insert_fields(change, row)) return false;
             for (size_t next = row_index + 1; next < rows.size(); ++next) {
@@ -456,7 +456,7 @@ bool build_editable_list_pending_changes(
 }
 
 bool App::has_unapplied_editable_list_drafts() const {
-    return has_editable_list_drafts(
+    return has_creator_message_drafts() || has_editable_list_drafts(
                station_definition_edit_, k_station_definition_edit_spec) ||
         has_editable_list_drafts(
                structure_model_edit_, k_structure_model_edit_spec) ||
@@ -596,6 +596,7 @@ void App::commit_editable_list_active_edit(EditableListEditState& edit,
 }
 
 void App::discard_all_editable_list_drafts() {
+    clear_creator_message_drafts();
     signal_aspect_column_confirmation_.reset();
     pending_editable_list_actions_.clear();
     station_definition_edit_ = EditableListEditState{};

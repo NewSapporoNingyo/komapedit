@@ -568,6 +568,27 @@ void annotate_own_track_transition_links(MapModel& model) {
     }
 }
 
+std::vector<TableRow> hydrate_creator_message_rows(const KvMapSnapshot& snapshot) {
+    if (snapshot.creator_message_count != 0 && !snapshot.creator_messages) {
+        throw std::runtime_error("creator message snapshot has no row storage");
+    }
+    std::vector<TableRow> rows;
+    rows.reserve(static_cast<size_t>(snapshot.creator_message_count));
+    for (std::uint64_t i = 0; i < snapshot.creator_message_count; ++i) {
+        const KvCreatorMessageRow& input = snapshot.creator_messages[i];
+        TableRow row;
+        row.cells["content"] = map_snapshot_string(snapshot, input.content);
+        row.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
+        row.cells["order"] = std::to_string(input.order);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        // Preview messages carry their source even without the edit registry.
+        row.source.file_path = row.cells["filePath"];
+        row.source.line = input.line;
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
 MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
                               const std::string& path,
                               double snapshot_call_seconds) {
@@ -1054,6 +1075,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.beacons.push_back(std::move(row));
     }
+    model.creator_messages = hydrate_creator_message_rows(snapshot);
     model.pretrains.reserve(static_cast<size_t>(snapshot.pretrain_count));
     for (std::uint64_t i = 0; i < snapshot.pretrain_count; ++i) {
         const KvPreTrainRow& input = snapshot.pretrains[i];

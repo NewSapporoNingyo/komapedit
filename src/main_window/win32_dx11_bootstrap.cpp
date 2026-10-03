@@ -569,6 +569,18 @@ int main(int, char**) {
         return App::run_debug_headless_scenario_lifecycle(scenario_lifecycle);
     }
 
+    HeadlessCreatorMessageOptions creator_message =
+        parse_headless_creator_message_options(args);
+    if (creator_message.requested) {
+        if (!creator_message.error.empty()) {
+            std::cerr << creator_message.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-creator-message <map-or-scenario-path> "
+                         "[--scenario-index N] [--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_creator_message(creator_message);
+    }
+
     HeadlessScenarioCreateOptions scenario_create =
         parse_headless_scenario_create_options(args);
     if (scenario_create.requested) {

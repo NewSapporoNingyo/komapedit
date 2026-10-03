@@ -126,7 +126,11 @@ KV_API int kv_get_scene_geometry_snapshot(void* handle, uint32_t version,
 
 /* Typed edit transport. Input views only need to remain valid for the call.
    Returned target/report views are handle-owned and are invalidated as
-   documented by maploader_snapshot.h and the API guide. */
+   documented by maploader_snapshot.h and the API guide. Creator-message edits
+   use rowKind "creator.message" and the literal, single-line "content" field.
+   Inserts target a loaded Map physical file and are placed after its header's
+   separating blank line and consecutive creator-message block. Apply remains
+   memory-only; commit preserves the original encoding and line endings. */
 KV_API int kv_get_edit_target_typed(void* handle, KvUtf8View edit_id,
                                     KvEditTargetSnapshot* out_target,
                                     uint64_t out_size);

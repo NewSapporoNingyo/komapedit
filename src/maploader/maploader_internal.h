@@ -707,6 +707,22 @@ struct LightColor {
     MapDiagnostic source;
 };
 
+struct CreatorMessage {
+    std::string content;
+    std::string file_path;
+    int line = 1;
+    int order = 0;
+    EditSourceRef edit_ref;
+    // Retain every invocation for Include-subtree lifetime validation, while
+    // exposing just one physical message to snapshot consumers.
+    std::vector<EditSourceRef> include_refs;
+};
+
+inline constexpr const char* k_creator_message_prefix =
+    "//--kme--message-from-creator:\"";
+bool parse_creator_message_comment(std::string_view comment, std::string& content);
+bool valid_creator_message_content(const std::string& content);
+
 struct LightDirection {
     double distance = 0.0;
     double pitch = 0.0;
@@ -905,6 +921,7 @@ struct MapSnapshotStorage {
     std::vector<KvFogRow> fogs;
     std::vector<KvLegacyFogRow> legacy_fogs;
     std::vector<KvLightColorRow> light_ambient;
+    std::vector<KvCreatorMessageRow> creator_messages;
     std::vector<KvLightColorRow> light_diffuse;
     std::vector<KvLightDirectionRow> light_direction;
     std::vector<KvDrawDistanceRow> draw_distances;
@@ -1006,6 +1023,7 @@ struct MapContext {
     std::vector<FogChange> fogs;
     std::vector<LegacyFogChange> legacy_fogs;
     std::vector<LightColor> light_ambient;
+    std::vector<CreatorMessage> creator_messages;
     std::vector<LightColor> light_diffuse;
     std::vector<LightDirection> light_direction;
     std::vector<DrawDistanceChange> draw_distances;

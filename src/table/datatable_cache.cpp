@@ -200,6 +200,17 @@ void App::ensure_table_cache() {
     cache.font_size = font_size;
     cache.cell_padding_x = cell_padding_x;
 
+    cache.creator_message_rows.reserve(model_.creator_messages.size());
+    for (const TableRow& row : model_.creator_messages) {
+        CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
+        cached.open_path = row.source.file_path;
+        cached.tooltip_text = row.source.file_path;
+        cached.cells = {display_name_from_path(row.source.file_path) + ":" +
+            std::to_string(row.source.line), table_cell(row, "content")};
+        cache.creator_message_rows.push_back(std::move(cached));
+    }
+
     append_station_table_rows(model_.station_list_rows, k_station_position_columns,
                               cache.station_position_rows);
     append_station_table_rows(model_.station_definition_rows, k_station_definition_columns,

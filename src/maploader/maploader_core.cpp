@@ -190,6 +190,26 @@ std::string detect_newline(const std::string& text) {
     return "none";
 }
 
+bool valid_creator_message_content(const std::string& content) {
+    return content.find_first_of("\r\n") == std::string::npos &&
+        content.find('\0') == std::string::npos;
+}
+
+bool parse_creator_message_comment(std::string_view comment, std::string& content) {
+    constexpr std::string_view prefix(k_creator_message_prefix);
+    while (!comment.empty() && (comment.back() == ' ' || comment.back() == '\t')) {
+        comment.remove_suffix(1);
+    }
+    if (comment.size() < prefix.size() + 1 ||
+        comment.substr(0, prefix.size()) != prefix || comment.back() != '"') {
+        return false;
+    }
+    std::string value(comment.substr(prefix.size(), comment.size() - prefix.size() - 1));
+    if (!valid_creator_message_content(value)) return false;
+    content = std::move(value);
+    return true;
+}
+
 LoadedText make_loaded_header_text(const std::filesystem::path& path,
                                    std::string text,
                                    std::string encoding,

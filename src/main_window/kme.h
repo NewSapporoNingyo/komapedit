@@ -45,6 +45,7 @@ struct Canvas3DPlacementDragUpdate;
 struct Canvas3DPlacementEditTarget;
 struct Canvas3DSceneMarkerVisibility;
 struct KvEditReportSnapshot;
+struct KvMapSnapshot;
 namespace repeater_linkage {
 struct Event;
 }
@@ -64,6 +65,7 @@ struct HeadlessTableCacheBenchmarkOptions;
 struct HeadlessEditBenchmarkOptions;
 struct HeadlessOwnTrackEditOptions;
 struct HeadlessOtherTrackEditOptions;
+struct HeadlessCreatorMessageOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
 struct HeadlessLightEditOptions;
@@ -530,6 +532,7 @@ struct TableUiCache {
     size_t section_begin_value_columns = 0;
     size_t section_speed_limit_value_columns = 0;
     std::vector<CachedVariableRow> variable_rows;
+    std::vector<CachedTableRow> creator_message_rows;
     std::vector<CachedRepeaterRow> repeater_rows;
     std::vector<CachedTableRow> signal_aspect_rows;
     std::vector<EditableListDisplayRow> signal_aspect_display_rows;
@@ -600,6 +603,7 @@ struct TableUiCache {
 };
 
 const std::string& table_cell(const TableRow& row, const std::string& key);
+std::vector<TableRow> hydrate_creator_message_rows(const KvMapSnapshot& snapshot);
 double table_cell_number(const TableRow& row, const std::string& key);
 std::vector<repeater_linkage::Event> table_repeater_events(
     const std::vector<TableRow>& rows);
@@ -611,6 +615,7 @@ void annotate_scene_track_key_warnings(MapModel& model);
 
 struct MapModel {
     std::string path;
+    std::vector<TableRow> creator_messages;
     std::vector<FileStructureNode> file_structure;
     std::uint64_t file_structure_revision = 0;
     std::vector<EditSourceFileInfo> edit_files;
@@ -715,6 +720,7 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "curve") return &model.curve_rows;
     if (row_kind == "gradient") return &model.gradient_rows;
     if (row_kind == "otherTrack.change") return &model.other_track_changes;
+    if (row_kind == "creator.message") return &model.creator_messages;
     return nullptr;
 }
 
@@ -1019,6 +1025,7 @@ struct WindowVisibilitySettings {
     bool show_signals_window = false;
     bool show_sections_window = false;
     bool show_variables_window = false;
+    bool show_creator_messages_window = false;
     bool show_beacons_window = false;
     bool show_irregularities_window = false;
     bool show_map_sounds_window = false;
@@ -1054,6 +1061,7 @@ struct WindowVisibilitySettings {
             show_signals_window == other.show_signals_window &&
             show_sections_window == other.show_sections_window &&
             show_variables_window == other.show_variables_window &&
+            show_creator_messages_window == other.show_creator_messages_window &&
             show_beacons_window == other.show_beacons_window &&
             show_irregularities_window == other.show_irregularities_window &&
             show_map_sounds_window == other.show_map_sounds_window &&
@@ -1257,6 +1265,7 @@ enum class NewElementTemplateCategory {
     Signal,
     Sound,
     Effects,
+    Other,
 };
 
 struct NewElementTemplate {
@@ -1324,7 +1333,7 @@ struct MapElementPendingChange {
     std::string target_file_path;
     std::string expected_source_hash;
     std::string insert_before_edit_id;
-    std::uint64_t resource_list_insert_order = 0;
+    std::uint64_t source_insert_order = 0;
     std::string distance_resolution_key;
     std::string distance_boundary_token;
     std::string distance_expression;
@@ -1561,6 +1570,7 @@ struct MapViewRestoreState {
 // load itself always uses the resolved absolute map path.
 struct ScenarioRoutePickState {
     bool popup_requested = false;
+    bool notify_creator_messages = false;
     std::string scenario_path;
     std::vector<ScenarioRoutePickItem> items;
     int selected = 0;
@@ -1826,11 +1836,40 @@ struct RecentMapEntry {
     BackgroundHistory background;
 };
 
+struct CreatorMessageHistory {
+    std::string path;
+    bool has_messages = false;
+    bool suppressed = false;
+};
+
+struct HistoryState {
+    std::vector<RecentMapEntry> recent_maps;
+    std::vector<CreatorMessageHistory> creator_messages;
+};
+
+struct CreatorMessageDraft {
+    std::string edit_id;
+    std::string source_file;
+    std::string expected_source_hash;
+    std::string original_content;
+    std::string content;
+    bool deleted = false;
+};
+
+struct CreatorMessagePopupState {
+    bool requested = false;
+    bool suppressed = false;
+    size_t index = 0;
+    std::string map_path;
+    std::vector<std::string> contents;
+};
+
 class App {
 public:
     using GuiTiming = kme::timing::GuiTiming;
 #ifndef NDEBUG
     static int run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& options);
+    static int run_debug_headless_creator_message(const HeadlessCreatorMessageOptions& options);
 #endif
     explicit App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled, bool has_saved_layout);
     ~App();
@@ -2003,6 +2042,11 @@ private:
     std::chrono::steady_clock::time_point imgui_layout_save_retry_at_{};
     std::filesystem::path history_path_;
     std::vector<RecentMapEntry> recent_maps_;
+    std::vector<CreatorMessageHistory> creator_message_history_;
+    CreatorMessagePopupState creator_message_popup_;
+    std::map<std::string, CreatorMessageDraft> creator_message_drafts_;
+    TableFindState creator_message_find_;
+    std::string creator_message_selected_id_;
 
     void* handle_ = nullptr;
     MapModel model_;
@@ -2057,6 +2101,7 @@ private:
         ApplyInspector,
         ApplyNewElement,
         ApplyOtherTrackRename,
+        ApplyCreatorMessages,
         Save,
         SaveAndResolveClose,
         Revert,
@@ -2074,6 +2119,7 @@ private:
 
     struct LoadResult {
         bool ok = false;
+        bool notify_creator_messages = false;
         bool preserve_settings = false;
         bool record_history = false;
         bool full_edit_registry = false;
@@ -2098,6 +2144,7 @@ private:
     };
     struct PendingDocumentOpen {
         std::string path;
+        bool notify_creator_messages = false;
         bool record_history = false;
         std::optional<BackgroundHistory> background_to_restore;
         bool preserve_settings = false;
@@ -2201,6 +2248,7 @@ private:
     bool show_signals_window_ = false;
     bool show_sections_window_ = false;
     bool show_variables_window_ = false;
+    bool show_creator_messages_window_ = false;
     bool show_beacons_window_ = false;
     bool show_irregularities_window_ = false;
     bool show_map_sounds_window_ = false;
@@ -2503,7 +2551,8 @@ private:
                         std::optional<BackgroundHistory> background_to_restore = std::nullopt,
                         bool preserve_scene_preview_models = false,
                         bool preserve_scene_preview_camera = false,
-                        std::optional<MapViewRestoreState> view_to_restore = std::nullopt);
+                        std::optional<MapViewRestoreState> view_to_restore = std::nullopt,
+                        bool notify_creator_messages = false);
     void apply_load_result(LoadResult result);
     void begin_edit_metadata_load();
     void apply_edit_metadata_result(LoadResult result);
@@ -2730,6 +2779,14 @@ private:
     void render_signals_window();
     void render_sections_window();
     void render_variables_window();
+    void render_creator_messages_window();
+    void render_creator_message_popup();
+    bool has_creator_message_drafts() const;
+    void clear_creator_message_drafts();
+    bool set_creator_message_draft(const std::string& edit_id, std::string content, bool deleted);
+    bool apply_creator_message_drafts();
+    void refresh_creator_message_history(bool request_popup);
+    void confirm_creator_message_popup();
     void render_scenario_file_window();
     void render_beacons_window();
     void render_irregularities_window();

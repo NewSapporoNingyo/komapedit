@@ -286,6 +286,7 @@ add_executable(komapedit
     src/main_window/element_inspector_data.cpp
     src/main_window/element_inspector_render.cpp
     src/main_window/editable_list_drafts.cpp
+    src/main_window/creator_messages.cpp
     src/main_window/new_element_wizard.cpp
     src/main_window/app_dialogs.cpp
     src/main_window/ui_elements.cpp
@@ -335,6 +336,7 @@ if(KOMAPEDIT_DEBUG_BUILD)
     target_sources(komapedit PRIVATE
         src/main_window/debug_headless.cpp
         src/main_window/headless_entrypoints.cpp
+        src/main_window/creator_message_validation.cpp
         src/main_window/headless_pretrain.cpp
         src/main_window/legacy_fog_edit_validation.cpp
         src/main_window/signal_aspect_columns_validation.cpp

@@ -122,7 +122,9 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     sync_scene_settings_dialog_state_from_current();
     apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
     history_path_ = default_history_path();
-    recent_maps_ = load_history_entries(history_path_);
+    HistoryState history = load_history_state(history_path_);
+    recent_maps_ = std::move(history.recent_maps);
+    creator_message_history_ = std::move(history.creator_messages);
     sync_pending_background_values();
 }
 
