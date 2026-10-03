@@ -77,6 +77,8 @@ bool editable_list_row_has_draft(const EditableListDraftRow& row) {
     return row.inserted || row.deleted || row.secondary_row_deleted ||
         row.secondary_row_added ||
         row.payload_edit_id != row.target_edit_id ||
+        row.primary_structure_field_count != row.original_primary_structure_field_count ||
+        row.secondary_structure_field_count != row.original_secondary_structure_field_count ||
         row.values != row.original_values;
 }
 
@@ -197,6 +199,7 @@ void rebuild_editable_list_display_rows(
     EditableListEditState& edit,
     const EditableListSpec& spec) {
     edit.display_rows.clear();
+    edit.structure_key_columns = 0;
     if (!spec.numbered_structure_key_fields) return;
     edit.display_rows.reserve(
         edit.visible_rows.size() * 2);
@@ -208,6 +211,11 @@ void rebuild_editable_list_display_rows(
         if (draft_index >= edit.rows.size()) continue;
         const EditableListDraftRow& row =
             edit.rows[draft_index];
+        if (!row.deleted) {
+            edit.structure_key_columns = std::max(edit.structure_key_columns,
+                std::max(row.primary_structure_field_count,
+                    row.secondary_row_deleted ? 0 : row.secondary_structure_field_count));
+        }
         const std::string sequence =
             std::to_string(visible_row + 1);
         edit.display_rows.push_back(
@@ -245,8 +253,7 @@ bool build_editable_list_pending_changes(
         change.field_changes[field_name] = value;
         return true;
     };
-    const auto validate_insert_shape = [&](const EditableListDraftRow& row,
-                                           bool replay = false) {
+    const auto validate_insert_shape = [&](const EditableListDraftRow& row) {
         if (!spec.numbered_structure_key_fields) {
             if (row.values.size() != spec.field_count) {
                 error_message = std::string(spec.row_kind) +
@@ -257,10 +264,9 @@ bool build_editable_list_pending_changes(
         }
         const size_t glare_count = row.secondary_structure_field_count;
         const size_t main_count = row.primary_structure_field_count;
-        if ((replay ? main_count == 0 || main_count > 5 : main_count != 5) ||
-            (replay ? glare_count > 5 : glare_count != 0 && glare_count != 5) ||
+        if (main_count == 0 ||
             row.values.size() != 1 + main_count + glare_count) {
-            error_message = "signal.aspect insert must contain one aspect key and five structure keys";
+            error_message = "signal.aspect insert has an invalid physical row shape";
             return false;
         }
         return true;
@@ -276,30 +282,16 @@ bool build_editable_list_pending_changes(
             return true;
         }
         if (!set_field(change, 0, row.values[0])) return false;
-        // The parser trims trailing empty columns in each physical row.
-        // Rebuild the fixed five-column insert form from each typed row's
-        // own boundary so compact glare keys never shift into the main row.
-        for (size_t index = 0; index < 5; ++index) {
-            if (!set_field(change, 1 + index,
-                    index < row.primary_structure_field_count
-                        ? row.values[1 + index] : std::string{})) return false;
+        const size_t glare_count = row.secondary_row_deleted
+            ? 0 : row.secondary_structure_field_count;
+        change.field_changes["mainStructureKeyCount"] =
+            std::to_string(row.primary_structure_field_count);
+        change.field_changes["glareStructureKeyCount"] = std::to_string(glare_count);
+        for (size_t index = 0; index < row.primary_structure_field_count + glare_count; ++index) {
+            if (!set_field(change, 1 + index, row.values[1 + index])) return false;
         }
-        if (!row.secondary_row_deleted && row.secondary_structure_field_count != 0) {
-            const size_t glare_begin = 1 + row.primary_structure_field_count;
-            const bool has_glare_key = std::any_of(
-                row.values.begin() + static_cast<std::ptrdiff_t>(glare_begin),
-                row.values.end(),
-                [](const std::string& value) { return !value.empty(); });
-            if (!has_glare_key) {
-                error_message = "signal.aspect glare requires at least one structure key";
-                return false;
-            }
-            for (size_t index = 0; index < 5; ++index) {
-                if (!set_field(change, 6 + index,
-                        index < row.secondary_structure_field_count
-                            ? row.values[glare_begin + index] : std::string{})) return false;
-            }
-            change.field_changes["addGlare"] = "5";
+        if (glare_count != 0) {
+            change.field_changes["addGlare"] = std::to_string(glare_count);
         }
         return true;
     };
@@ -380,11 +372,50 @@ bool build_editable_list_pending_changes(
             }
             change.operation = pending_insert ? "insert" : "update";
             const bool moved = row.payload_edit_id != row.target_edit_id;
+            // Existing key-only rows remain movable without upgrading their
+            // source shape. Explicit Append/Align creates the first key cell.
+            const bool moved_key_only_signal = spec.numbered_structure_key_fields && moved &&
+                row.primary_structure_field_count == 0 && row.secondary_structure_field_count == 0 &&
+                !row.secondary_row_added && !row.secondary_row_deleted && row.values.size() == 1;
             if (pending_insert) {
-                if (!validate_insert_shape(row, true)) return false;
+                if (!validate_insert_shape(row)) return false;
                 change.field_changes.clear();
                 change.replacement_statement.clear();
                 if (!append_insert_fields(change, row)) return false;
+            } else if (spec.numbered_structure_key_fields && !moved_key_only_signal &&
+                (moved || row.primary_structure_field_count != row.original_primary_structure_field_count ||
+                 row.secondary_structure_field_count != row.original_secondary_structure_field_count ||
+                 row.secondary_row_added || row.secondary_row_deleted ||
+                 change.field_changes.count("mainStructureKeyCount") != 0)) {
+                if (moved && (row.payload_source_file != row.target_source_file ||
+                              row.payload_raw_statement.empty())) {
+                    error_message = "signal.aspect row move lost its source template";
+                    return false;
+                }
+                // Shape fields describe the complete final block; discard stale
+                // numbered values from earlier Apply operations before replay.
+                for (auto field = change.field_changes.begin(); field != change.field_changes.end();) {
+                    if (field->first.rfind("structureKey", 0) == 0 ||
+                        field->first == "addGlare" || field->first == "deleteGlare") {
+                        field = change.field_changes.erase(field);
+                    } else {
+                        ++field;
+                    }
+                }
+                const size_t glare_count = row.secondary_row_deleted
+                    ? 0 : row.secondary_structure_field_count;
+                if (row.values.size() != 1 + row.primary_structure_field_count +
+                                               row.secondary_structure_field_count) {
+                    error_message = "signal.aspect draft has an invalid physical row shape";
+                    return false;
+                }
+                change.field_changes["mainStructureKeyCount"] =
+                    std::to_string(row.primary_structure_field_count);
+                change.field_changes["glareStructureKeyCount"] = std::to_string(glare_count);
+                for (size_t field = 0; field <= row.primary_structure_field_count + glare_count; ++field) {
+                    if (!set_field(change, field, row.values[field])) return false;
+                }
+                if (moved) change.replacement_statement = row.payload_raw_statement;
             } else if (moved) {
                 if (row.payload_source_file != row.target_source_file ||
                     row.payload_raw_statement.empty()) {
@@ -414,23 +445,9 @@ bool build_editable_list_pending_changes(
                     }
                 }
             }
-            if (!pending_insert && row.secondary_row_deleted) {
-                change.field_changes["deleteGlare"] = "1";
-            }
-            if (!pending_insert && row.secondary_row_added) {
-                const size_t glare_begin = row.values.size() -
-                    row.secondary_structure_field_count;
-                const bool has_glare_key = std::any_of(
-                    row.values.begin() + static_cast<std::ptrdiff_t>(glare_begin),
-                    row.values.end(),
-                    [](const std::string& value) { return !value.empty(); });
-                if (!has_glare_key) {
-                    error_message = "signal.aspect glare requires at least one structure key";
-                    return false;
-                }
-                change.field_changes["addGlare"] =
-                    std::to_string(row.secondary_structure_field_count);
-            }
+            // Complete shape counts also describe glare creation/removal.
+            // Do not replay addGlare/deleteGlare against the disk baseline:
+            // that baseline may still contain a glare deleted in memory.
         }
         candidate_changes[row.target_edit_id] = std::move(change);
     }
@@ -529,6 +546,8 @@ bool App::initialize_editable_list_draft_rows(EditableListEditState& edit,
             cached.primary_structure_field_count;
         row.secondary_structure_field_count =
             cached.secondary_structure_field_count;
+        row.original_primary_structure_field_count = row.primary_structure_field_count;
+        row.original_secondary_structure_field_count = row.secondary_structure_field_count;
         rows.push_back(std::move(row));
     }
     edit.rows = std::move(rows);
@@ -577,6 +596,8 @@ void App::commit_editable_list_active_edit(EditableListEditState& edit,
 }
 
 void App::discard_all_editable_list_drafts() {
+    signal_aspect_column_confirmation_.reset();
+    pending_editable_list_actions_.clear();
     station_definition_edit_ = EditableListEditState{};
     structure_model_edit_ = EditableListEditState{};
     signal_aspect_edit_ = EditableListEditState{};
@@ -627,6 +648,18 @@ void App::run_pending_editable_list_actions() {
         case DeferredEditableListAction::Kind::DeleteGlare:
             delete_editable_list_secondary_row(edit, spec, action.visible_row);
             break;
+        case DeferredEditableListAction::Kind::AppendSignalCell:
+            request_signal_aspect_column_action(SignalAspectColumnAction::Append,
+                action.visible_row, action.select_secondary);
+            break;
+        case DeferredEditableListAction::Kind::RemoveLastSignalCell:
+            request_signal_aspect_column_action(SignalAspectColumnAction::RemoveLast,
+                action.visible_row, action.select_secondary);
+            break;
+        case DeferredEditableListAction::Kind::TrimSignalCells:
+            request_signal_aspect_column_action(SignalAspectColumnAction::TrimTrailing,
+                action.visible_row, action.select_secondary);
+            break;
         }
     }
 }
@@ -642,6 +675,153 @@ bool App::move_editable_list_row(EditableListEditState& edit,
     edit.selected_row = visible_row + direction;
     edit.selected_secondary_row = false;
     rebuild_editable_list_display_rows(edit, spec);
+    return true;
+}
+
+bool App::request_signal_aspect_column_action(SignalAspectColumnAction action,
+                                              int visible_row, bool secondary) {
+    if (!edit_actions_available() || signal_aspect_column_confirmation_) return false;
+    auto& edit = signal_aspect_edit_;
+    commit_editable_list_active_edit(edit, k_signal_aspect_edit_spec);
+    if (!initialize_editable_list_draft_rows(edit, k_signal_aspect_edit_spec)) return false;
+    if (visible_row < -1 || visible_row >= static_cast<int>(edit.visible_rows.size()) ||
+        (action == SignalAspectColumnAction::AlignAll && visible_row != -1)) return false;
+
+    size_t maximum = 1;
+    if (action == SignalAspectColumnAction::AlignAll) {
+        for (const auto& row : edit.rows) {
+            if (row.deleted) continue;
+            maximum = std::max(maximum, row.primary_structure_field_count);
+            if (!row.secondary_row_deleted) {
+                maximum = std::max(maximum, row.secondary_structure_field_count);
+            }
+        }
+    }
+    std::vector<SignalAspectColumnTarget> targets;
+    size_t populated_cells = 0;
+    bool includes_hidden_cells = false;
+    bool targets_valid = true;
+    const auto append_target = [&](const EditableListDraftRow& row, bool is_secondary) {
+        if (row.deleted || (is_secondary && (row.secondary_row_deleted ||
+                                            row.secondary_structure_field_count == 0))) return;
+        if (editable_list_row_identity(row).empty() || row.target_source_file.empty() ||
+            row_is_pending_delete(editable_list_row_identity(row))) {
+            targets_valid = false;
+            return;
+        }
+        const size_t count = is_secondary ? row.secondary_structure_field_count
+                                          : row.primary_structure_field_count;
+        const size_t offset = is_secondary ? 1 + row.primary_structure_field_count : 1;
+        if (offset > row.values.size() || count > row.values.size() - offset) {
+            targets_valid = false;
+            return;
+        }
+        size_t new_count = count;
+        switch (action) {
+        case SignalAspectColumnAction::Append:
+            if (count == std::numeric_limits<size_t>::max()) {
+                targets_valid = false;
+                return;
+            }
+            new_count = count + 1;
+            break;
+        case SignalAspectColumnAction::RemoveLast:
+            if (count > 1) new_count = count - 1;
+            break;
+        case SignalAspectColumnAction::TrimTrailing:
+            while (new_count > 1 && trim_gui_ascii_copy(row.values[offset + new_count - 1]).empty()) {
+                --new_count;
+            }
+            break;
+        case SignalAspectColumnAction::AlignAll:
+            new_count = maximum;
+            break;
+        }
+        if (new_count == count) return;
+        const std::string last_value = count == 0 ? std::string{} : row.values[offset + count - 1];
+        if (action == SignalAspectColumnAction::RemoveLast &&
+            !trim_gui_ascii_copy(last_value).empty()) ++populated_cells;
+        if (count > k_signal_aspect_visible_key_limit) includes_hidden_cells = true;
+        targets.push_back({editable_list_row_identity(row), is_secondary, count, new_count,
+            last_value, row.payload_edit_id, row.values.front()});
+    };
+    if (visible_row >= 0) {
+        append_target(edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]], secondary);
+    } else {
+        for (const auto& row : edit.rows) {
+            append_target(row, false);
+            append_target(row, true);
+        }
+    }
+    if (!targets_valid) return false;
+    if (targets.empty()) return true;
+    if (populated_cells != 0) {
+        signal_aspect_column_confirmation_ = SignalAspectColumnConfirmation{
+            std::move(targets), true, visible_row == -1, populated_cells, includes_hidden_cells};
+        return true;
+    }
+    return apply_signal_aspect_column_targets(targets);
+}
+
+bool App::resolve_signal_aspect_column_confirmation(bool confirmed) {
+    if (!signal_aspect_column_confirmation_) return false;
+    auto request = std::move(*signal_aspect_column_confirmation_);
+    signal_aspect_column_confirmation_.reset();
+    return !confirmed || apply_signal_aspect_column_targets(request.targets);
+}
+
+bool App::apply_signal_aspect_column_targets(
+    const std::vector<SignalAspectColumnTarget>& targets) {
+    auto& edit = signal_aspect_edit_;
+    if (!edit_actions_available() || !edit.rows_initialized) return false;
+    std::map<std::string, size_t> row_indices;
+    for (size_t index = 0; index < edit.rows.size(); ++index) {
+        if (!row_indices.emplace(editable_list_row_identity(edit.rows[index]), index).second) return false;
+    }
+    // Check every target before changing any row, including targets captured
+    // by a confirmation popup. Row identity survives selection/order changes.
+    for (const auto& target : targets) {
+        const auto found = row_indices.find(target.edit_id);
+        if (found == row_indices.end() || target.new_count == 0) return false;
+        const auto& row = edit.rows[found->second];
+        const size_t count = target.secondary ? row.secondary_structure_field_count
+                                              : row.primary_structure_field_count;
+        const size_t offset = target.secondary ? 1 + row.primary_structure_field_count : 1;
+        if (row.deleted || row.target_source_file.empty() ||
+            row_is_pending_delete(target.edit_id) ||
+            (target.secondary && row.secondary_row_deleted) ||
+            row.payload_edit_id != target.payload_edit_id ||
+            row.values.empty() || row.values.front() != target.aspect_key ||
+            count != target.original_count || offset > row.values.size() ||
+            count > row.values.size() - offset ||
+            (count != 0 && row.values[offset + count - 1] != target.last_value)) return false;
+    }
+    // Stage the batch so global operations have one atomic draft transition.
+    auto candidate = edit.rows;
+    for (const auto& target : targets) {
+        auto& row = candidate[row_indices.at(target.edit_id)];
+        size_t& count = target.secondary ? row.secondary_structure_field_count
+                                        : row.primary_structure_field_count;
+        const size_t offset = target.secondary ? 1 + row.primary_structure_field_count : 1;
+        if (target.new_count > count) {
+            row.values.insert(row.values.begin() + static_cast<std::ptrdiff_t>(offset + count),
+                target.new_count - count, std::string{});
+        } else {
+            row.values.erase(row.values.begin() + static_cast<std::ptrdiff_t>(offset + target.new_count),
+                row.values.begin() + static_cast<std::ptrdiff_t>(offset + count));
+        }
+        count = target.new_count;
+    }
+    edit.rows.swap(candidate);
+    rebuild_editable_list_display_rows(edit, k_signal_aspect_edit_spec);
+    if (edit.selected_row >= 0 && edit.selected_row < static_cast<int>(edit.visible_rows.size())) {
+        const auto& row = edit.rows[edit.visible_rows[static_cast<size_t>(edit.selected_row)]];
+        const size_t count = edit.selected_secondary_row ? row.secondary_structure_field_count
+                                                         : row.primary_structure_field_count;
+        edit.selected_column = std::min(edit.selected_column, static_cast<int>(
+            std::min(count + 1, static_cast<size_t>(std::numeric_limits<int>::max()))));
+    }
+    reset_signal_aspect_find_results();
     return true;
 }
 
@@ -822,6 +1002,7 @@ bool App::delete_editable_list_row(EditableListEditState& edit,
     if (!delete_editable_list_draft_row(
             edit.rows, edit.visible_rows, visible_row)) return false;
     edit.selected_row = visible_row;
+    rebuild_editable_list_display_rows(edit, spec);
     return true;
 }
 
@@ -858,6 +1039,7 @@ bool App::delete_editable_list_secondary_row(
     row.secondary_row_deleted = true;
     edit.selected_row = visible_row;
     edit.selected_secondary_row = true;
+    rebuild_editable_list_display_rows(edit, spec);
     return true;
 }
 

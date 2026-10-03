@@ -615,7 +615,8 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - 应用或保存前完整重解析，证明目标语义值，并拒绝非目标元素或最终变量绑定的意外变化；合法编辑可改变最终当前 `distance`。
 - `Legacy.Fog` 通过既有 `legacyFog.change` 类型行支持更新/删除/插入，字段为 `distance/start/end/red/green/blue`，不改变 ABI 布局或版本。五个参数须为必填有限数值；负值、等值、反向深度区间及标度之外的有限 RGB 保留兼容行为。未修改表达式保持原样。基线、更新及插入共用语义写入函数，继续保护 Include 替换影响的非目标 Legacy 值；Include 自身子树保留既有排除规则。预览/编辑元数据合并、提交后的身份刷新及场景雾/标记刷新均包含此行族。
 - 除显式检查器操作外保持方法与参数形状：Structure/Repeater 坐标偏移按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，丢弃非零偏移前必须确认；短式 `Signal.Put` 与 Repeater 修剪沿用原确认流程。
-- 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程。编辑模式右键可在上下新增行，固定 BVE CSV 字段数为 Structure 2、Sound/Sound3D 3、Station 13、Signal 主行 6；Signal 主行/glare 成对作为一个插入块，glare 需显式新增。
+- 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程。编辑模式右键可在上下新增行，Structure、Sound/Sound3D、Station 的固定 BVE CSV 字段数分别为 2、3、13。Signal 主行初始为 6 个字段，保留用户调整后的宽度；主行/glare 成对作为一个插入块，glare 需显式新增。
+- Signal 解析和编辑保留物理行尾部空字段。`KvSignalAspectRow::metadata.reserved` 包含主行的全部结构字段，`structure_keys` span 的剩余字段属于 glare。形状编辑同时提供 `mainStructureKeyCount`、`glareStructureKeyCount` 和完整的最终编号结构键字段；仅改单元格值时保持源形状。主行/glare 分界参与语义证明和草稿脏状态判断。列操作为每条已有物理行保留至少一个结构字段，允许结构值全空，不隐式增删 glare。表格 509 个结构列的上限只限制显示，延迟列操作和对齐均使用完整实际宽度。
 - maploader、表格、二维和三维统一使用 `repeater_linkage` 与过渡关联规则。
 - Repeater 生命周期使用半开区间 `[第一个 Begin, End)`。共享配对按距离、全局解析顺序和源行索引排序；同里程最后一个 Begin/End 决定活动状态。空区间保留源身份，但不占据里程范围。一次 `repeaterKey` 改名 typed batch 必须包含链内全部 Begin/Begin0 和显式 End；批次不完整、同名区间重叠或相接改名会改变链归属时由 maploader 拒绝。完整重解析还检查非目标段边界。成对新建零长度段时先输出 Begin，再输出 End。
 - Repeater 水合将完整 typed `structure_keys` 保存为 `_structureKeys.count` 与 `_structureKeys.N` 单元格。`repeater_structure_keys()` 和 `set_repeater_structure_keys()` 在水合、Inspector 草稿及场景构建之间共享这一表示；拼接的 `structureKeys` 仅供显示。场景模型路径数组保留未解析项的位置，使原始列表长度始终决定 `k % N`。端点模型缺失时，相机跳转使用放置几何锚点。
@@ -695,6 +696,7 @@ build\komapedit.exe --debug-headless-include-delete <map-path> [--index N] [--co
 build\komapedit.exe --debug-headless-include-replace <map-path> --new-path <file> [--index N] [--commit] --headless-output build\include-replace.txt
 build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
 build\komapedit.exe --debug-headless-resource-list-insert <map-path> --kind structure|signal --headless-output build\resource-list-insert.txt
+build\komapedit.exe --debug-headless-signal-aspect-columns <map-or-scenario-path> --headless-output build\signal-aspect-columns.txt
 build\komapedit.exe --debug-headless-new-file-wizard <tests目录下尚不存在的地图路径> --headless-output build\new-file-wizard.txt
 build\komapedit.exe --debug-headless-scenario-create <tests目录下尚不存在的Scenario路径> --route <已存在的地图路径> --headless-output build\scenario-create.txt
 build\komapedit.exe --debug-headless-fresh-resource-list-workflow <地图路径> --headless-output build\fresh-resource-list.txt
@@ -721,6 +723,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 `--debug-headless-resource-list-replace` 复现预览加载后再加载并合并编辑元数据的生命周期，随后为 `Structure.Load` 打开正式的 Win32 文件选择框。请手动选择不同且有效的 Structure List。它验证稳定 edit ID 已合并、内存 Apply 与完整重解析、布景模型列表缓存刷新、路径更新，以及重新从磁盘加载后的全部源哈希不变。该命令绝不调用 Save 或 Commit；取消、选择相同文件或无效列表都会报告 `FAIL`。
 
 `--debug-headless-resource-list-insert <map-path> --kind structure|signal` 是无界面、仅内存的资源列表新增行验证。`structure` 要求列表经 Include 加载，并验证上下新增顺序、2 字段源行、hydration、Reset 与磁盘哈希不变。`signal` 选择已有主行/glare 块，验证新增不会将其拆开，再验证一个无 glare 的 6 字段主行和一个手动新增的 6 字段 glare。`--commit` 会被拒绝。
+
+`--debug-headless-signal-aspect-columns <map-or-scenario-path>` 验证生产 Signal 草稿列操作、确认/取消、主行/glare 独立行宽、多轮 Apply 和 Revert。Scenario 输入使用正常文档打开流程。传入线路的源文件进行字节/哈希检查并保持不变；Save/reload 和显示上限用例使用独立临时夹具。`--commit` 会被拒绝。该显式 Debug 模式不注册为 CTest，也不能替代对斜线单元格、菜单、确认框和水平滚动的截图界面检查。
 
 `--debug-headless-new-file-wizard <tests目录下尚不存在的地图路径>` 要求目标是 `tests/` 下尚不存在的文件。它会新建并重载仅含文件头的地图，验证排他新建与已有资源列表文件复用，依次暂存并保存五种 `*.Load` 引用，重新载入空列表，并在报告结果前删除自身创建的全部文件。
 

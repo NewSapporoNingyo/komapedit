@@ -471,21 +471,21 @@ void App::ensure_table_cache() {
                 std::max(main_structure_key_count,
                          glare_structure_key_count));
     }
-    cache.signal_aspect_structure_key_columns =
+    const size_t displayed_signal_columns =
         std::min(cache.signal_aspect_structure_key_columns, k_max_signal_aspect_structure_key_columns);
     cache.signal_aspect_column_headers.reserve(
         k_signal_aspect_structure_key_column_offset +
-        cache.signal_aspect_structure_key_columns);
+        displayed_signal_columns);
     cache.signal_aspect_column_widths.reserve(
         k_signal_aspect_structure_key_column_offset +
-        cache.signal_aspect_structure_key_columns);
+        displayed_signal_columns);
     for (const TableColumnDef& column :
          k_signal_aspect_fixed_columns) {
         cache.signal_aspect_column_headers.emplace_back(column.header);
         cache.signal_aspect_column_widths.push_back(column.width);
     }
     for (size_t key_index = 0;
-         key_index < cache.signal_aspect_structure_key_columns;
+         key_index < displayed_signal_columns;
          ++key_index) {
         cache.signal_aspect_column_headers.push_back(
             "structureKey" + std::to_string(key_index + 1));
@@ -514,7 +514,7 @@ void App::ensure_table_cache() {
         cached.cells.resize(
             k_signal_aspect_structure_key_column_offset +
             std::max(structure_key_count,
-                     cache.signal_aspect_structure_key_columns));
+                     displayed_signal_columns));
         cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[1] = table_cell(row, "signalAspectKey");
         for (size_t key_index = 0;
@@ -527,7 +527,7 @@ void App::ensure_table_cache() {
                 ? key_index
                 : key_index - main_structure_key_count;
             if (display_key_index <
-                cache.signal_aspect_structure_key_columns) {
+                displayed_signal_columns) {
                 expand_width_for_text(
                     cache.signal_aspect_column_widths[
                         k_signal_aspect_structure_key_column_offset +
@@ -666,4 +666,3 @@ void App::refresh_speed_limit_table_cache() {
     speed_limit_list_highlight_row_ = -1;
     plan_context_menu_entries_.clear();
 }
-

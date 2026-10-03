@@ -8411,11 +8411,11 @@ void resource_list_content_insert_contract() {
     const bool invalid_glare_ran = kv_edit_dry_run_typed(
         handle.value, &invalid_glare.batch, &invalid_glare_report,
         sizeof(invalid_glare_report)) != 0;
-    check((!invalid_main_ran || !invalid_main_report.ok ||
-           invalid_main_report.blocking_error_count != 0) &&
-              (!invalid_glare_ran || !invalid_glare_report.ok ||
-               invalid_glare_report.blocking_error_count != 0),
-          "resource-list content insert rejects empty Signal main and glare rows");
+    check(invalid_main_ran && invalid_main_report.ok &&
+              invalid_main_report.full_reparse_ok &&
+              invalid_glare_ran && invalid_glare_report.ok &&
+              invalid_glare_report.full_reparse_ok,
+          "resource-list content insert retains empty Signal main and glare rows");
 }
 
 void include_replace_variable_dependency_blocks_contract() {
@@ -9159,6 +9159,314 @@ void other_track_key_argument_layout_contract() {
             if (source) kv_free_string(source);
         }
     }
+}
+
+void signal_list_column_snapshot_contract() {
+    TempFixture fixture;
+    const auto signal_path = fixture.directory / "signals.csv";
+    {
+        std::ofstream out(signal_path, std::ios::binary | std::ios::trunc);
+        out << "BveTs Signal Aspects List 2.00:utf-8\n"
+            << "aspectA,main1,,\n"
+            << "\t// comment-only compatibility row\n"
+            << "# official comment row\n\n"
+            << ",\n"
+            << "aspectB,,";
+    }
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    KvMapSnapshot snapshot{};
+    check(handle.value && kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot)) != 0,
+          "Signal column preview snapshot loads without edit metadata");
+    const auto* main = find_signal_aspect_key(snapshot, "aspectA");
+    const auto* blank = find_signal_aspect_key(snapshot, "aspectB");
+    check(snapshot.signal_aspect_count == 2 && main && main->metadata.reserved == 3 &&
+              main->structure_keys.count == 4 && blank && blank->metadata.reserved == 2 &&
+              blank->structure_keys.count == 2,
+          "Signal preview retains main/glare empty CSV widths and final row without newline");
+    if (main && main->structure_keys.count == 4 && snapshot.string_refs) {
+        check(map_string(snapshot, snapshot.string_refs[main->structure_keys.offset]) == "main1" &&
+                  map_string(snapshot, snapshot.string_refs[main->structure_keys.offset + 1]).empty() &&
+                  map_string(snapshot, snapshot.string_refs[main->structure_keys.offset + 2]).empty() &&
+                  map_string(snapshot, snapshot.string_refs[main->structure_keys.offset + 3]).empty(),
+              "Signal preview separates actual empty CSV cells from absent cells");
+    }
+}
+
+void signal_list_column_shape_contract() {
+    using Fields = std::vector<std::pair<std::string, std::string>>;
+    const auto shape_fields = [](size_t main, const std::vector<std::string>& values) {
+        Fields fields{{"mainStructureKeyCount", std::to_string(main)},
+                      {"glareStructureKeyCount", std::to_string(values.size() - main)}};
+        for (size_t i = 0; i < values.size(); ++i) {
+            fields.emplace_back("structureKey" + std::to_string(i + 1), values[i]);
+        }
+        return fields;
+    };
+    const auto read_bytes = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    };
+    for (const bool shift_jis : {false, true}) {
+        TempFixture fixture;
+        const std::string newline = shift_jis ? "\n" : "\r\n";
+        const std::string header = shift_jis
+            ? "BveTs Signal Aspects List 2.00:shift_jis"
+            : "\xEF\xBB\xBF" "BveTs Signal Aspects List 2.00:utf-8";
+        const std::string comment = shift_jis ? "# \x93\xFA\x96\x7B" : "# preserved";
+        const std::string original = header + newline + comment + newline +
+            "  aspectA , main1 ,, # main" + newline +
+            "\t// standalone compatibility comment" + newline + newline +
+            "  , glare1 , # glare" + newline + "aspectB," + newline +
+            "keyOnly" + newline + "wide" + std::string(510, ',') + newline;
+        const auto signal_path = fixture.directory / "signals.csv";
+        { std::ofstream out(signal_path, std::ios::binary | std::ios::trunc); out << original; }
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "Signal column fixture loads");
+        if (!handle.value) continue;
+        KvMapSnapshot baseline{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &baseline, sizeof(baseline)) != 0,
+              "Signal column baseline snapshot");
+        const auto* aspect = find_signal_aspect_key(baseline, "aspectA");
+        const auto* empty = find_signal_aspect_key(baseline, "aspectB");
+        const auto* key_only = find_signal_aspect_key(baseline, "keyOnly");
+        const auto* wide = find_signal_aspect_key(baseline, "wide");
+        check(baseline.signal_aspect_count == 4 && aspect &&
+                  aspect->metadata.reserved == 3 && aspect->structure_keys.count == 5 &&
+                  empty && empty->metadata.reserved == 1 && empty->structure_keys.count == 1 &&
+                  key_only && key_only->metadata.reserved == 0 && key_only->structure_keys.count == 0 &&
+                  wide && wide->metadata.reserved == 510 && wide->structure_keys.count == 510,
+              "Signal parse preserves empty and excess columns while ignoring comment-only lines");
+        if (!aspect || aspect->metadata.source_file_index >= baseline.source_file_count) continue;
+        const std::string edit_id = map_string(baseline, aspect->metadata.edit_id);
+        const auto& source = baseline.source_files[aspect->metadata.source_file_index];
+        const std::string path = map_string(baseline, source.file_path);
+        const std::string hash = map_string(baseline, source.source_hash);
+        const auto source_text = [&]() {
+            const char* text = kv_get_source_text(handle.value, path.c_str());
+            const std::string result = text ? text : "";
+            kv_free_string(text);
+            return result;
+        };
+        const auto matches = [&](size_t main, const std::vector<std::string>& values) {
+            KvMapSnapshot snapshot{};
+            if (!kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot))) return false;
+            const auto* row = find_signal_aspect(snapshot, edit_id);
+            if (!row || row->metadata.reserved != main || row->structure_keys.count != values.size()) return false;
+            for (size_t i = 0; i < values.size(); ++i) {
+                if (map_string(snapshot, snapshot.string_refs[row->structure_keys.offset + i]) != values[i]) return false;
+            }
+            return true;
+        };
+        const auto apply = [&](Fields fields) {
+            MultiFieldUpdateBatch update("signal-column-update", edit_id, hash, std::move(fields));
+            KvEditReportSnapshot report{};
+            return kv_edit_apply_to_memory_typed(handle.value, &update.batch, &report, sizeof(report)) != 0 &&
+                report.ok && report.full_reparse_ok && report.non_target_changed_count == 0;
+        };
+        check(apply(shape_fields(2, {"main1", "", "glare1", "", ""})) &&
+                  matches(2, {"main1", "", "glare1", "", ""}),
+              "Signal column resize retains independent main/glare boundaries and stable identity");
+        check(source_text().find("  aspectA , main1 , # main" + newline +
+                  "\t// standalone compatibility comment" + newline + newline +
+                  "  , glare1 ,, # glare") != std::string::npos && read_bytes(signal_path) == original,
+              "Signal resize preserves raw fields, comments, line endings, and memory-only disk boundary");
+        check(apply(shape_fields(1, {"main1", "", "glare1", "", ""})) &&
+                  matches(1, {"main1", "", "glare1", "", ""}),
+              "Signal semantic proof distinguishes row boundaries with identical flattened values");
+        check(apply({{"structureKey5", "main2"}}) &&
+                  matches(1, {"main1", "", "glare1", "", "main2"}),
+              "Signal ordinary value edits address preserved trailing empty cells without counts");
+        check(apply(shape_fields(1, {""})) && matches(1, {""}),
+              "Signal shape removes glare while preserving an all-empty main row");
+        auto add_glare = shape_fields(2, {"", "", ""});
+        add_glare.emplace_back("addGlare", "1");
+        check(apply(std::move(add_glare)) && matches(2, {"", "", ""}),
+              "Signal shape adds a differently sized all-empty glare row");
+        check(kv_edit_reset_memory(handle.value) != 0 &&
+                  matches(3, {"main1", "", "", "glare1", ""}) && read_bytes(signal_path) == original,
+              "Signal column Revert restores original physical widths and bytes");
+
+        const std::vector<Fields> invalid{
+            {{"mainStructureKeyCount", "1"}, {"structureKey1", ""}},
+            {{"mainStructureKeyCount", "0"}, {"glareStructureKeyCount", "0"}},
+            {{"mainStructureKeyCount", "-1"}, {"glareStructureKeyCount", "0"}},
+            {{"mainStructureKeyCount", "4294967296"}, {"glareStructureKeyCount", "0"}},
+            {{"mainStructureKeyCount", "4294967295"}, {"glareStructureKeyCount", "4294967295"}},
+            {{"mainStructureKeyCount", "1"}, {"glareStructureKeyCount", "0"}},
+            {{"mainStructureKeyCount", "1"}, {"glareStructureKeyCount", "0"}, {"structureKey1", ""}, {"structureKey2", ""}},
+            {{"mainStructureKeyCount", "1"}, {"glareStructureKeyCount", "1"}, {"structureKey1", ""}, {"structureKey2", ""}, {"deleteGlare", "1"}},
+            {{"mainStructureKeyCount", "1"}, {"glareStructureKeyCount", "1"}, {"structureKey1", ""}, {"structureKey2", ""}, {"addGlare", "1"}},
+            {{"mainStructureKeyCount", "1"}, {"glareStructureKeyCount", "0"}, {"structureKey1", "line\nbreak"}}
+        };
+        for (const auto& fields : invalid) {
+            MultiFieldUpdateBatch update("invalid-signal-column", edit_id, hash, fields);
+            KvEditReportSnapshot report{};
+            const bool ran = kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)) != 0;
+            check((!ran || !report.ok) && matches(3, {"main1", "", "", "glare1", ""}) &&
+                      read_bytes(signal_path) == original,
+                  "Signal invalid counts, missing/excess fields, glare conflicts, and line breaks are rejected atomically");
+        }
+        check(apply(shape_fields(510, std::vector<std::string>(510))) &&
+                  matches(510, std::vector<std::string>(510)),
+              "Signal typed shape edits retain columns beyond the GUI display limit");
+        check(kv_edit_reset_memory(handle.value) != 0, "Signal excess-column Reset");
+        check(apply(shape_fields(2, {"main1", "", "glare1", "", ""})), "Signal resize before Save");
+        KvEditReportSnapshot saved{};
+        check(kv_edit_commit_typed(handle.value, &saved, sizeof(saved)) != 0 && saved.ok,
+              "Signal resized fields Save succeeds");
+        std::string expected = original;
+        const std::string before_main = "  aspectA , main1 ,, # main";
+        expected.replace(expected.find(before_main), before_main.size(), "  aspectA , main1 , # main");
+        const std::string before_glare = "  , glare1 , # glare";
+        expected.replace(expected.find(before_glare), before_glare.size(), "  , glare1 ,, # glare");
+        check(read_bytes(signal_path) == expected,
+              "Signal column Save preserves encoding, BOM, exact raw layout, comments and untouched rows");
+        MapHandle reload(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot reloaded{};
+        check(reload.value && kv_get_map_snapshot(reload.value, KV_MAP_SNAPSHOT_VERSION, &reloaded, sizeof(reloaded)) != 0,
+              "Signal column Save reloads");
+        const auto* persisted = find_signal_aspect_key(reloaded, "aspectA");
+        check(persisted && persisted->metadata.reserved == 2 && persisted->structure_keys.count == 5,
+              "Signal column widths survive fresh reload");
+    }
+
+    TempFixture fixture;
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+    const std::string path = (fixture.directory / "signals.csv").u8string();
+    KvMapSnapshot insert_baseline{};
+    std::string insert_disk_hash;
+    if (handle.value && kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+            &insert_baseline, sizeof(insert_baseline)) && insert_baseline.signal_aspect_count != 0) {
+        const auto file_index = insert_baseline.signal_aspects[0].metadata.source_file_index;
+        if (file_index < insert_baseline.source_file_count) {
+            insert_disk_hash = map_string(insert_baseline, insert_baseline.source_files[file_index].source_hash);
+        }
+    }
+    auto fields = shape_fields(1, {"", "", ""});
+    fields.emplace_back("rowKind", "signal.aspect");
+    fields.emplace_back("signalAspectKey", "emptyInserted");
+    fields.emplace_back("addGlare", "2");
+    SimpleInsertBatch insert(path, "signal-empty-shape-insert", std::move(fields));
+    KvEditReportSnapshot report{};
+    check(handle.value && kv_edit_apply_to_memory_typed(handle.value, &insert.batch, &report, sizeof(report)) != 0 &&
+              report.ok && report.full_reparse_ok && report.non_target_changed_count == 0,
+          "Signal insert accepts independent all-empty main and glare widths");
+    KvMapSnapshot snapshot{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot)) != 0,
+          "Signal empty insert snapshot");
+    const auto* inserted = find_signal_aspect_key(snapshot, "emptyInserted");
+    check(inserted && inserted->metadata.reserved == 1 && inserted->structure_keys.count == 3,
+          "Signal empty insert keeps both physical rows");
+    if (inserted && inserted->metadata.source_file_index < snapshot.source_file_count) {
+        const std::string inserted_id = map_string(snapshot, inserted->metadata.edit_id);
+        MultiFieldUpdateBatch resize("resize-empty-insert", inserted_id, insert_disk_hash,
+            shape_fields(3, {"", "", "", ""}));
+        KvEditReportSnapshot resized{};
+        check(kv_edit_apply_to_memory_typed(handle.value, &resize.batch, &resized, sizeof(resized)) != 0 &&
+                  resized.ok && resized.full_reparse_ok,
+              "Signal inserted empty rows support subsequent width changes");
+        KvEditReportSnapshot saved{};
+        check(kv_edit_commit_typed(handle.value, &saved, sizeof(saved)) != 0 && saved.ok,
+              "Signal inserted empty rows Save");
+        MapHandle reload(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot reloaded{};
+        check(reload.value && kv_get_map_snapshot(reload.value, KV_MAP_SNAPSHOT_VERSION, &reloaded, sizeof(reloaded)) != 0,
+              "Signal inserted empty rows reload");
+        const auto* persisted = find_signal_aspect_key(reloaded, "emptyInserted");
+        check(persisted && persisted->metadata.reserved == 3 && persisted->structure_keys.count == 4,
+              "Signal inserted empty row widths survive Save and reload");
+    }
+}
+
+void signal_list_multiple_glare_contract() {
+    TempFixture fixture;
+    const std::string block_a = "aspectA,main1,, # main\r\n"
+        ",glare1, # first\r\n\t// between glare rows\r\n"
+        ",glare2,,, # second";
+    const std::string block_b = "aspectB,mainB";
+    const std::string header = "BveTs Signal Aspects List 2.00:utf-8\r\n";
+    const std::string original = header + block_a + "\r\n" + block_b + "\r\n";
+    const auto signal_path = fixture.directory / "signals.csv";
+    { std::ofstream out(signal_path, std::ios::binary | std::ios::trunc); out << original; }
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot baseline{};
+    check(handle.value && kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &baseline, sizeof(baseline)),
+          "multiple Signal glare fixture loads");
+    if (!handle.value || baseline.signal_aspect_count != 2) return;
+    const auto& row_a = baseline.signal_aspects[0];
+    const auto& row_b = baseline.signal_aspects[1];
+    check(row_a.metadata.reserved == 3 && row_a.structure_keys.count == 9,
+          "multiple Signal glare rows retain every physical empty field");
+    if (row_a.metadata.source_file_index >= baseline.source_file_count) return;
+    const auto& source = baseline.source_files[row_a.metadata.source_file_index];
+    const std::string path = map_string(baseline, source.file_path);
+    const std::string hash = map_string(baseline, source.source_hash);
+    const std::string id_a = map_string(baseline, row_a.metadata.edit_id);
+    const std::string id_b = map_string(baseline, row_b.metadata.edit_id);
+    const auto source_text = [&]() {
+        const char* text = kv_get_source_text(handle.value, path.c_str());
+        const std::string value = text ? text : "";
+        kv_free_string(text);
+        return value;
+    };
+    const auto complete_fields = []() {
+        return std::vector<std::pair<std::string, std::string>>{
+            {"signalAspectKey", "aspectA"}, {"mainStructureKeyCount", "3"}, {"glareStructureKeyCount", "6"},
+            {"structureKey1", "main1"}, {"structureKey2", ""}, {"structureKey3", ""},
+            {"structureKey4", "glare1"}, {"structureKey5", ""}, {"structureKey6", "glare2"},
+            {"structureKey7", ""}, {"structureKey8", ""}, {"structureKey9", ""}};
+    };
+    auto apply = [&](const KvEditBatch& batch) {
+        KvEditReportSnapshot report{};
+        return kv_edit_apply_to_memory_typed(handle.value, &batch, &report, sizeof(report)) != 0 &&
+            report.ok && report.full_reparse_ok && report.non_target_changed_count == 0;
+    };
+    auto fields = complete_fields();
+    fields[8].second = "main2"; // structureKey6, first key of the second glare row.
+    MultiFieldUpdateBatch update("multiple-glare-values", id_a, hash, std::move(fields));
+    check(apply(update.batch) && source_text() == header +
+              "aspectA,main1,, # main\r\n,glare1, # first\r\n\t// between glare rows\r\n"
+              ",main2,,, # second\r\naspectB,mainB\r\n",
+          "unchanged aggregate glare shape preserves separate physical widths and indexed values");
+    check(kv_edit_reset_memory(handle.value) != 0, "multiple Signal glare value Reset");
+
+    MultiFieldUpdateBatch remove("multiple-glare-remove", id_a, hash,
+        {{"mainStructureKeyCount", "3"}, {"glareStructureKeyCount", "0"},
+         {"structureKey1", "main1"}, {"structureKey2", ""}, {"structureKey3", ""}});
+    check(apply(remove.batch) && source_text() == header +
+              "aspectA,main1,, # main\r\n\t// between glare rows\r\n\r\naspectB,mainB\r\n",
+          "shape glare deletion removes all historical glare rows while retaining intervening comments");
+    check(kv_edit_reset_memory(handle.value) != 0, "multiple Signal glare delete Reset");
+
+    auto invalid = complete_fields();
+    invalid[2].second = "5";
+    invalid.pop_back();
+    MultiFieldUpdateBatch resize("multiple-glare-resize", id_a, hash, std::move(invalid));
+    KvEditReportSnapshot rejected{};
+    const bool ran = kv_edit_apply_to_memory_typed(handle.value, &resize.batch, &rejected, sizeof(rejected)) != 0;
+    check((!ran || !rejected.ok) && source_text() == original,
+          "ambiguous aggregate glare resizing is rejected without merging or changing source rows");
+
+    MultiFieldUpdateBatch move_b("move-b-to-a", id_a, hash,
+        {{"signalAspectKey", "aspectB"}, {"mainStructureKeyCount", "1"},
+         {"glareStructureKeyCount", "0"}, {"structureKey1", "mainB"}});
+    MultiFieldUpdateBatch move_a("move-a-to-b", id_b, hash, complete_fields());
+    move_b.change.replacement_statement = utf8_view(block_b);
+    move_a.change.replacement_statement = utf8_view(block_a);
+    std::vector<KvEditField> moved_fields = move_b.fields;
+    moved_fields.insert(moved_fields.end(), move_a.fields.begin(), move_a.fields.end());
+    std::array<KvEditChange, 2> changes{move_b.change, move_a.change};
+    changes[1].fields.offset = static_cast<std::uint64_t>(move_b.fields.size());
+    const KvEditBatch moved{changes.data(), changes.size(), moved_fields.data(), moved_fields.size()};
+    check(apply(moved) && source_text() == header + block_b + "\r\n" + block_a + "\r\n",
+          "Signal block move retains multiple glare lines and their comments byte for byte");
+    KvEditReportSnapshot saved{};
+    check(kv_edit_commit_typed(handle.value, &saved, sizeof(saved)) != 0 && saved.ok,
+          "multiple Signal glare block move Save");
+    std::ifstream input(signal_path, std::ios::binary);
+    const std::string saved_bytes(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>{});
+    check(saved_bytes == header + block_b + "\r\n" + block_a + "\r\n",
+          "multiple Signal glare Save preserves distinct physical rows without merging");
 }
 
 void signal_list_append_layout_contract() {
@@ -10000,6 +10308,8 @@ int edit_contract() {
     legacy_fog_edit_contract();
     other_track_key_argument_layout_contract();
     signal_list_append_layout_contract();
+    signal_list_column_shape_contract();
+    signal_list_multiple_glare_contract();
     multiline_statement_removal_contract();
     include_transition_pair_contract();
     include_insert_contract();
@@ -11851,6 +12161,7 @@ int main(int argc, char** argv) {
     if (mode == "snapshot") {
         finite_distance_contract();
         snapshot_contract();
+        signal_list_column_snapshot_contract();
         include_distance_scope_contract();
         light_contract();
         return failures == 0 ? 0 : 1;

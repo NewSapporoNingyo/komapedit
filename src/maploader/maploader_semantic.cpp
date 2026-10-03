@@ -666,6 +666,8 @@ void write_signal_aspect_values(
         normalized_signal_aspect_edit_value(
             values.signal_aspect_key, "signalAspectKey", true);
     field(out, "signalAspectKey", values.signal_aspect_key);
+    out.label("mainStructureKeyCount");
+    out.signed_integer(static_cast<std::int64_t>(values.main_structure_key_count));
     out.label("structureKeys");
     out.signed_integer(
         static_cast<std::int64_t>(values.structure_keys.size()));
@@ -683,6 +685,7 @@ void write_signal_aspect(SemanticWriter& out,
                          const KvSignalAspectRow& row) {
     SignalAspectSourceValues values;
     values.signal_aspect_key = text(snapshot, row.signal_aspect_key);
+    values.main_structure_key_count = row.metadata.reserved;
     if (!span_valid(row.structure_keys, snapshot.string_ref_count) ||
         (row.structure_keys.count != 0 && !snapshot.string_refs)) {
         throw std::runtime_error(
@@ -860,7 +863,9 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         for (const auto& input : change.field_changes) {
             if (input.first == "signalAspectKey" ||
                 input.first == "deleteGlare" ||
-                input.first == "addGlare") {
+                input.first == "addGlare" ||
+                input.first == "mainStructureKeyCount" ||
+                input.first == "glareStructureKeyCount") {
                 continue;
             }
             size_t key_index = 0;

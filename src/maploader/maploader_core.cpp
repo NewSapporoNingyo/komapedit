@@ -423,12 +423,6 @@ std::vector<std::string> parse_comma_separated_fields(
     return fields;
 }
 
-void trim_trailing_empty_fields(std::vector<std::string>& fields) {
-    while (!fields.empty() && fields.back().empty()) {
-        fields.pop_back();
-    }
-}
-
 std::string strip_ini_comment_copy(const std::string& line) {
     bool single_quoted = false;
     bool double_quoted = false;
@@ -851,7 +845,6 @@ SignalAspectSourceValues parse_signal_aspect_source_values(
         if (!trimmed.empty() && trimmed[0] != '#') {
             std::vector<std::string> fields =
                 parse_comma_separated_fields(line, true);
-            trim_trailing_empty_fields(fields);
             if (!fields.empty()) {
                 if (!has_main_row) {
                     if (fields[0].empty()) {
@@ -859,10 +852,13 @@ SignalAspectSourceValues parse_signal_aspect_source_values(
                             "Signal aspect source block has no main row");
                     }
                     result.signal_aspect_key = fields[0];
+                    result.main_structure_key_count = fields.size() - 1;
                     has_main_row = true;
                 } else if (!fields[0].empty()) {
                     throw std::runtime_error(
                         "Signal aspect source block contains multiple main rows");
+                } else {
+                    ++result.glare_row_count;
                 }
                 for (size_t field = 1; field < fields.size(); ++field) {
                     result.structure_keys.push_back(fields[field]);

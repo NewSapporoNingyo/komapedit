@@ -13,7 +13,6 @@ This file is the active project progress and contains unfinished items only. Com
 ### 用户界面与辅助功能
 
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
-- [ ] 信号现示列表可新增/删除列
 - [ ] 通过 `kme.json` 在资源文件列表中标记文件类型和用途
 - [ ] 通过在地图中插入被BVE忽略但本项目可读的”//--kme--“开头的注释，标记特定地图元素
 - [ ] 可将多个地图语句设为1组，通过 `kme.json` 保存地图元素预设组，应用后生成普通 BVE map 语句

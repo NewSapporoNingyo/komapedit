@@ -10,7 +10,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 - [x] Split Canvas3D into independently compiled functional modules while retaining the public API and single private Impl state owner; move the embedded Debug render contract into a `.cpp` and keep loader contracts in their own translation unit.
 - [x] Include existing `Legacy.Fog` rows in non-target semantic validation, retain the Include-subtree exemption, and locate Track arguments after the actual quoted/expression key boundary.
-- [x] Preserve Signal List indentation, trailing comments, and main/glare adjacency on append; replay pending inserts from the final typed row shape, including compact rows whose trailing empty fields were trimmed, across Apply, glare removal/re-addition, Revert, and Save/reload.
+- [x] Preserve Signal List indentation, trailing comments, and main/glare adjacency on append; replay pending inserts from the final typed row shape, including trailing empty fields and independently sized main/glare rows, across Apply, glare removal/re-addition, Revert, and Save/reload.
 - [x] Count Station arrival/departure sounds in ordinary unused-Sound searches, including active and pending list drafts; reject conflicting CSV output filenames before writing and report output failures; retain failed layout-save requests and retry independently of settings saves.
 - [x] Terminate Repeater index iteration safely at the signed maximum, reserve other-track snapshot events once, share filtered 2D curve events, rotate copied train paths in place, bound ordered 3D chunk candidates with binary search, and share Signal/Beacon cache-row construction.
 - [x] Add deterministic regressions for these contracts, correct UTF-16 newline assertions, and share nonempty 0/1/2-argument Interpolate fixtures while validating empty real-route marker sets without requiring optional syntax. Steady-frame performance remains a separate gate.
@@ -110,7 +110,9 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
 - [x] Display `Speed Limit Point List`, `Track Irregularity List`, `Adhesion Change Point List`, rolling-noise, flange-noise, and joint-noise tables.
 - [x] Display `Background Change Point List`, `Cab Illuminance Change Point List`, `Fog Change Point List`, and `Draw Distance Change Point List`.
-- [x] Edit, clear, reorder, or delete `Signal.Load` aspect definitions and their optional glare rows through the source-backed inline table editor; adding structure-key columns is not supported.
+- [x] Edit, clear, reorder, or delete `Signal.Load` aspect definitions and their optional glare rows through the source-backed inline table editor.
+- [x] Add three Signal Aspects List row actions (append an empty rightmost cell, remove the rightmost cell, and trim trailing empty cells) and four global actions (align widths, append one cell per row, remove one cell per row, and trim trailing empty cells). Ordinary main/glare rows retain independent actual CSV widths, including empty fields; only alignment makes widths uniform. Invalid cells have a diagonal line and cannot be edited. Display at most 509 structure-key columns with an overflow warning while retaining hidden fields, confirm removal of nonempty cells, and retain at least one structure-key cell per row, including all-empty rows. The documented width-editing restriction for historical multiple-glare blocks remains in effect.
+- [x] Validate Signal column changes through typed full-reparse Apply/Save/Revert, repeated pending-insert Apply, moved blocks, deleted drafts, stale-confirmation rejection, unchanged-source guards, and UTF-8/Shift-JIS Save/reload fixtures. Debug build, all seven CTests, ordered real-route `--debug-headless-signal-aspect-columns` runs, and full-screen GUI automation passed, including trilingual controls, narrow-panel wrapping, overflow/confirmation, all-empty rows, unapplied-draft Save blocking, and read-only action disabling; real route sources remained unchanged.
 - [x] Edit or delete existing `Beacon.Put` rows through the source-backed property inspector.
 - [x] Provide a source-backed `Properties/Edit` inspector for supported Structure/Signal/Station/Repeater placements and Section, speed-limit, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance rows; expose it from applicable tables and 2D/3D markers, with live X/Y/Z gizmos for editable Structure, Signal, and Repeater Begin placements.
 - [x] Open Properties/Edit for Structure and Signal placements from their 2D plan markers.
@@ -176,7 +178,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Include-file structure diagram and read-only source text preview using the active in-memory working copy.
 - [x] In edit mode, import an existing child map or exclusively create a new UTF-8/no-BOM/CRLF `BveTs Map 2.02:utf-8` child map from the File Structure Diagram. The canonical Include is staged in the selected physical source after the last zero-distance Include, before the first local distance when needed, or at end of file; normal Save commits the parent map.
 - [x] In edit mode, use `Change File...` on the top path of the Station, Structure Model, Signal Aspect, Sound File, or 3D Sound File List to replace the matching `*.Load` source path. The candidate uses the map loader's existing list-title/version checks (Station List 0.04+ under its compatibility rule, Structure List 1.00+, Signal Aspects List 2.00+, and Sound List 2.00+ for both sound lists), refreshes the working copy/list cache immediately, and saves through normal Save; confirmation discards only the target list's unapplied drafts or applied-but-unsaved old-content edits.
-- [x] In edit mode, right-click any Station, Structure, Signal, Sound, or Sound3D resource-list content cell to insert a shared inline-draft row above or below. Insertions preserve source encoding/line endings and Apply/Save behavior, use fixed BVE CSV widths (Structure 2, Station 13, Signal 6, Sound/Sound3D 3), and keep Signal primary/glare pairs together; a new Signal primary has no glare until `Add Glare` is chosen.
+- [x] In edit mode, right-click any Station, Structure, Signal, Sound, or Sound3D resource-list content cell to insert a shared inline-draft row above or below. Insertions preserve source encoding/line endings and Apply/Save behavior, use fixed BVE CSV widths for Structure (2), Station (13), and Sound/Sound3D (3), and initialize Signal rows with six fields whose width can subsequently change. Signal primary/glare pairs stay together; a new Signal primary has no glare until `Add Glare` is chosen.
 - [x] In the File Structure Diagram, use `Unlink Include` on an Include node to delete the parent map's typed `include` statement through the normal Apply/Save path; keep the action disabled outside Edit mode and block it when surviving statements depend on variables or distance assigned by the removed subtree.
 - [x] In the File Structure Diagram, use `Change Included File...` on an Include node to replace its parent map path argument with a selected `.txt`/`.csv` child map (relative path preferred, absolute fallback against the entry-map directory); refresh caches after memory Apply and block replacements that remove required variables or create duplicate declarations.
 - [x] Edit mode with separate Apply-to-preview, Save-to-disk, global Revert of all pending changes, and Reload-from-disk behavior plus unsaved-change prompts.
@@ -190,7 +192,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 ### Bug Fixes
 
 - [x] Fix Station.List serialization for BVE: when an edited or inserted station-definition row is written, blank `stoppageTime`, `signalFlag`, `alightingTime`, `passengers`, `doorReopen`, and `stuckInDoor` fields are emitted as `0`; station keys/names, times, and sound keys remain empty when blank, while untouched source rows retain their original text.
-- [x] Fix the blank-map/new-reference workflow: `Include` and the five `*.Load` references may target any loaded non-resource-list map source file, including completely distance-free blank maps; the New Map Element wizard accepts the same targets and appends a canonical tail distance block for a source with zero or one numeric distance statement without moving existing statements; a header-only resource list takes its first row directly from an `Add Row` button or context-menu insertion, and maploader appends that row after the header with fixed CSV field counts; one ledger batch that mixes unsaved `*.Load` insertions with resource-list row edits is now planned in two stages so list-row editIds resolve against a working copy that already contains the new Loads, eliminating `unsupported or unknown editId` failures; and editable-list context-menu actions are deferred until after table rendering, fixing the crash when choosing `Insert Row Below`.
+- [x] Fix the blank-map/new-reference workflow: `Include` and the five `*.Load` references may target any loaded non-resource-list map source file, including completely distance-free blank maps; the New Map Element wizard accepts the same targets and appends a canonical tail distance block for a source with zero or one numeric distance statement without moving existing statements; a header-only resource list takes its first row directly from an `Add Row` button or context-menu insertion, and maploader appends that row after the header with the format's initial CSV field count (Signal widths may subsequently change); one ledger batch that mixes unsaved `*.Load` insertions with resource-list row edits is now planned in two stages so list-row editIds resolve against a working copy that already contains the new Loads, eliminating `unsupported or unknown editId` failures; and editable-list context-menu actions are deferred until after table rendering, fixing the crash when choosing `Insert Row Below`.
 - [x] Treat a `Curve.Interpolate` interval whose evaluated endpoint radii are both zero as straight in the 3D scene route overlay, reusing the localized `Straight` label while preserving the two-endpoint display when either radius is nonzero.
 
 ## 简体中文
@@ -199,7 +201,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 - [x] 将 Canvas3D 按职责拆为独立编译的功能模块，保留公共接口及单一私有 Impl 状态所有者；将嵌入式 Debug 渲染契约迁入 `.cpp`，加载契约使用独立编译单元。
 - [x] 将现有 `Legacy.Fog` 纳入非目标语义校验并保留 Include 子树豁免；在引号/表达式 Track key 的真实边界之后定位参数。
-- [x] Signal 列表尾部追加保留缩进、尾部注释及主行/glare 邻接；按最终 typed 行形状重放待保存插入，覆盖裁掉尾部空字段的紧凑行、多次 Apply、删除/重加 glare、Revert 和 Save/reload。
+- [x] Signal 列表尾部追加保留缩进、尾部注释及主行/glare 邻接；按最终 typed 行形状重放待保存插入，保留尾部空字段及主行/glare 的独立宽度，覆盖多次 Apply、删除/重加 glare、Revert 和 Save/reload。
 - [x] 普通声音未使用搜索计入 Station 到达音、发车音及活动/待应用草稿；CSV 输出名冲突在写入前拒绝并报告输出失败；布局保存失败保留请求，与 settings 独立按期重试。
 - [x] Repeater 索引达到有符号上限时安全终止；其他轨道快照事件一次预分配；2D 共用已筛选曲线事件、原位旋转已复制列车路径；3D 有序轨道 chunk 通过二分限定候选；Signal/Beacon 共用缓存行构建。
 - [x] 为上述合同添加确定性回归，修正 UTF-16 换行断言，共用包含 0/1/2 参数 Interpolate 的非空 fixture；真实线路为空时验证空 marker 集合，不强制存在可选语法。持续帧性能仍独立验收。
@@ -300,7 +302,9 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 显示 `信号现示列表`、`地图信号列表` 和 `应答器列表`
 - [x] 显示 `限速点列表`、`轨道变位列表`、`粘着特性变化点列表`、走行音、轮缘摩擦音效和道岔音效相关表格
 - [x] 显示 `背景变化点列表`、`驾驶台亮度变化点列表`、`雾效果变化点列表` 和 `绘制距离变化点列表`
-- [x] 通过源码回写的行内表格编辑器编辑、清空、调整顺序或删除 `Signal.Load` 信号现示定义及可选 glare 行；暂不支持新增现示结构 key 列
+- [x] 通过源码回写的行内表格编辑器编辑、清空、调整顺序或删除 `Signal.Load` 信号现示定义及可选 glare 行
+- [x] 信号现示列表新增三个行操作（在最右侧新增空白格、删除最右侧一格、删除尾部空白格）和四个全局操作（对齐所有列、每行右侧新增一格、每行删除最右侧一格、删除全部尾部空白）。普通主行/glare 保留包含空白字段的独立实际 CSV 宽度，只有对齐操作会统一宽度；无效单元格显示斜线且不可编辑。最多显示 509 个结构键列，超出时警告并保留隐藏字段；删除有内容的单元格需确认，全空行也至少保留一个结构键单元格。历史多眩光行块仍遵守文档所述的变宽限制。
+- [x] 信号列操作通过类型化完整重解析的 Apply/Save/Revert、待保存插入重复 Apply、整块移动、待删除草稿、过期确认拒绝、源文件不变保护及 UTF-8/Shift-JIS 保存重载夹具验证。Debug 构建、全部七项 CTest、按顺序执行的真实线路 `--debug-headless-signal-aspect-columns` 和全屏 GUI 自动点击测试通过，覆盖三语控件、窄面板换行、超限与确认、全空行、未应用草稿阻止保存及只读时禁用操作；真实线路源文件保持不变。
 - [x] 通过基于源锚点的属性检查器编辑或删除已有 `Beacon.Put` 行
 - [x] 为已支持的布景/信号机/车站/Repeater 放置，以及限速点、轨道变位、应答器、音效/噪声、背景、粘着、驾驶台亮度、雾和绘制距离行提供“属性/编辑”检查器；可从适用的表格和 2D/3D 标记进入，并为可编辑的布景、信号机和 Repeater Begin 放置提供实时 X/Y/Z 操纵器
 - [x] 从 2D 平面图的布景/信号机放置标记打开“属性/编辑”
@@ -366,7 +370,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Include 文件结构图，以及读取当前内存工作副本的只读源码文本预览
 - [x] 编辑模式下可从文件结构图导入已有子地图，或排他新建 UTF-8 无 BOM、CRLF 的 `BveTs Map 2.02:utf-8` 子地图；规范 Include 暂存到选定物理源中首个本地距离语句前最后一个零距离 Include 的下方、首个距离语句上方或文件末尾，正常“保存”才提交父地图
 - [x] 编辑模式下可在车站、布景模型、信号现示、音效文件或 3D 音效文件列表顶部路径右键选择“更换文件...”，替换对应 `*.Load` 源路径。候选文件沿用地图加载器既有列表标题/版本校验（Station List 沿用 0.04+ 兼容规则、Structure List 1.00+、Signal Aspects List 2.00+，Sound 与 Sound3D 共用 Sound List 2.00+），立即刷新内存工作副本/列表缓存并经正常“保存”写盘；确认时只丢弃目标列表未应用草稿或已应用但未保存的旧内容修改。
-- [x] 编辑模式下可在 Station、Structure、Signal、Sound、Sound3D 资源列表任意内容单元格右键，在上方或下方新增共享行内草稿；插入保留源码编码/换行并走既有应用/保存流程，固定 BVE CSV 字段数依次为 13、2、6、3、3，Signal 主行/glare 成对保持绑定，新 Signal 主行默认无 glare，需手动“新增眩光”。
+- [x] 编辑模式下可在 Station、Structure、Signal、Sound、Sound3D 资源列表任意内容单元格右键，在上方或下方新增共享行内草稿；插入保留源码编码/换行并走既有应用/保存流程，Station、Structure、Sound/Sound3D 的固定 BVE CSV 字段数分别为 13、2、3，Signal 初始为 6 个字段且后续可调整宽度。Signal 主行/glare 成对保持绑定，新 Signal 主行默认无 glare，需手动“新增眩光”。
 - [x] 在文件结构图中右键 Include 文件节点并选择“解除引用”，经现有类型化删除/应用/保存流程从上级地图删除对应 `include` 语句；编辑模式关闭时菜单项禁用，后续语句仍依赖该子树内的变量或距离时删除被阻止
 - [x] 在文件结构图中右键 Include 文件节点并选择“更换文件...”，选择 .txt/.csv 子地图后经类型化更新流程将上级地图对应 `include` 语句的路径改写为新引用（复用布景模型列表的“优先相对路径、失败时绝对路径”逻辑，基准目录与解析器一致取入口地图目录）；应用后缓存自动刷新且不直接保存；编辑模式关闭时菜单项禁用，后续语句仍依赖旧子树内变量或替换会产生重复声明时编辑被阻止
 - [x] 编辑模式中分离“应用到预览”“保存到磁盘”“撤销全部待保存改动”和“从磁盘重新加载”，并在存在未保存更改时确认
@@ -380,6 +384,6 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 ### 问题修复
 
 - [x] 修复 Station.List 写回的 BVE 兼容性：编辑或新增车站定义行写回时，空的 `stoppageTime`、`signalFlag`、`alightingTime`、`passengers`、`doorReopen` 和 `stuckInDoor` 统一输出为 `0`；station key/名称、时间和音效 key 为空时仍保留为空，未触及的源码行保持原始文本。
-- [x] 修复空白地图/新建引用工作流：`Include` 与五种 `*.Load` 引用可选择任意已加载的非资源列表地图源文件，包括完全无距离语句的空白地图；“新建地图元素”向导也可选择这些目标，对于只有零或一条数值距离语句的源文件，会在不移动既有语句的前提下追加规范尾部距离块；仅有文件头的资源列表可通过“新增行”按钮或右键插入直接创建首行，maploader 将该行按固定 CSV 字段数追加到文件头之后；同一账本同时含有未保存 `*.Load` 插入与资源列表行编辑时改为两阶段规划，使列表行 editId 在已包含新 Load 的临时工作副本中解析，消除 `unsupported or unknown editId` 报错；资源列表右键菜单动作延迟到表格渲染结束后执行，修复点击“在下方新增行”时崩溃的问题。
+- [x] 修复空白地图/新建引用工作流：`Include` 与五种 `*.Load` 引用可选择任意已加载的非资源列表地图源文件，包括完全无距离语句的空白地图；“新建地图元素”向导也可选择这些目标，对于只有零或一条数值距离语句的源文件，会在不移动既有语句的前提下追加规范尾部距离块；仅有文件头的资源列表可通过“新增行”按钮或右键插入直接创建首行，maploader 将该行按相应格式的初始 CSV 字段数追加到文件头之后（Signal 后续可调整宽度）；同一账本同时含有未保存 `*.Load` 插入与资源列表行编辑时改为两阶段规划，使列表行 editId 在已包含新 Load 的临时工作副本中解析，消除 `unsupported or unknown editId` 报错；资源列表右键菜单动作延迟到表格渲染结束后执行，修复点击“在下方新增行”时崩溃的问题。
 - [x] 将全局保存快捷键从 `Ctrl+S` 改为 `Ctrl+Shift+S`，并在 3D 画布悬停时屏蔽该保存组合键对应的 `S` 后退输入；普通 `S` 与 `Ctrl+S` 相机移动保持不变。
 - [x] 修复 3D 场景线路信息中的 `Curve.Interpolate` 显示：两端求值后的半径均为零时复用现有本地化“直线”标签；任一端半径非零时仍显示两个端点。

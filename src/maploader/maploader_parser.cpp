@@ -1667,7 +1667,6 @@ private:
             if (trimmed.empty() || trimmed[0] == '#') return;
 
             std::vector<std::string> fields = parse_comma_separated_fields(line, true);
-            trim_trailing_empty_fields(fields);
             if (fields.empty()) return;
             const bool starts_glare_row = fields[0].empty();
             if (starts_glare_row && !current_aspect) return;

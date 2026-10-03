@@ -935,29 +935,65 @@ std::string build_station_list_statement(const MapEditChange& change,
         });
 }
 
-std::optional<size_t> signal_aspect_add_glare_count(
-    const MapEditChange& change) {
-    const auto input = change.field_changes.find("addGlare");
+std::optional<size_t> signal_aspect_count_field(
+    const MapEditChange& change, const char* name, bool allow_zero) {
+    const auto input = change.field_changes.find(name);
     if (input == change.field_changes.end()) return std::nullopt;
     const std::string text = trim_field_copy(input->second);
     if (text.empty()) {
-        throw std::runtime_error("Signal aspect addGlare field is empty");
+        throw std::runtime_error(std::string("Signal aspect count is empty: ") + name);
     }
     size_t count = 0;
     for (const char ch : text) {
         if (ch < '0' || ch > '9' ||
-            count > (std::numeric_limits<size_t>::max() -
+            count > (std::numeric_limits<std::uint32_t>::max() -
                      static_cast<size_t>(ch - '0')) / 10) {
             throw std::runtime_error(
-                "Signal aspect addGlare field must be a positive integer");
+                std::string("Signal aspect count must be a uint32 integer: ") + name);
         }
         count = count * 10 + static_cast<size_t>(ch - '0');
     }
-    if (count == 0) {
+    if (count == 0 && !allow_zero) {
         throw std::runtime_error(
-            "Signal aspect addGlare field must be a positive integer");
+            std::string("Signal aspect count must be positive: ") + name);
     }
     return count;
+}
+
+std::optional<size_t> signal_aspect_add_glare_count(const MapEditChange& change) {
+    return signal_aspect_count_field(change, "addGlare", false);
+}
+
+struct SignalAspectShape {
+    size_t main_count;
+    size_t glare_count;
+};
+
+std::optional<SignalAspectShape> signal_aspect_shape(const MapEditChange& change) {
+    const auto main = signal_aspect_count_field(change, "mainStructureKeyCount", false);
+    const auto glare = signal_aspect_count_field(change, "glareStructureKeyCount", true);
+    if (!main && !glare) return std::nullopt;
+    if (!main || !glare || *main > std::numeric_limits<size_t>::max() - *glare) {
+        throw std::runtime_error("Signal aspect shape requires both valid row counts");
+    }
+    const size_t total = *main + *glare;
+    // Reject impossible requests before looping or allocating by their counts.
+    if (total > change.field_changes.size()) {
+        throw std::runtime_error("Signal aspect shape is missing structure-key fields");
+    }
+    for (size_t index = 0; index < total; ++index) {
+        if (change.field_changes.find(signal_aspect_structure_key_field_name(index)) ==
+            change.field_changes.end()) {
+            throw std::runtime_error("Signal aspect shape is missing a structure-key field");
+        }
+    }
+    for (const auto& field : change.field_changes) {
+        size_t index = 0;
+        if (parse_signal_aspect_structure_key_field_name(field.first, index) && index >= total) {
+            throw std::runtime_error("Signal aspect shape has an excess structure-key field");
+        }
+    }
+    return SignalAspectShape{*main, *glare};
 }
 
 std::string build_signal_aspect_statement(
@@ -981,6 +1017,21 @@ std::string build_signal_aspect_statement(
     }
     const std::optional<size_t> add_glare_count =
         signal_aspect_add_glare_count(change);
+    const auto shape = signal_aspect_shape(change);
+    const size_t source_glare_count = source_values.structure_keys.size() -
+        source_values.main_structure_key_count;
+    if (shape) {
+        if ((delete_glare && shape->glare_count != 0) ||
+            (add_glare_count && (*add_glare_count != shape->glare_count ||
+                                 source_glare_count != 0))) {
+            throw std::runtime_error("Signal aspect glare operation conflicts with final shape");
+        }
+        delete_glare = shape->glare_count == 0;
+        if (source_values.glare_row_count > 1 && shape->glare_count != 0 &&
+            shape->glare_count != source_glare_count) {
+            throw std::runtime_error("Cannot resize multiple Signal glare rows as one row");
+        }
+    }
     if (delete_glare && add_glare_count) {
         throw std::runtime_error(
             "Signal aspect cannot add and delete glare in one edit");
@@ -1005,7 +1056,6 @@ std::string build_signal_aspect_statement(
             const CsvSourceLine source = split_csv_source_line(line);
             std::vector<std::string> semantic_fields =
                 parse_comma_separated_fields(std::string(line), true);
-            trim_trailing_empty_fields(semantic_fields);
             if (semantic_fields.empty()) {
                 out << line;
             } else {
@@ -1027,29 +1077,42 @@ std::string build_signal_aspect_statement(
                     structure_index += semantic_fields.size() - 1;
                     emit_line = false;
                 } else {
-                    for (size_t field = 0; field < source.fields.size(); ++field) {
+                    // Historical lists can contain multiple glare source rows.
+                    // Their aggregate span is displayed as one row, so resizing
+                    // that span is ambiguous. Unchanged glare counts retain each
+                    // physical row's width, including on moves and main resizes.
+                    const size_t final_field_count = !shape ? source.fields.size()
+                        : main_row ? 1 + shape->main_count
+                        : source_values.glare_row_count > 1 ? source.fields.size()
+                        : 1 + shape->glare_count;
+                    const size_t final_key_offset = main_row ? 0 :
+                        (shape ? shape->main_count + structure_index -
+                            source_values.main_structure_key_count : structure_index);
+                    for (size_t field = 0; field < final_field_count; ++field) {
                         if (field) out << ",";
-                        const bool semantic_field =
-                            field < semantic_fields.size();
                         std::string field_name;
                         bool required = false;
                         if (main_row && field == 0) {
                             field_name = "signalAspectKey";
                             required = true;
-                        } else if (field > 0 && semantic_field) {
+                        } else if (field > 0) {
                             field_name = signal_aspect_structure_key_field_name(
-                                structure_index++);
+                                final_key_offset + field - 1);
                         }
                         const auto edited = field_name.empty()
                             ? change.field_changes.end()
                             : change.field_changes.find(field_name);
                         if (edited == change.field_changes.end()) {
-                            out << source.fields[field];
+                            if (field < source.fields.size()) out << source.fields[field];
                             continue;
                         }
                         const std::string normalized =
                             normalized_signal_aspect_edit_value(
                                 edited->second, field_name, required);
+                        if (field >= source.fields.size()) {
+                            out << csv_field(normalized);
+                            continue;
+                        }
                         const std::string source_value =
                             normalized_signal_aspect_edit_value(
                                 semantic_fields[field], field_name, required);
@@ -1076,7 +1139,8 @@ std::string build_signal_aspect_statement(
                         }
                     }
                     out << source.comment_suffix;
-                    if (main_row) main_structure_count = structure_index;
+                    structure_index += semantic_fields.size() - 1;
+                    if (main_row) main_structure_count = semantic_fields.size() - 1;
                 }
             }
         }
@@ -1096,20 +1160,24 @@ std::string build_signal_aspect_statement(
             "Signal aspect source block field mapping is inconsistent");
     }
     std::vector<std::string> added_glare_values;
-    if (add_glare_count) {
+    const size_t new_glare_count = shape && source_glare_count == 0
+        ? shape->glare_count : add_glare_count.value_or(0);
+    if (new_glare_count != 0) {
         if (has_secondary_row) {
             throw std::runtime_error(
                 "Signal aspect already has a glare row");
         }
-        if (main_structure_count == 0 ||
-            *add_glare_count != main_structure_count) {
+        if (main_structure_count == 0 && !shape) {
             throw std::runtime_error(
-                "Signal aspect glare must use the main row structure-key count");
+                "Signal aspect main row requires at least one structure-key field");
         }
-        added_glare_values.reserve(*add_glare_count);
-        for (size_t index = 0; index < *add_glare_count; ++index) {
+        if (new_glare_count > change.field_changes.size()) {
+            throw std::runtime_error("Signal aspect addGlare is missing structure-key fields");
+        }
+        added_glare_values.reserve(new_glare_count);
+        for (size_t index = 0; index < new_glare_count; ++index) {
             const std::string field_name = signal_aspect_structure_key_field_name(
-                source_structure_count + index);
+                (shape ? shape->main_count : source_structure_count) + index);
             const auto value = change.field_changes.find(field_name);
             if (value == change.field_changes.end()) {
                 throw std::runtime_error(
@@ -1118,16 +1186,12 @@ std::string build_signal_aspect_statement(
             added_glare_values.push_back(normalized_signal_aspect_edit_value(
                 value->second, field_name, false));
         }
-        if (std::none_of(added_glare_values.begin(), added_glare_values.end(),
-                         [](const std::string& value) { return !value.empty(); })) {
-            throw std::runtime_error(
-                "Signal aspect glare requires at least one structure key");
-        }
     }
     for (const auto& field : change.field_changes) {
         if (field.first == "signalAspectKey" ||
             field.first == "deleteGlare" ||
-            field.first == "addGlare") {
+            field.first == "addGlare" || field.first == "mainStructureKeyCount" ||
+            field.first == "glareStructureKeyCount") {
             continue;
         }
         size_t key_index = 0;
@@ -1136,7 +1200,9 @@ std::string build_signal_aspect_statement(
             throw std::runtime_error(
                 "unsupported Signal aspect edit field: " + field.first);
         }
-        if (key_index >= source_structure_count + added_glare_values.size()) {
+        const size_t final_count = shape ? shape->main_count + shape->glare_count
+            : source_structure_count + added_glare_values.size();
+        if (key_index >= final_count) {
             throw std::runtime_error(
                 "Signal aspect edit cannot add a structure-key column: " +
                 field.first);
@@ -2762,19 +2828,26 @@ void validate_resource_list_insert_fields(
 }
 
 void validate_signal_aspect_insert_fields(const MapEditChange& change) {
-    constexpr size_t k_primary_structure_key_count = 5;
+    const auto shape = signal_aspect_shape(change);
+    const size_t primary_structure_key_count = shape ? shape->main_count : 5;
     const std::optional<size_t> add_glare_count =
         signal_aspect_add_glare_count(change);
-    if (add_glare_count &&
-        *add_glare_count != k_primary_structure_key_count) {
+    if (shape && add_glare_count && *add_glare_count != shape->glare_count) {
         throw std::runtime_error(
-            "Signal aspect insert glare must contain five structure keys");
+            "Signal aspect insert glare operation conflicts with final shape");
+    }
+    const size_t glare_count = shape ? shape->glare_count : add_glare_count.value_or(0);
+    if (primary_structure_key_count > std::numeric_limits<size_t>::max() - glare_count) {
+        throw std::runtime_error("Signal aspect insert row counts overflow");
     }
     const size_t permitted_structure_key_count =
-        k_primary_structure_key_count +
-        (add_glare_count ? *add_glare_count : 0);
+        primary_structure_key_count + glare_count;
+    if (permitted_structure_key_count > change.field_changes.size()) {
+        throw std::runtime_error("Signal aspect insert is missing structure-key fields");
+    }
     for (const auto& field : change.field_changes) {
-        if (field.first == "signalAspectKey" || field.first == "addGlare") {
+        if (field.first == "signalAspectKey" || field.first == "addGlare" ||
+            field.first == "mainStructureKeyCount" || field.first == "glareStructureKeyCount") {
             continue;
         }
         size_t index = 0;
@@ -2791,8 +2864,6 @@ void validate_signal_aspect_insert_fields(const MapEditChange& change) {
     (void)normalized_signal_aspect_edit_value(
         aspect_key->second, "signalAspectKey", true);
 
-    bool has_main_structure_key = false;
-    bool has_glare_structure_key = false;
     for (size_t index = 0; index < permitted_structure_key_count; ++index) {
         const std::string field_name = signal_aspect_structure_key_field_name(index);
         const auto field = change.field_changes.find(field_name);
@@ -2800,21 +2871,8 @@ void validate_signal_aspect_insert_fields(const MapEditChange& change) {
             throw std::runtime_error(
                 "Signal aspect insert is missing field: " + field_name);
         }
-        const std::string value = normalized_signal_aspect_edit_value(
+        (void)normalized_signal_aspect_edit_value(
             field->second, field_name, false);
-        if (index < k_primary_structure_key_count) {
-            has_main_structure_key = has_main_structure_key || !value.empty();
-        } else {
-            has_glare_structure_key = has_glare_structure_key || !value.empty();
-        }
-    }
-    if (!has_main_structure_key) {
-        throw std::runtime_error(
-            "Signal aspect insert requires at least one structure key");
-    }
-    if (add_glare_count && !has_glare_structure_key) {
-        throw std::runtime_error(
-            "Signal aspect glare requires at least one structure key");
     }
 }
 
@@ -3226,7 +3284,8 @@ std::string build_resource_list_content_insert_statement(
         break;
     }
 
-    constexpr size_t k_primary_structure_key_count = 5;
+    const auto shape = signal_aspect_shape(change);
+    const size_t primary_structure_key_count = shape ? shape->main_count : 5;
     std::ostringstream out;
     const auto aspect_key = change.field_changes.find("signalAspectKey");
     if (aspect_key == change.field_changes.end()) {
@@ -3234,7 +3293,7 @@ std::string build_resource_list_content_insert_statement(
     }
     out << csv_field(normalized_signal_aspect_edit_value(
         aspect_key->second, "signalAspectKey", true));
-    for (size_t index = 0; index < k_primary_structure_key_count; ++index) {
+    for (size_t index = 0; index < primary_structure_key_count; ++index) {
         const std::string field_name = signal_aspect_structure_key_field_name(index);
         const auto field = change.field_changes.find(field_name);
         if (field == change.field_changes.end()) {
@@ -3246,12 +3305,13 @@ std::string build_resource_list_content_insert_statement(
     }
     const std::optional<size_t> add_glare_count =
         signal_aspect_add_glare_count(change);
-    if (!add_glare_count) return out.str();
+    const size_t glare_count = shape ? shape->glare_count : add_glare_count.value_or(0);
+    if (glare_count == 0) return out.str();
 
     out << (inserted_newline.empty() ? std::string_view("\n") : inserted_newline);
-    for (size_t index = 0; index < *add_glare_count; ++index) {
+    for (size_t index = 0; index < glare_count; ++index) {
         const std::string field_name = signal_aspect_structure_key_field_name(
-            k_primary_structure_key_count + index);
+            primary_structure_key_count + index);
         const auto field = change.field_changes.find(field_name);
         if (field == change.field_changes.end()) {
             throw std::runtime_error(
@@ -7859,10 +7919,12 @@ MapEditReport build_edit_report(MapContext& ctx,
                                   identity_edit.identity_range_end);
         }
         std::pair<size_t, size_t> range{0, replacement_text.size()};
-        if (identity_edit.target.row_kind != "signal.aspect" ||
-            !has_field_change(*identity_edit.change, "deleteGlare")) {
+        if (identity_edit.target.row_kind != "signal.aspect") {
             return range;
         }
+        const auto shape = signal_aspect_shape(*identity_edit.change);
+        if (!has_field_change(*identity_edit.change, "deleteGlare") &&
+            (!shape || shape->glare_count != 0)) return range;
 
         // Signal aspects are one logical source statement spanning a main row
         // and its optional glare row. Deleting the glare retains the former

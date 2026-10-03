@@ -317,7 +317,8 @@ inline constexpr TableColumnDef k_signal_aspect_fixed_columns[] = {
 };
 inline constexpr int k_signal_aspect_key_column = 1;
 inline constexpr int k_signal_aspect_structure_key_column_offset = IM_ARRAYSIZE(k_signal_aspect_fixed_columns);
-inline constexpr size_t k_max_signal_aspect_table_columns = 511;
+inline constexpr size_t k_max_signal_aspect_table_columns =
+    k_signal_aspect_visible_key_limit + k_signal_aspect_structure_key_column_offset;
 inline constexpr size_t k_max_signal_aspect_structure_key_columns =
     k_max_signal_aspect_table_columns - static_cast<size_t>(k_signal_aspect_structure_key_column_offset);
 
@@ -506,4 +507,3 @@ inline constexpr size_t k_station_definition_departure_sound_column = 10;
 
 
 } // namespace datatable_internal
-

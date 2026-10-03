@@ -374,7 +374,9 @@ typedef struct KvResourceListLoadRow {
 typedef struct KvSignalAspectRow {
     KvStringRef signal_aspect_key;
     KvSpan structure_keys;
-    /* metadata.reserved stores the main source row's structure-key count. */
+    /* metadata.reserved stores the main source row's structure-key count,
+     * including empty CSV fields. structure_keys retains main then glare
+     * fields, including each physical row's trailing empty fields. */
     KvRowMetadata metadata;
 } KvSignalAspectRow;
 
@@ -787,6 +789,11 @@ enum KvEditOperation {
 #define KV_EDIT_CHANGE_CONFIRM_REPEATER_CHANGE_POINT (1u << 1)
 
 typedef struct KvEditField {
+    /* Signal aspect shape updates provide mainStructureKeyCount (>= 1),
+     * glareStructureKeyCount (0 means absent), and every final structureKeyN
+     * in main-then-glare order. Counts are uint32 decimal values. Without
+     * counts, value updates preserve source widths and inserts default to
+     * five main fields. These inputs remain call-scoped views. */
     /* Repeater Begin+End insert batches use the reserved repeaterPairId field
      * to correlate exactly one Begin/Begin0 and one End without writing that
      * metadata to the BVE source. */

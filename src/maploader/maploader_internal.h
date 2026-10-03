@@ -241,7 +241,6 @@ inline bool csv_comment_starts_at(std::string_view text, size_t index) {
         (text[index] == '/' && index + 1 < text.size() && text[index + 1] == '/'));
 }
 std::vector<std::string> parse_comma_separated_fields(const std::string& line, bool stop_on_inline_comment);
-void trim_trailing_empty_fields(std::vector<std::string>& fields);
 std::string strip_ini_comment_copy(const std::string& line);
 std::string trim_matching_quotes(std::string text);
 int parse_sound_buffer_count(const std::string& text);
@@ -531,6 +530,8 @@ struct SignalAspect {
 struct SignalAspectSourceValues {
     std::string signal_aspect_key;
     std::vector<std::string> structure_keys;
+    size_t main_structure_key_count = 0;
+    size_t glare_row_count = 0;
 };
 
 struct SignalPut {

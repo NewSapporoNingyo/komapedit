@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <map>
 #include <string>
@@ -396,6 +397,9 @@ void App::render_editable_list_table(
                     field_index >= 0 &&
                     static_cast<size_t>(field_index) <
                         editable_field_count;
+                const bool invalid_signal_cell = display_row && display_field_index > 0 &&
+                    static_cast<size_t>(display_field_index - 1) >= display_row->structure_field_count;
+                const bool actual_csv_cell = display_field_index >= 0 && !invalid_signal_cell;
                 const std::string sequence = display_row
                     ? display_row->sequence
                     : std::to_string(
@@ -514,6 +518,27 @@ void App::render_editable_list_table(
                         has_top_action = true;
                     }
                     if (has_top_action) ImGui::Separator();
+
+                    if (is_signal_aspect && actual_csv_cell) {
+                        ImGui::BeginDisabled(!row_editable);
+                        if (ImGui::MenuItem(tr("context.signal_aspect.append_cell").c_str())) {
+                            defer_action(DeferredEditableListAction::Kind::AppendSignalCell,
+                                logical_row, -1, secondary_row);
+                        }
+                        ImGui::EndDisabled();
+                        ImGui::BeginDisabled(!row_editable || !display_row ||
+                            display_row->structure_field_count <= 1);
+                        if (ImGui::MenuItem(tr("context.signal_aspect.trim_cells").c_str())) {
+                            defer_action(DeferredEditableListAction::Kind::TrimSignalCells,
+                                logical_row, -1, secondary_row);
+                        }
+                        if (ImGui::MenuItem(tr("context.signal_aspect.remove_last_cell").c_str())) {
+                            defer_action(DeferredEditableListAction::Kind::RemoveLastSignalCell,
+                                logical_row, -1, secondary_row);
+                        }
+                        ImGui::EndDisabled();
+                        ImGui::Separator();
+                    }
 
                     ImGui::BeginDisabled(!row_editable);
                     if (ImGui::MenuItem(
@@ -658,6 +683,15 @@ void App::render_editable_list_table(
                 const float cell_height = ImGui::GetFrameHeight();
                 const EditableCellInteraction interaction = render_editable_cell_button(
                     display, is_selected, text_color, cell_width, cell_height);
+                if (invalid_signal_cell) {
+                    const ImVec2 minimum = ImGui::GetItemRectMin();
+                    const ImVec2 maximum = ImGui::GetItemRectMax();
+                    const ImVec2 padding = ImGui::GetStyle().CellPadding;
+                    ImGui::GetWindowDrawList()->AddLine(
+                        ImVec2(minimum.x - padding.x, minimum.y - padding.y),
+                        ImVec2(maximum.x + padding.x, maximum.y + padding.y),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                }
                 if (interaction.left_clicked || interaction.right_clicked) {
                     edit.selected_row = logical_row;
                     edit.selected_secondary_row =
@@ -1240,23 +1274,44 @@ void App::render_signal_aspects_window() {
             signal_aspect_edit_, k_signal_aspect_edit_spec);
     }
     ImGui::EndDisabled();
-    const bool has_inserted_signal_draft =
-        signal_aspect_edit_.rows_initialized &&
-        std::any_of(
-            signal_aspect_edit_.rows.begin(), signal_aspect_edit_.rows.end(),
-            [](const EditableListDraftRow& row) { return row.inserted; });
-    if (has_inserted_signal_draft) {
-        const size_t required_columns =
-            k_signal_aspect_structure_key_column_offset + 5;
-        while (table_cache_.signal_aspect_column_headers.size() <
-               required_columns) {
-            const size_t key_index =
-                table_cache_.signal_aspect_column_headers.size() -
-                k_signal_aspect_structure_key_column_offset + 1;
-            table_cache_.signal_aspect_column_headers.push_back(
-                "structureKey" + std::to_string(key_index));
-            table_cache_.signal_aspect_column_widths.push_back(120.0f);
-        }
+    const std::pair<const char*, SignalAspectColumnAction> column_actions[] = {
+        {"button.signal_aspect.align_columns", SignalAspectColumnAction::AlignAll},
+        {"button.signal_aspect.append_column", SignalAspectColumnAction::Append},
+        {"button.signal_aspect.remove_last_column", SignalAspectColumnAction::RemoveLast},
+        {"button.signal_aspect.trim_columns", SignalAspectColumnAction::TrimTrailing},
+    };
+    ImGui::BeginDisabled(!edit_actions_available());
+    for (const auto& action : column_actions) {
+        const std::string label = tr(action.first);
+        same_line_if_next_item_fits(button_width_for_label(label), 0.0f);
+        if (ImGui::Button(label.c_str())) request_signal_aspect_column_action(action.second);
+    }
+    ImGui::EndDisabled();
+    const size_t actual_columns = signal_aspect_edit_.rows_initialized
+        ? signal_aspect_edit_.structure_key_columns : table_cache_.signal_aspect_structure_key_columns;
+    const size_t shown_columns = std::min(actual_columns, k_max_signal_aspect_structure_key_columns);
+    const size_t required_columns = k_signal_aspect_structure_key_column_offset + shown_columns;
+    // Only change layout storage when its shape changes. Draft operations cache
+    // the maximum physical row width; rendering does not rescan all rows.
+    if (table_cache_.signal_aspect_column_headers.size() > required_columns) {
+        table_cache_.signal_aspect_column_headers.resize(required_columns);
+        table_cache_.signal_aspect_column_widths.resize(required_columns);
+    }
+    while (table_cache_.signal_aspect_column_headers.size() < required_columns) {
+        const size_t key_index = table_cache_.signal_aspect_column_headers.size() -
+            k_signal_aspect_structure_key_column_offset + 1;
+        table_cache_.signal_aspect_column_headers.push_back("structureKey" + std::to_string(key_index));
+        table_cache_.signal_aspect_column_widths.push_back(120.0f);
+    }
+    if (actual_columns > shown_columns) {
+        std::string notice = tr("table.signal_aspect_columns_truncated");
+        const auto replace_count = [&](const char* token, size_t count) {
+            const size_t position = notice.find(token);
+            if (position != std::string::npos) notice.replace(position, std::strlen(token), std::to_string(count));
+        };
+        replace_count("{shown}", shown_columns);
+        replace_count("{total}", actual_columns);
+        ImGui::TextWrapped("%s", notice.c_str());
     }
     render_editable_list_table(
         "signal_aspects", nullptr,
@@ -1271,4 +1326,3 @@ void App::render_signal_aspects_window() {
     focus_signal_aspects_next_ = false;
     ImGui::End();
 }
-

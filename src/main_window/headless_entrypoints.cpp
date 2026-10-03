@@ -5318,7 +5318,7 @@ int App::run_debug_headless_fresh_resource_list_workflow(
             };
             const auto exercise_signal = [&](bool compact) {
                 const std::string key = compact ? "aspectCompact" : "aspectFull";
-                const std::string count = compact ? "1" : "5";
+                const std::string count = "5";
                 *out << "signal_fixture_shape=" << (compact ? "compact" : "full") << "\n";
                 require_signal("signal_fixture_rows_initialized",
                     app.initialize_editable_list_draft_rows(signal_edit, signal_spec));
@@ -5399,9 +5399,9 @@ int App::run_debug_headless_fresh_resource_list_workflow(
                 const bool compact = key == "aspectCompact";
                 if ((compact || key == "aspectFull") &&
                     table_cell(row, "structureKey1") == "stOther" &&
-                    table_cell(row, compact ? "structureKey2" : "structureKey6") == "stNew" &&
-                    table_cell(row, "_signalMainStructureKeyCount") == (compact ? "1" : "5") &&
-                    table_cell(row, "_signalGlareStructureKeyCount") == (compact ? "1" : "5")) {
+                    table_cell(row, "structureKey6") == "stNew" &&
+                    table_cell(row, "_signalMainStructureKeyCount") == "5" &&
+                    table_cell(row, "_signalGlareStructureKeyCount") == "5") {
                     ++verified_signal_rows;
                 }
             }

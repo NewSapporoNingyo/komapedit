@@ -410,6 +410,46 @@ std::string App::choose_folder_dialog(const char* title_key) {
 }
 
 void App::render_popups() {
+    if (signal_aspect_column_confirmation_ &&
+        signal_aspect_column_confirmation_->popup_requested) {
+        ImGui::OpenPopup(tr("dialog.signal_columns_delete_title").c_str());
+        signal_aspect_column_confirmation_->popup_requested = false;
+    }
+    std::optional<bool> resolve_signal_columns;
+    if (ImGui::BeginPopupModal(tr("dialog.signal_columns_delete_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 480.0f);
+        std::string message = tr("dialog.signal_columns_delete_message");
+        if (signal_aspect_column_confirmation_) {
+            const auto& request = *signal_aspect_column_confirmation_;
+            const auto replace = [&](const std::string& token, const std::string& value) {
+                const size_t position = message.find(token);
+                if (position != std::string::npos) message.replace(position, token.size(), value);
+            };
+            replace("{scope}", tr(request.all_rows
+                ? "dialog.signal_columns_scope_all" : "dialog.signal_columns_scope_row"));
+            replace("{count}", std::to_string(request.populated_cells));
+            if (request.includes_hidden_cells) {
+                message += "\n\n" + tr("dialog.signal_columns_delete_hidden");
+            }
+        }
+        ImGui::TextUnformatted(message.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            resolve_signal_columns = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            resolve_signal_columns = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (resolve_signal_columns) {
+        resolve_signal_aspect_column_confirmation(*resolve_signal_columns);
+    }
     if (other_track_rename_.popup_requested) {
         ImGui::OpenPopup(tr("dialog.other_track_rename_title").c_str());
         other_track_rename_.popup_requested = false;

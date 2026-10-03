@@ -79,6 +79,7 @@ struct HeadlessNewFileWizardOptions;
 struct HeadlessScenarioCreateOptions;
 struct HeadlessScenarioLifecycleOptions;
 struct HeadlessFreshResourceListWorkflowOptions;
+struct HeadlessSignalAspectColumnsOptions;
 struct HeadlessDiagnosticsPopupBenchOptions;
 #endif
 
@@ -1710,6 +1711,8 @@ struct EditableListDraftRow {
     bool deleted = false;
     size_t primary_structure_field_count = 0;
     size_t secondary_structure_field_count = 0;
+    size_t original_primary_structure_field_count = 0;
+    size_t original_secondary_structure_field_count = 0;
     bool secondary_row_deleted = false;
     bool secondary_row_added = false;
 };
@@ -1728,6 +1731,28 @@ struct EditableListEditState {
     std::vector<EditableListDraftRow> rows;
     std::vector<size_t> visible_rows;
     std::vector<EditableListDisplayRow> display_rows;
+    size_t structure_key_columns = 0;
+};
+
+enum class SignalAspectColumnAction { Append, RemoveLast, TrimTrailing, AlignAll };
+inline constexpr size_t k_signal_aspect_visible_key_limit = 509;
+
+struct SignalAspectColumnTarget {
+    std::string edit_id;
+    bool secondary = false;
+    size_t original_count = 0;
+    size_t new_count = 0;
+    std::string last_value;
+    std::string payload_edit_id;
+    std::string aspect_key;
+};
+
+struct SignalAspectColumnConfirmation {
+    std::vector<SignalAspectColumnTarget> targets;
+    bool popup_requested = true;
+    bool all_rows = false;
+    size_t populated_cells = 0;
+    bool includes_hidden_cells = false;
 };
 
 // A context-menu action that changes editable-list draft structure. Actions are
@@ -1745,6 +1770,9 @@ struct DeferredEditableListAction {
         ChooseFile,
         AddGlare,
         DeleteGlare,
+        AppendSignalCell,
+        RemoveLastSignalCell,
+        TrimSignalCells,
     };
     EditableListEditState* edit = nullptr;
     const EditableListSpec* spec = nullptr;
@@ -1877,6 +1905,8 @@ public:
         const HeadlessScenarioLifecycleOptions& options);
     static int run_debug_headless_fresh_resource_list_workflow(
         const HeadlessFreshResourceListWorkflowOptions& options);
+    static int run_debug_headless_signal_aspect_columns(
+        const HeadlessSignalAspectColumnsOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
     static bool debug_section_inspector_lifecycle(std::ostream& out);
     static bool debug_curve_interpolate_contract(double unit_distance, std::ostream& out);
@@ -2003,6 +2033,7 @@ private:
     // table/popup is rendering, executed after EndTable() so draft vectors are
     // never mutated mid-render.
     std::vector<DeferredEditableListAction> pending_editable_list_actions_;
+    std::optional<SignalAspectColumnConfirmation> signal_aspect_column_confirmation_;
     NewElementWizardState new_element_wizard_;
     NewFileWizardState new_file_wizard_;
     EditableListEditState station_definition_edit_;
@@ -2598,6 +2629,12 @@ private:
                                          int visible_row);
     void apply_editable_list_drafts(EditableListEditState& edit,
                                     const EditableListSpec& spec);
+    bool request_signal_aspect_column_action(SignalAspectColumnAction action,
+                                             int visible_row = -1,
+                                             bool secondary = false);
+    bool resolve_signal_aspect_column_confirmation(bool confirmed);
+    bool apply_signal_aspect_column_targets(
+        const std::vector<SignalAspectColumnTarget>& targets);
     void rebind_other_editable_list_drafts(const EditableListEditState* applied);
     void reset_editable_list_find_results(const EditableListSpec& spec);
     bool navigate_repeater_inspector(bool toward_next);

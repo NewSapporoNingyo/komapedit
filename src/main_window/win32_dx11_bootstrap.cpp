@@ -593,6 +593,18 @@ int main(int, char**) {
         return App::run_debug_headless_fresh_resource_list_workflow(fresh_resource_list);
     }
 
+    HeadlessSignalAspectColumnsOptions signal_columns =
+        parse_headless_signal_aspect_columns_options(args);
+    if (signal_columns.requested) {
+        if (!signal_columns.error.empty()) {
+            std::cerr << signal_columns.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-signal-aspect-columns <map-or-scenario-path> "
+                         "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_signal_aspect_columns(signal_columns);
+    }
+
     HeadlessIncludeImportCreateOptions include_import_create =
         parse_headless_include_import_create_options(args);
     if (include_import_create.requested) {

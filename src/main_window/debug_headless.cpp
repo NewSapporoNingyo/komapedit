@@ -576,6 +576,15 @@ parse_headless_fresh_resource_list_workflow_options(
         [](HeadlessFreshResourceListWorkflowOptions&) {});
 }
 
+HeadlessSignalAspectColumnsOptions parse_headless_signal_aspect_columns_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_required_map_edit_options<HeadlessSignalAspectColumnsOptions>(
+        args, "--debug-headless-signal-aspect-columns",
+        [](HeadlessSignalAspectColumnsOptions& options) {
+            options.error = "--debug-headless-signal-aspect-columns writes only its own fixtures; --commit is not allowed";
+        });
+}
+
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
     HeadlessLoadOptions options;
     for (size_t i = 1; i < args.size(); ++i) {
