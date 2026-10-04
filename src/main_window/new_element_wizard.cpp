@@ -1742,7 +1742,9 @@ bool App::apply_new_element_insert() {
     timing.next("insert.apply");
     if (!apply_edit_ledger_to_preview(candidate, reload_request, false)) {
         if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
-            !distance_resolution_workflow_.retry_requested) {
+            !distance_resolution_workflow_.retry_requested &&
+            std::string_view(program_status_key_) !=
+                "status.edit.distance_resolution_blocked") {
             set_program_status("status.edit.pending");
         }
         return false;

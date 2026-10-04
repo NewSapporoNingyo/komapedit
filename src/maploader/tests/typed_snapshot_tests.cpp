@@ -9515,10 +9515,11 @@ void distance_resolution_reason_contract() {
         {
             "ambiguous-source-section",
             "BveTs Map 2.02:utf-8\n"
+            "0;\n"
+            "0;\n"
             "DrawDistance.Change(500);\n"
-            "100;\n"
-            "200;\n",
-            nullptr, false, 2, 0.0, "50", "ambiguousSourceSection",
+            "0;\n",
+            nullptr, false, 4, 0.0, "50", "ambiguous_Source_Section",
         },
         {
             "multiple-equivalent-distance-blocks",
@@ -9529,17 +9530,18 @@ void distance_resolution_reason_contract() {
             "200;\n"
             "DrawDistance.Change(500);\n"
             "300;\n",
-            nullptr, false, 6, 200.0, "100", "multipleEquivalentDistanceBlocks",
+            nullptr, false, 6, 200.0, "100", "multiple_Equivalent_Distance_Blocks",
         },
         {
             "no-unique-distance-bracket",
             "BveTs Map 2.02:utf-8\n"
             "0;\n"
             "100;\n"
-            "200;\n"
             "DrawDistance.Change(500);\n"
-            "300;\n",
-            nullptr, false, 5, 200.0, "400", "noUniqueDistanceBracket",
+            "200;\n"
+            "100;\n"
+            "50;\n",
+            nullptr, false, 4, 100.0, "400", "no_Unique_Distance_Bracket",
         },
         {
             "distance-expression-requires-manual-edit",
@@ -9548,7 +9550,7 @@ void distance_resolution_reason_contract() {
             "distance + 100;\n"
             "DrawDistance.Change(500);\n"
             "200;\n",
-            nullptr, false, 4, 100.0, "150", "distanceExpressionRequiresManualEdit",
+            nullptr, false, 4, 100.0, "150", "distance_Expression_Requires_Manual_Edit",
         },
         {
             "variable-has-multiple-context-values",
@@ -9559,7 +9561,7 @@ void distance_resolution_reason_contract() {
             "100;\n"
             "$value = 600;\n"
             "200;\n",
-            nullptr, false, 4, 0.0, "150", "variableHasMultipleContextValues",
+            nullptr, false, 4, 0.0, "150", "evaluation_Environment_Requires_Boundary",
         },
         {
             "incompatible-evaluation-environment",
@@ -9567,7 +9569,7 @@ void distance_resolution_reason_contract() {
             "0;\n"
             "DrawDistance.Change(distance + 500);\n"
             "100;\n",
-            nullptr, false, 3, 0.0, "50", "incompatibleEvaluationEnvironment",
+            nullptr, false, 3, 0.0, "50", nullptr,
         },
         {
             "physical-source-has-incompatible-include-contexts",
@@ -9584,7 +9586,7 @@ void distance_resolution_reason_contract() {
             "$base+10;\n"
             "DrawDistance.Change(500);\n"
             "$base+30;\n",
-            true, 4, 10.0, "15", "physicalSourceHasIncompatibleIncludeContexts",
+            true, 4, 10.0, "15", nullptr,
         },
     }};
 
@@ -9665,10 +9667,16 @@ void distance_resolution_reason_contract() {
             handle.value, &update.batch, &report, sizeof(report)) != 0;
         check(called, (label + " dry run returns a report").c_str());
         if (called) validate_report(report);
-        check(called && !report.ok && report.blocking_error_count == 0 &&
-                  report.resolution_request_count != 0 &&
-                  edit_report_has_resolution_reason(report, contract.expected_reason),
-              (label + " returns the stable reason code").c_str());
+        if (contract.expected_reason) {
+            check(called && !report.ok && report.blocking_error_count == 0 &&
+                      report.resolution_request_count != 0 &&
+                      edit_report_has_resolution_reason(report, contract.expected_reason),
+                  (label + " returns the stable reason code").c_str());
+        } else {
+            check(called && !report.ok && report.blocking_error_count != 0 &&
+                      report.resolution_request_count == 0,
+                  (label + " rejects an unresolvable operation without retry requests").c_str());
+        }
         check(called && report.changed_file_count == 0 &&
                   report.preview_snippet_count == 0,
               (label + " produces no changed files or preview patches").c_str());
@@ -9676,6 +9684,495 @@ void distance_resolution_reason_contract() {
                   (!contract.child_source || read_bytes(child_path) == child_before),
               (label + " leaves source bytes unchanged").c_str());
     }
+}
+
+void distance_placement_lifecycle_contract() {
+    struct Case {
+        const char* name;
+        const char* source;
+        const char* target;
+        bool insert;
+    };
+    const std::vector<Case> cases{
+        {"no anchors", "BveTs Map 2.02:utf-8\nDrawDistance.Change(500);\nDrawDistance.Change(600);\n", "25", false},
+        {"one anchor forward", "BveTs Map 2.02:utf-8\n0;\nDrawDistance.Change(500);\nDrawDistance.Change(600);\n", "25", false},
+        {"one anchor backward", "BveTs Map 2.02:utf-8\n100;\nDrawDistance.Change(500);\nDrawDistance.Change(600);\n", "25", false},
+        {"indented first anchor", "BveTs Map 2.02:utf-8\n    100;\nDrawDistance.Change(500);\nDrawDistance.Change(600);\n", "25", false},
+        {"before first anchor", "BveTs Map 2.02:utf-8\nDrawDistance.Change(500);\nDrawDistance.Change(600);\n100;\n200;\n", "50", false},
+        {"increasing EOF", "BveTs Map 2.02:utf-8\n0;\n100;\n200;\nDrawDistance.Change(500);\n300;\n", "400", false},
+        {"decreasing EOF", "BveTs Map 2.02:utf-8\n200;\n100;\nDrawDistance.Change(500);\n", "50", false},
+        {"increasing terminal section", "BveTs Map 2.02:utf-8\n200;\n0;\n100;\nDrawDistance.Change(500);\n200;\n", "300", false},
+        {"decreasing terminal section", "BveTs Map 2.02:utf-8\n0;\n300;\n200;\nDrawDistance.Change(500);\n100;\n", "50", false},
+        {"reuse terminal block", "BveTs Map 2.02:utf-8\n0;\nDrawDistance.Change(500);\n100;\nDrawDistance.Change(600);\n", "100", false},
+        {"same line and EOF comment", "BveTs Map 2.02:utf-8\n0; DrawDistance.Change(500); 100; // retained EOF", "150", false},
+        {"BOM and CRLF", "\xEF\xBB\xBF" "BveTs Map 2.02:utf-8\r\n0;\r\nDrawDistance.Change(500);\r\n100;\r\n# retained\r\n", "150", false},
+        {"CP932 source", "BveTs Map 2.02:shift_jis\r\n0;\r\nDrawDistance.Change(500);\r\n100;\r\n# \x93\xFA\x96\x7B\r\n", "150", false},
+        {"empty insert", "BveTs Map 2.02:utf-8\n# retained\n", "25", true},
+        {"single anchor insert before", "BveTs Map 2.02:utf-8\n100;\nDrawDistance.Change(600);\n", "25", true},
+        {"decreasing insert EOF", "BveTs Map 2.02:utf-8\n200;\n100;\n", "50", true},
+        {"insert earlier bracket before EOF", "BveTs Map 2.02:utf-8\n0;\n200;\n100;\n", "50", true},
+        {"insert terminal increasing EOF", "BveTs Map 2.02:utf-8\n100;\n0;\n100;\n200;\n", "300", true},
+    };
+    const auto read = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>{});
+    };
+    for (const Case& item : cases) {
+        TempFixture fixture;
+        {
+            std::ofstream output(fixture.map_path, std::ios::binary | std::ios::trunc);
+            output << item.source;
+        }
+        const std::string original = read(fixture.map_path);
+        const std::string label = std::string("distance placement ") + item.name;
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                       KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, (label + " loads").c_str());
+        if (!handle.value) continue;
+        KvMapSnapshot baseline{};
+        if (!kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &baseline, sizeof(baseline))) {
+            check(false, (label + " snapshot").c_str());
+            continue;
+        }
+        std::string id = "placement-insert";
+        std::string hash;
+        std::vector<std::pair<double, double>> untouched;
+        for (std::uint64_t i = 0; i < baseline.draw_distance_count; ++i) {
+            const auto& row = baseline.draw_distances[i];
+            if (!item.insert && nearly_equal(row.value, 500.0)) {
+                id = map_string(baseline, row.metadata.edit_id);
+                hash = map_string(baseline, baseline.source_files[row.metadata.source_file_index].source_hash);
+            } else {
+                untouched.emplace_back(row.distance, row.value);
+            }
+        }
+        const char* baseline_source = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+        const std::string baseline_text = baseline_source ? baseline_source : "";
+        kv_free_string(baseline_source);
+        UpdateBatch move(id, hash, item.target, "distance");
+        SimpleInsertBatch insert(fixture.path_utf8(), id,
+            {{"rowKind", "drawDistance.change"}, {"distance", item.target}, {"value", "500"}});
+        const KvEditBatch& batch = item.insert ? insert.batch : move.batch;
+        const double expected = std::stod(item.target);
+        auto verify = [&](void* map, double target, bool stable_identity) {
+            KvMapSnapshot snapshot{};
+            if (!kv_get_map_snapshot(map, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot))) return false;
+            std::vector<std::pair<double, double>> remaining;
+            size_t targets = 0;
+            for (std::uint64_t i = 0; i < snapshot.draw_distance_count; ++i) {
+                const auto& row = snapshot.draw_distances[i];
+                if (nearly_equal(row.value, 500.0)) {
+                    if (!nearly_equal(row.distance, target) ||
+                        (stable_identity && map_string(snapshot, row.metadata.edit_id) != id)) return false;
+                    ++targets;
+                } else {
+                    remaining.emplace_back(row.distance, row.value);
+                }
+            }
+            return targets == 1 && remaining == untouched;
+        };
+        KvEditReportSnapshot report{};
+        const bool dry = kv_edit_dry_run_typed(handle.value, &batch, &report, sizeof(report)) != 0;
+        check(dry && report.ok && report.full_reparse_ok && report.resolution_request_count == 0 &&
+                  report.non_target_changed_count == 0,
+              (label + " dry run automatically proves target and non-target semantics").c_str());
+        check(read(fixture.map_path) == original, (label + " dry run preserves bytes").c_str());
+        const bool applied = kv_edit_apply_to_memory_typed(handle.value, &batch, &report, sizeof(report)) != 0 && report.ok;
+        check(applied && report.full_reparse_ok && verify(handle.value, expected, true),
+              (label + " Apply preserves unique target identity and other rows").c_str());
+        check(read(fixture.map_path) == original, (label + " Apply does not write disk").c_str());
+        if (!applied) continue;
+
+        // A second edit uses the original disk concurrency baseline, not the working hash.
+        KvEditTargetSnapshot target{};
+        const bool got_target = kv_get_edit_target_typed(handle.value, utf8_view(id),
+            &target, sizeof(target)) != 0;
+        check(got_target, (label + " moved or inserted row remains editable").c_str());
+        if (got_target) {
+            const std::string expected_hash(arena_view(target.string_data, target.string_size, target.expected_source_hash));
+            UpdateBatch again(id, expected_hash, std::to_string(expected + 1.0), "distance");
+            check(kv_edit_apply_to_memory_typed(handle.value, &again.batch, &report, sizeof(report)) &&
+                      report.ok && verify(handle.value, expected + 1.0, true),
+                  (label + " second Apply retains target identity and baseline").c_str());
+        }
+        check(kv_edit_reset_memory(handle.value) != 0, (label + " Revert").c_str());
+        const char* reset_source = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+        check(reset_source && std::string_view(reset_source) == baseline_text && read(fixture.map_path) == original,
+              (label + " Revert restores working text and preserves original disk").c_str());
+        kv_free_string(reset_source);
+        if (!(kv_edit_apply_to_memory_typed(handle.value, &batch, &report, sizeof(report)) && report.ok)) {
+            check(false, (label + " re-Apply after Revert").c_str());
+            continue;
+        }
+        check(verify(handle.value, expected, true), (label + " re-Apply restores requested target").c_str());
+        check(kv_edit_commit_typed(handle.value, &report, sizeof(report)) && report.ok,
+              (label + " Save").c_str());
+        const std::string saved = read(fixture.map_path);
+        check(saved.substr(0, original.find('\n') + 1) == original.substr(0, original.find('\n') + 1),
+              (label + " preserves header and BOM").c_str());
+        const size_t comment = original.find('#');
+        if (comment != std::string::npos) {
+            check(saved.find(original.substr(comment)) != std::string::npos,
+                  (label + " preserves comment bytes and encoding").c_str());
+        }
+        if (original.find("// retained EOF") != std::string::npos) {
+            check(saved.find("// retained EOF") != std::string::npos,
+                  "same-line movement preserves the trailing EOF comment");
+        }
+        if (std::string_view(item.name) == "indented first anchor") {
+            check(saved.find("\n    100;\n") != std::string::npos,
+                  "insertion before the first anchor preserves its indentation");
+        }
+        if (original.find('\r') != std::string::npos) {
+            bool crlf = true;
+            for (size_t i = 0; i < saved.size(); ++i) if (saved[i] == '\n' && (i == 0 || saved[i - 1] != '\r')) crlf = false;
+            check(crlf, (label + " preserves CRLF throughout").c_str());
+        }
+        if (std::string_view(item.name) == "insert earlier bracket before EOF") {
+            check(saved.find("DrawDistance.Change(500);") < saved.find("200;"),
+                  "new placement prefers existing earlier bracket over a decreasing EOF");
+        }
+        MapHandle reloaded(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                         KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(reloaded.value && verify(reloaded.value, expected, false),
+              (label + " Save then fresh Reload preserves all requested semantics").c_str());
+    }
+}
+
+void distance_boundary_recovery_contract() {
+    struct Case {
+        const char* name;
+        const char* body;
+        const char* target;
+        const char* reason;
+        bool select_boundary;
+    };
+    const std::array<Case, 5> cases{{
+        {"turning candidates", "0;\n100;\nDrawDistance.Change(500);\n50;\n200;\n", "75",
+         "ambiguous_Source_Section", true},
+        {"statement variable recovery", "0;\n$value=500;\nDrawDistance.Change($value);\n100;\n$value=600;\n200;\n", "150",
+         "evaluation_Environment_Requires_Boundary", true},
+        {"EOF exit environment", "0;\n$value=500;\nDrawDistance.Change($value);\n100;\n$value=600;\n", "150",
+         "evaluation_Environment_Requires_Boundary", true},
+        {"relative expression recovery", "0;\ndistance+100;\nDrawDistance.Change(500);\n200;\n", "150",
+         "distance_Expression_Requires_Manual_Edit", false},
+        {"distance variable recovery", "$mark=0;\n$mark;\n$mark=100;\n$mark;\nDrawDistance.Change(500);\n$mark=200;\n$mark;\n", "150",
+         "variable_Has_Multiple_Context_Values", false},
+    }};
+    for (const Case& item : cases) {
+        TempFixture fixture;
+        const std::string original = std::string("BveTs Map 2.02:utf-8\n") + item.body;
+        {
+            std::ofstream output(fixture.map_path, std::ios::binary | std::ios::trunc);
+            output << original;
+        }
+        const std::string label = std::string("distance recovery ") + item.name;
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                       KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        if (!handle.value) { check(false, (label + " loads").c_str()); continue; }
+        KvMapSnapshot snapshot{};
+        if (!kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot)) ||
+            snapshot.draw_distance_count != 1) {
+            check(false, (label + " snapshot target").c_str()); continue;
+        }
+        const auto& row = snapshot.draw_distances[0];
+        const std::string id = map_string(snapshot, row.metadata.edit_id);
+        const std::string hash = map_string(snapshot, snapshot.source_files[row.metadata.source_file_index].source_hash);
+        UpdateBatch update(id, hash, item.target, "distance");
+        KvEditReportSnapshot report{};
+        const bool dry = kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)) != 0;
+        check(dry && !report.ok && report.blocking_error_count == 0 &&
+                  edit_report_has_resolution_reason(report, item.reason),
+              (label + " requests an actionable recovery").c_str());
+        if (!dry || report.resolution_request_count == 0) continue;
+        const auto& request = report.resolution_requests[0];
+        const std::string key(arena_view(report.string_data, report.string_size, request.resolution_key));
+        std::vector<std::string> tokens;
+        for (std::uint64_t i = 0; i < request.allowed_boundaries.count; ++i) {
+            const auto& boundary = report.boundaries[request.allowed_boundaries.offset + i];
+            tokens.emplace_back(arena_view(report.string_data, report.string_size, boundary.token));
+        }
+        if (item.select_boundary) {
+            check(!tokens.empty(), (label + " has environment-compatible positions").c_str());
+            if (std::string_view(item.name) == "turning candidates") {
+                check(tokens.size() == 3, "turning boundary report retains the last adjacent gap");
+            }
+        } else {
+            tokens.assign(1, std::string{});
+        }
+        const std::string expression(item.target);
+        for (const std::string& token : tokens) {
+            update.change.distance_resolution_key = utf8_view(key);
+            update.change.distance_boundary_token = utf8_view(token);
+            update.change.distance_expression = utf8_view(expression);
+            const bool applied = kv_edit_apply_to_memory_typed(handle.value, &update.batch, &report, sizeof(report)) != 0;
+            check(applied && report.ok && report.full_reparse_ok && report.resolution_request_count == 0,
+                  (label + " published candidate completes Apply").c_str());
+            if (applied && report.ok) {
+                KvMapSnapshot after{};
+                const bool got = kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &after, sizeof(after)) != 0;
+                check(got && after.draw_distance_count == 1 &&
+                          nearly_equal(after.draw_distances[0].distance, std::stod(item.target)) &&
+                          nearly_equal(after.draw_distances[0].value, 500.0) &&
+                          map_string(after, after.draw_distances[0].metadata.edit_id) == id,
+                      (label + " preserves the statement value and edit identity").c_str());
+            }
+            check(kv_edit_reset_memory(handle.value) != 0, (label + " resets before next candidate").c_str());
+        }
+        if (item.select_boundary && !tokens.empty()) {
+            const std::string stale_token = "distance-gap-invalid";
+            update.change.distance_boundary_token = utf8_view(stale_token);
+            check(kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)) && !report.ok &&
+                      edit_report_has_resolution_reason(report, "stale_Distance_Boundary"),
+                  (label + " still rejects a foreign boundary token").c_str());
+            update.change.distance_boundary_token = utf8_view(tokens.front());
+            const std::string stale_key = "distance-resolution-invalid";
+            update.change.distance_resolution_key = utf8_view(stale_key);
+            check(kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)) && !report.ok &&
+                      edit_report_has_resolution_reason(report, "stale_Distance_Resolution"),
+                  (label + " still rejects an obsolete group key").c_str());
+        }
+        std::ifstream input(fixture.map_path, std::ios::binary);
+        const std::string disk(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>{});
+        check(disk == original, (label + " all manual attempts preserve disk bytes").c_str());
+    }
+}
+
+void distance_tail_batch_contract() {
+    struct Case {
+        const char* body;
+        const char* move_distance;
+        const char* insert_distance;
+        bool moved_first;
+    };
+    const std::array<Case, 3> cases{{
+        {"300;\n200;\nDrawDistance.Change(500);\n100;\nDrawDistance.Change(700);\n", "50", "25", true},
+        {"200;\n0;\n100;\nDrawDistance.Change(500);\n200;\nDrawDistance.Change(700);\n", "300", "350", true},
+        {"DrawDistance.Change(500);\nDrawDistance.Change(700);\n", "50", "25", false},
+    }};
+    for (const Case& item : cases) {
+        TempFixture fixture;
+        const std::string original = std::string("BveTs Map 2.02:utf-8\n") + item.body;
+        {
+            std::ofstream output(fixture.map_path, std::ios::binary | std::ios::trunc);
+            output << original;
+        }
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                       KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot baseline{};
+        if (!handle.value || !kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &baseline, sizeof(baseline)) ||
+            baseline.draw_distance_count != 2) {
+            check(false, "mixed EOF batch fixture loads"); continue;
+        }
+        const KvDrawDistanceRow* target = nullptr;
+        double untouched_distance = -1;
+        for (std::uint64_t i = 0; i < baseline.draw_distance_count; ++i) {
+            if (baseline.draw_distances[i].value == 500.0) target = &baseline.draw_distances[i];
+            if (baseline.draw_distances[i].value == 700.0) untouched_distance = baseline.draw_distances[i].distance;
+        }
+        if (!target) { check(false, "mixed EOF batch finds target"); continue; }
+        const std::string id = map_string(baseline, target->metadata.edit_id);
+        const std::string hash = map_string(baseline, baseline.source_files[target->metadata.source_file_index].source_hash);
+        UpdateBatch move(id, hash, item.move_distance, "distance");
+        SimpleInsertBatch insert(fixture.path_utf8(), "mixed-tail-insert",
+            {{"rowKind", "drawDistance.change"}, {"distance", item.insert_distance}, {"value", "600"}});
+        std::array<KvEditChange, 2> changes{move.change, insert.change};
+        changes[1].fields.offset = 1;
+        std::vector<KvEditField> fields{move.field};
+        fields.insert(fields.end(), insert.fields.begin(), insert.fields.end());
+        const KvEditBatch batch{changes.data(), changes.size(), fields.data(), fields.size()};
+        KvEditReportSnapshot report{};
+        const bool applied = kv_edit_apply_to_memory_typed(handle.value, &batch, &report, sizeof(report)) != 0 && report.ok;
+        check(applied && report.full_reparse_ok && report.update_count == 1 && report.insert_count == 1,
+              "mixed EOF batch atomically moves and inserts");
+        if (!applied) continue;
+        const char* raw = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+        const std::string working = raw ? raw : "";
+        kv_free_string(raw);
+        const size_t moved = working.find("DrawDistance.Change(500);");
+        const size_t inserted = working.find("DrawDistance.Change(600);");
+        const size_t untouched = working.find("DrawDistance.Change(700);");
+        check(moved != std::string::npos && inserted != std::string::npos && untouched < std::min(moved, inserted) &&
+                  ((moved < inserted) == item.moved_first) && working.find("DrawDistance.Change(500);", moved + 1) == std::string::npos,
+              "mixed EOF batch follows section direction and removes the original statement once");
+        KvMapSnapshot after{};
+        const bool got = kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &after, sizeof(after)) != 0;
+        bool verified = got && after.draw_distance_count == 3;
+        if (got) for (std::uint64_t i = 0; i < after.draw_distance_count; ++i) {
+            const auto& row = after.draw_distances[i];
+            const double expected = row.value == 500.0 ? std::stod(item.move_distance) :
+                row.value == 600.0 ? std::stod(item.insert_distance) : untouched_distance;
+            verified = verified && nearly_equal(row.distance, expected);
+        }
+        check(verified, "mixed EOF batch preserves target and non-target evaluated distances");
+        check(kv_edit_reset_memory(handle.value) != 0, "mixed EOF batch Revert");
+        std::ifstream input(fixture.map_path, std::ios::binary);
+        check(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>{}) == original,
+              "mixed EOF batch leaves disk byte-identical");
+    }
+}
+
+void distance_repeated_include_compatible_contract() {
+    TempFixture fixture;
+    const auto child_path = fixture.directory / "distance-child.txt";
+    const std::string child_utf8 = child_path.u8string();
+    const std::string root_text = "BveTs Map 2.02:utf-8\r\n"
+        "include 'distance-child.txt';\r\ninclude 'distance-child.txt';\r\n";
+    const std::string child_text = "BveTs Map 2.02:utf-8\r\n"
+        "0;\r\nDrawDistance.Change(500);\r\n100;\r\n";
+    {
+        std::ofstream root(fixture.map_path, std::ios::binary | std::ios::trunc);
+        root << root_text;
+        std::ofstream child(child_path, std::ios::binary | std::ios::trunc);
+        child << child_text;
+    }
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                   KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot baseline{};
+    if (!handle.value || !kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &baseline, sizeof(baseline)) ||
+        baseline.draw_distance_count != 2) {
+        check(false, "compatible repeated Include distance fixture loads"); return;
+    }
+    const std::array<std::string, 2> ids{
+        map_string(baseline, baseline.draw_distances[0].metadata.edit_id),
+        map_string(baseline, baseline.draw_distances[1].metadata.edit_id)};
+    const std::string hash = map_string(baseline,
+        baseline.source_files[baseline.draw_distances[0].metadata.source_file_index].source_hash);
+    SimpleInsertBatch insert(child_utf8, "compatible-repeated-distance-insert",
+        {{"rowKind", "drawDistance.change"}, {"distance", "150"}, {"value", "600"}});
+    KvEditReportSnapshot report{};
+    const bool inserted = kv_edit_apply_to_memory_typed(handle.value, &insert.batch, &report, sizeof(report)) != 0 && report.ok;
+    check(inserted && report.full_reparse_ok && report.insert_count == 1 && report.non_target_changed_count == 0,
+          "compatible repeated Include inserts one physical distance statement");
+    if (inserted) {
+        KvMapSnapshot after{};
+        const bool got = kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &after, sizeof(after)) != 0;
+        size_t original_count = 0;
+        size_t inserted_count = 0;
+        std::set<std::string> inserted_ids;
+        if (got) for (std::uint64_t i = 0; i < after.draw_distance_count; ++i) {
+            const auto& row = after.draw_distances[i];
+            const std::string id = map_string(after, row.metadata.edit_id);
+            if (row.value == 500.0 && row.distance == 0.0 &&
+                (id == ids[0] || id == ids[1])) ++original_count;
+            if (row.value == 600.0 && row.distance == 150.0) {
+                ++inserted_count;
+                inserted_ids.insert(id);
+            }
+        }
+        check(got && after.draw_distance_count == 4 && original_count == 2 && inserted_count == 2 && inserted_ids.size() == 2,
+              "compatible repeated Include expands the inserted statement twice and preserves original identities");
+        const char* raw = kv_get_source_text(handle.value, child_utf8.c_str());
+        const std::string working = raw ? raw : "";
+        kv_free_string(raw);
+        check(working == child_text + "150;\r\nDrawDistance.Change(600);\r\n",
+              "compatible repeated Include insertion writes a single CRLF distance block");
+    }
+    check(kv_edit_reset_memory(handle.value) != 0, "compatible repeated Include insertion Revert");
+
+    MultiFieldUpdateBatch first("compatible-repeated-move-first", ids[0], hash, {{"distance", "150"}});
+    MultiFieldUpdateBatch second("compatible-repeated-move-second", ids[1], hash, {{"distance", "150"}});
+    std::array<KvEditChange, 2> changes{first.change, second.change};
+    changes[1].fields.offset = 1;
+    std::array<KvEditField, 2> fields{first.fields[0], second.fields[0]};
+    const KvEditBatch batch{changes.data(), changes.size(), fields.data(), fields.size()};
+    const bool moved = kv_edit_apply_to_memory_typed(handle.value, &batch, &report, sizeof(report)) != 0 && report.ok;
+    check(moved && report.full_reparse_ok && report.update_count == 2 && report.non_target_changed_count == 0,
+          "compatible repeated Include moves both logical instances atomically");
+    if (moved) {
+        KvMapSnapshot after{};
+        const bool got = kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &after, sizeof(after)) != 0;
+        std::set<std::string> moved_ids;
+        bool rows_match = got && after.draw_distance_count == 2;
+        if (got) for (std::uint64_t i = 0; i < after.draw_distance_count; ++i) {
+            const auto& row = after.draw_distances[i];
+            rows_match = rows_match && row.value == 500.0 && row.distance == 150.0;
+            moved_ids.insert(map_string(after, row.metadata.edit_id));
+        }
+        check(rows_match && moved_ids == std::set<std::string>{ids[0], ids[1]},
+              "compatible repeated Include move preserves both logical identities");
+        const char* raw = kv_get_source_text(handle.value, child_utf8.c_str());
+        const std::string working = raw ? raw : "";
+        kv_free_string(raw);
+        check(working == "BveTs Map 2.02:utf-8\r\n0;\r\n100;\r\n150;\r\nDrawDistance.Change(500);\r\n",
+              "compatible repeated Include move removes and inserts the physical statement once");
+    }
+    check(kv_edit_reset_memory(handle.value) != 0, "compatible repeated Include move Revert");
+    std::ifstream root(fixture.map_path, std::ios::binary);
+    std::ifstream child(child_path, std::ios::binary);
+    check(std::string(std::istreambuf_iterator<char>(root), std::istreambuf_iterator<char>{}) == root_text &&
+              std::string(std::istreambuf_iterator<char>(child), std::istreambuf_iterator<char>{}) == child_text,
+          "compatible repeated Include Apply leaves both disk sources byte-identical");
+}
+
+void distance_tail_include_environment_contract() {
+    TempFixture fixture;
+    const auto child_path = fixture.directory / "distance-vars.txt";
+    const std::string root_text = "BveTs Map 2.02:utf-8\r\n"
+        "0;\r\n$v=500;\r\nDrawDistance.Change($v);\r\n100;\r\ninclude 'distance-vars.txt';\r\n";
+    const std::string child_text = "BveTs Map 2.02:utf-8\r\n$v=600;\r\n";
+    {
+        std::ofstream root(fixture.map_path, std::ios::binary | std::ios::trunc);
+        root << root_text;
+        std::ofstream child(child_path, std::ios::binary | std::ios::trunc);
+        child << child_text;
+    }
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                   KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot baseline{};
+    if (!handle.value || !kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &baseline, sizeof(baseline)) ||
+        baseline.draw_distance_count != 1) {
+        check(false, "tail Include environment fixture loads"); return;
+    }
+    const auto& row = baseline.draw_distances[0];
+    const std::string id = map_string(baseline, row.metadata.edit_id);
+    const std::string hash = map_string(baseline, baseline.source_files[row.metadata.source_file_index].source_hash);
+    UpdateBatch update(id, hash, "150", "distance");
+    KvEditReportSnapshot report{};
+    const bool dry = kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)) != 0;
+    check(dry && !report.ok && report.blocking_error_count == 0 &&
+              edit_report_has_resolution_reason(report, "evaluation_Environment_Requires_Boundary"),
+          "tail Include assignment excludes the automatic EOF environment");
+    if (!dry || report.resolution_request_count != 1) return;
+    const auto& request = report.resolution_requests[0];
+    check(request.allowed_boundaries.count == 1,
+          "tail Include assignment reports only the safe boundary before the last anchor");
+    if (request.allowed_boundaries.count != 1) return;
+    const std::string key(arena_view(report.string_data, report.string_size, request.resolution_key));
+    const std::string token(arena_view(report.string_data, report.string_size,
+        report.boundaries[request.allowed_boundaries.offset].token));
+    update.change.distance_resolution_key = utf8_view(key);
+    update.change.distance_boundary_token = utf8_view(token);
+    const bool applied = kv_edit_apply_to_memory_typed(handle.value, &update.batch, &report, sizeof(report)) != 0 && report.ok;
+    check(applied && report.full_reparse_ok && report.non_target_changed_count == 0 && report.resolution_request_count == 0,
+          "tail Include environment recovers after selecting its published boundary");
+    if (applied) {
+        KvMapSnapshot after{};
+        const bool got = kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &after, sizeof(after)) != 0;
+        bool final_variable = false;
+        if (got) for (std::uint64_t i = 0; i < after.variable_assignment_count; ++i) {
+            const auto& assignment = after.variable_assignments[i];
+            if (map_string(after, assignment.normalized_name) == "v") {
+                final_variable = assignment.value.kind == KV_VALUE_NUMBER && assignment.value.number_value == 600.0;
+            }
+        }
+        check(got && after.draw_distance_count == 1 && after.draw_distances[0].distance == 150.0 &&
+                  after.draw_distances[0].value == 500.0 && map_string(after, after.draw_distances[0].metadata.edit_id) == id &&
+                  final_variable,
+              "tail Include recovery preserves the argument, edit identity and final variable binding");
+        const char* raw = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+        const std::string working = raw ? raw : "";
+        kv_free_string(raw);
+        check(working == "BveTs Map 2.02:utf-8\r\n0;\r\n$v=500;\r\n150;\r\n"
+                  "DrawDistance.Change($v);\r\n100;\r\ninclude 'distance-vars.txt';\r\n",
+              "tail Include recovery preserves expression text, Include placement and CRLF");
+    }
+    check(kv_edit_reset_memory(handle.value) != 0, "tail Include recovery Revert");
+    std::ifstream root(fixture.map_path, std::ios::binary);
+    std::ifstream child(child_path, std::ios::binary);
+    check(std::string(std::istreambuf_iterator<char>(root), std::istreambuf_iterator<char>{}) == root_text &&
+              std::string(std::istreambuf_iterator<char>(child), std::istreambuf_iterator<char>{}) == child_text,
+          "tail Include recovery leaves root and included disk sources byte-identical");
 }
 
 void untouched_object_key_contract() {
@@ -10637,6 +11134,11 @@ int edit_contract() {
     section_sparse_bounds_contract();
     patch_sources_preview_contract();
     distance_resolution_reason_contract();
+    distance_placement_lifecycle_contract();
+    distance_boundary_recovery_contract();
+    distance_tail_batch_contract();
+    distance_repeated_include_compatible_contract();
+    distance_tail_include_environment_contract();
     legacy_fog_non_target_contract();
     legacy_fog_edit_contract();
     other_track_key_argument_layout_contract();

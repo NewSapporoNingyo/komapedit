@@ -221,6 +221,7 @@ void App::clear_pending_edit_state() {
     original_edit_rows_.clear();
     distance_resolution_choices_.clear();
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
     text_preview_.placement = TextPreviewPlacementState{};
     inspector_ = MapElementInspectorState{};
     lighting_edit_ = LightingEditState{};
@@ -348,6 +349,7 @@ void App::apply_edit_mode_enabled(bool enabled) {
         pending_inspector_request_.reset();
         distance_resolution_choices_.clear();
         distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+        distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
         text_preview_.placement = TextPreviewPlacementState{};
         discard_all_editable_list_drafts();
         edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
@@ -1361,7 +1363,10 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
         KME_ADD_LOG("[error]edit report version or size mismatch");
         return false;
     }
-    if (resolution_requests && report.resolution_request_count != 0 &&
+    // A recoverable request from another group cannot make a blocked batch
+    // applicable. Never open a manual workflow alongside a blocking error.
+    if (resolution_requests && report.blocking_error_count == 0 &&
+        report.resolution_request_count != 0 &&
         report.resolution_requests) {
         resolution_requests->reserve(static_cast<size_t>(report.resolution_request_count));
         for (std::uint64_t i = 0; i < report.resolution_request_count; ++i) {
@@ -1389,6 +1394,12 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
             KME_ADD_LOG("[error]" + message);
         }
     }
+    if (report.blocking_error_count != 0) {
+        distance_resolution_choices_.clear();
+        distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+        text_preview_.placement = TextPreviewPlacementState{};
+        set_program_status("status.edit.distance_resolution_blocked");
+    }
     const int updates = report.update_count;
     const int deletes = report.delete_count;
     const int files = static_cast<int>(std::min<std::uint64_t>(
@@ -1396,7 +1407,7 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
     if (update_count) *update_count = updates;
     if (delete_count) *delete_count = deletes;
     if (changed_file_count) *changed_file_count = files;
-    bool ok = report.ok != 0;
+    bool ok = report.ok != 0 && report.blocking_error_count == 0;
     if (!ok && repeater_key_conflict) {
         set_program_status("status.edit.repeater_key_conflict");
     } else if (!ok && other_track_key_conflict) {
@@ -1473,6 +1484,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     GuiTiming::Stage timing("preview.backup");
     edit_timing_change_count_ = changes.size();
     if (!edit_actions_available()) return false;
+    prepare_distance_resolution_operation(changes);
     const bool ended_batch = !pending_edit_changes_.empty() && changes.empty();
     const bool reapplies_inspector_change = reload_request.has_value();
 
@@ -1787,6 +1799,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     if (reapplies_inspector_change) set_program_status("status.edit.applied_to_preview");
     timing.next("preview.text");
     refresh_text_preview_from_working_copy();
+    distance_resolution_attempt_history_.rejected_choices.clear();
     edit_timing_outcome_ = "success";
     return true;
 }
@@ -1848,6 +1861,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
     }
     distance_resolution_choices_.clear();
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
     text_preview_.placement = TextPreviewPlacementState{};
     pending_edit_changes_.clear();
     edit_memory_matches_pending_ledger_ = true;
@@ -2007,6 +2021,7 @@ bool App::discard_pending_edits() {
     if (!has_pending_edits()) {
         distance_resolution_choices_.clear();
         distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+        distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
         text_preview_.placement = TextPreviewPlacementState{};
         discard_all_editable_list_drafts();
         if (has_scenario_unsaved_changes()) revert_scenario_draft();
@@ -2015,6 +2030,7 @@ bool App::discard_pending_edits() {
     if (!apply_edit_ledger_to_preview({}, std::nullopt, false)) return false;
     distance_resolution_choices_.clear();
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
     text_preview_.placement = TextPreviewPlacementState{};
     discard_all_editable_list_drafts();
     if (has_scenario_unsaved_changes()) revert_scenario_draft();

@@ -5444,7 +5444,7 @@ bool candidate_has_recommended_resolution(const EditReport& report,
             recommended_boundary_token(request).empty()) {
             continue;
         }
-        score = request.reason == "variableHasMultipleContextValues" ? 1 : 2;
+        score = request.reason == "variable_Has_Multiple_Context_Values" ? 1 : 2;
         return true;
     }
     return false;
@@ -5508,8 +5508,8 @@ bool inject_report_resolutions(
             choice.resolution_key = key;
             choice.boundary_token = boundary;
             const bool manual_numeric_expression =
-                reason == "variableHasMultipleContextValues" ||
-                reason == "distanceExpressionRequiresManualEdit";
+                reason == "variable_Has_Multiple_Context_Values" ||
+                reason == "distance_Expression_Requires_Manual_Edit";
             if (manual_numeric_expression) {
                 choice.distance_expression = edit_number(target->second->target_distance);
                 ++variable_expression_resolution_count;
@@ -5660,7 +5660,7 @@ struct FixtureFacts {
     bool repeated_include_all_targets_coalesced = false;
     std::string repeated_include_details;
     bool unordered_requires_resolution_without_patch = false;
-    bool variable_environment_change_blocked = false;
+    bool variable_environment_boundary_preserved = false;
     bool derived_station_collision_blocked = false;
     bool staged_variable_resolution_succeeded = false;
     bool direct_apply_handle_advanced = false;
@@ -5669,7 +5669,7 @@ struct FixtureFacts {
     bool transactional_two_file_apply_succeeded = false;
     int increasing_target_match_count = 0;
     int unordered_resolution_count = 0;
-    int environment_blocking_error_count = 0;
+    int environment_resolution_count = 0;
     int staged_variable_resolution_count = 0;
     int derived_state_blocking_error_count = 0;
     std::string error;
@@ -5681,7 +5681,7 @@ struct FixtureFacts {
                repeated_include_partial_blocked &&
                repeated_include_all_targets_coalesced &&
                unordered_requires_resolution_without_patch &&
-               variable_environment_change_blocked &&
+               variable_environment_boundary_preserved &&
                derived_station_collision_blocked &&
                staged_variable_resolution_succeeded &&
                direct_apply_handle_advanced &&
@@ -5857,10 +5857,9 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 handle.value, build_changes({edits.front()}));
             ReportFacts partial_summary = report_facts(partial);
             facts.repeated_include_partial_blocked =
-                !partial_summary.ok && partial_summary.resolution_request_count > 0 &&
-                partial_summary.changed_file_count == 0 &&
-                report_has_reason(
-                    partial, "physicalSourceHasIncompatibleIncludeContexts");
+                !partial_summary.ok && partial_summary.blocking_error_count > 0 &&
+                partial_summary.resolution_request_count == 0 &&
+                partial_summary.changed_file_count == 0 && partial_summary.preview_count == 0;
 
             EditReport complete = typed_edit_headless::dry_run(
                 handle.value, build_changes(edits));
@@ -5909,7 +5908,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             facts.unordered_requires_resolution_without_patch =
                 !summary.ok && summary.resolution_request_count > 0 &&
                 summary.changed_file_count == 0 && summary.preview_count == 0 &&
-                report_has_reason(report, "ambiguousSourceSection");
+                report_has_reason(report, "ambiguous_Source_Section");
         }
 
         const std::filesystem::path environment_map = temp.path / "environment.txt";
@@ -5934,22 +5933,22 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 handle.value, build_changes(edits));
             std::map<std::string, ResolutionChoice> resolutions;
             int expression_count = 0;
-            if (!report_has_reason(initial, "variableHasMultipleContextValues") ||
+            if (!report_has_reason(initial, "evaluation_Environment_Requires_Boundary") ||
                 !inject_report_resolutions(initial, edits, resolutions, expression_count, error)) {
                 throw std::runtime_error(error.empty()
-                    ? "environment fixture did not request the expected variable resolution"
+                    ? "environment fixture did not request a compatible source boundary"
                     : error);
             }
-            EditReport forced = typed_edit_headless::dry_run(
+            EditReport resolved = typed_edit_headless::dry_run(
                 handle.value, build_changes(edits, resolutions));
-            ReportFacts summary = report_facts(forced);
-            facts.environment_blocking_error_count = static_cast<int>(summary.blocking_error_count);
-            facts.variable_environment_change_blocked =
-                !summary.ok && !summary.full_reparse_ok &&
-                (summary.blocking_error_count > 0 ||
-                 (summary.resolution_request_count > 0 &&
-                  (report_has_reason(forced, "variableHasMultipleContextValues") ||
-                   report_has_reason(forced, "incompatibleEvaluationEnvironment"))));
+            ReportFacts summary = report_facts(resolved);
+            facts.environment_resolution_count = static_cast<int>(initial.resolution_requests.size());
+            facts.variable_environment_boundary_preserved =
+                summary.ok && summary.full_reparse_ok &&
+                summary.target_distance_match_count == 1 && summary.non_target_changed_count == 0 &&
+                summary.blocking_error_count == 0 && summary.resolution_request_count == 0 &&
+                expression_count == 0 &&
+                count_preview_occurrences(resolved, "Structure['pole'].Put('',$x,0,0,,,,,);") == 1;
         }
 
         const std::filesystem::path station_collision_map =
@@ -6090,7 +6089,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
 
             EditReport section_request = typed_edit_headless::dry_run(
                 handle.value, build_changes(edits));
-            if (!report_has_reason(section_request, "ambiguousSourceSection")) {
+            if (!report_has_reason(section_request, "ambiguous_Source_Section")) {
                 throw std::runtime_error(
                     "staged variable fixture did not first request a source boundary");
             }
@@ -6105,8 +6104,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             EditReport expression_request = typed_edit_headless::dry_run(
                 handle.value, build_changes(edits, resolutions));
             const bool requested_manual_expression =
-                report_has_reason(expression_request, "variableHasMultipleContextValues") ||
-                report_has_reason(expression_request, "distanceExpressionRequiresManualEdit");
+                report_has_reason(expression_request, "variable_Has_Multiple_Context_Values") ||
+                report_has_reason(expression_request, "distance_Expression_Requires_Manual_Edit");
             facts.staged_variable_resolution_count = static_cast<int>(
                 expression_request.resolution_requests.size());
             if (!requested_manual_expression ||
@@ -6311,10 +6310,10 @@ void write_batch_result(std::ostream& out, const BatchRunFacts& facts) {
         << boolean(facts.fixtures.unordered_requires_resolution_without_patch) << "\n"
         << "fixture.unordered_resolution_count="
         << facts.fixtures.unordered_resolution_count << "\n"
-        << "fixture.variable_environment_change_blocked="
-        << boolean(facts.fixtures.variable_environment_change_blocked) << "\n"
-        << "fixture.environment_blocking_error_count="
-        << facts.fixtures.environment_blocking_error_count << "\n"
+        << "fixture.variable_environment_boundary_preserved="
+        << boolean(facts.fixtures.variable_environment_boundary_preserved) << "\n"
+        << "fixture.environment_resolution_count="
+        << facts.fixtures.environment_resolution_count << "\n"
         << "fixture.derived_station_collision_blocked="
         << boolean(facts.fixtures.derived_station_collision_blocked) << "\n"
         << "fixture.derived_state_blocking_error_count="

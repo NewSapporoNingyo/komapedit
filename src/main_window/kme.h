@@ -1665,7 +1665,18 @@ struct DistanceResolutionWorkflowState {
     std::optional<MapElementInspectorRequest> reload_request;
     bool applying_delete = false;
     std::string origin_edit_id;
+    // The other groups' manual choices are part of this context. A failed
+    // expression at one boundary must not reject it at another boundary.
+    std::string attempt_context;
+    std::string submitted_choice_key;
     std::array<char, 1024> expression_buffer{};
+};
+
+struct DistanceResolutionAttemptHistory {
+    // Stable source hashes and structured batch fields; reset/replay revisions
+    // change during retries and therefore cannot identify this operation.
+    std::string operation_key;
+    std::map<std::string, std::set<std::string>> rejected_choices;
 };
 
 // A target slot is one physical source line. Its payload can come from another
@@ -2081,6 +2092,7 @@ private:
     std::map<std::string, MapElementPreviewSnapshot> original_edit_rows_;
     std::map<std::string, DistanceResolutionChoice> distance_resolution_choices_;
     DistanceResolutionWorkflowState distance_resolution_workflow_;
+    DistanceResolutionAttemptHistory distance_resolution_attempt_history_;
     MapElementInspectorState inspector_;
     LightingEditState lighting_edit_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
@@ -2604,7 +2616,10 @@ private:
         bool applying_delete,
         std::string origin_edit_id,
         const std::vector<DistanceResolutionRequest>& requests);
-    void apply_distance_resolution_choice(const DistanceResolutionChoice& choice);
+    void prepare_distance_resolution_operation(
+        const std::map<std::string, MapElementPendingChange>& changes);
+    bool distance_resolution_choice_rejected(const DistanceResolutionChoice& choice) const;
+    bool apply_distance_resolution_choice(const DistanceResolutionChoice& choice);
     void select_distance_resolution_boundary(const std::string& token);
     void confirm_distance_resolution_boundary();
     void cancel_distance_resolution_workflow();

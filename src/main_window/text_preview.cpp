@@ -249,6 +249,7 @@ void App::open_text_preview(const std::string& file_path, bool parser_confirmed_
 
     load_text_preview_content(next);
     text_preview_ = std::move(next);
+    wake_main_window();
 }
 
 void App::open_text_preview_for_distance_resolution(const DistanceResolutionRequest& request) {
@@ -328,7 +329,11 @@ void App::render_text_preview_window() {
     }
     const bool placement_was_active = text_preview_.placement.active;
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
-    if (text_preview_.focus_next) ImGui::SetNextWindowFocus();
+    if (text_preview_.focus_next) {
+        ImGui::SetNextWindowFocus();
+        // Docked tab selection follows the focus change on the next frame.
+        wake_main_window();
+    }
 
     std::string title = tr("frame.text_preview") + "###TextPreview";
     if (!ImGui::Begin(title.c_str(), &text_preview_.open)) {
@@ -363,9 +368,15 @@ void App::render_text_preview_window() {
             }
             if (ImGui::Button(tr("button.cancel").c_str())) cancel_resolution = true;
             ImGui::SameLine();
-            ImGui::BeginDisabled(text_preview_.placement.selected_boundary_token.empty());
+            DistanceResolutionChoice choice;
+            choice.boundary_token = text_preview_.placement.selected_boundary_token;
+            const bool rejected_choice = distance_resolution_choice_rejected(choice);
+            ImGui::BeginDisabled(choice.boundary_token.empty() || rejected_choice);
             if (ImGui::Button(tr("button.ok").c_str())) confirm_resolution = true;
             ImGui::EndDisabled();
+            if (rejected_choice) {
+                ImGui::TextWrapped("%s", tr("status.edit.distance_choice_rejected").c_str());
+            }
 
             ImGui::TableSetColumnIndex(1);
             ImGui::BeginChild("distance_insertion_preview", ImVec2(0.0f, 112.0f), true,

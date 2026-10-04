@@ -958,6 +958,12 @@ struct EditReportSnapshotStorage {
     std::vector<KvEditPreviewRow> previews;
 };
 
+struct SourceContextEnvironment {
+    VariableEnvironmentSnapshot entry;
+    VariableEnvironmentSnapshot exit;
+    double exit_distance = 0.0;
+};
+
 struct MapContext {
     std::filesystem::path rootpath;
     std::string rootpath_utf8;
@@ -976,6 +982,11 @@ struct MapContext {
     std::vector<VariableAssignment> variable_assignments;
     std::vector<ResourceListLoad> resource_list_loads;
     VariableEnvironmentSnapshot variable_environment_snapshot;
+    // Parser-owned execution boundaries, keyed by physical file and Include
+    // invocation. EOF placement must observe assignments and Includes executed
+    // after the last distance anchor, not a statement's pre-execution snapshot.
+    std::map<std::pair<std::string, std::string>, SourceContextEnvironment>
+        source_context_environments;
     std::set<std::string> external_variable_reads;
     std::set<std::string> variable_writes;
     std::vector<double> controlpoints;

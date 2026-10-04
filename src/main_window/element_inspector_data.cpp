@@ -2400,6 +2400,8 @@ void App::apply_inspector_changes() {
         if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
             !distance_resolution_workflow_.retry_requested &&
             std::string_view(program_status_key_) !=
+                "status.edit.distance_resolution_blocked" &&
+            std::string_view(program_status_key_) !=
                 "status.edit.repeater_key_conflict") {
             set_program_status("status.edit.pending");
         }

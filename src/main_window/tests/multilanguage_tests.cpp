@@ -40,7 +40,7 @@ bool expect_no_value_fragment(const Map& translations, const char* fragment) {
 }
 
 bool same_keys(const Translation& translation) {
-    constexpr std::size_t expected_key_count = 602;
+    constexpr std::size_t expected_key_count = 605;
     if (translation.en.size() != expected_key_count ||
         translation.zh.size() != expected_key_count ||
         translation.ja.size() != expected_key_count) {
@@ -84,6 +84,24 @@ bool same_keys(const Translation& translation) {
 int main() {
     const Translation translation;
     bool ok = same_keys(translation);
+    ok = expect_value(translation.en, "dialog.distance_environment_boundary_message",
+        "The current placement would change the statement's evaluated values. Select a source position that preserves them.") && ok;
+    ok = expect_value(translation.zh, "dialog.distance_environment_boundary_message",
+        "当前位置会改变语句的求值结果。请选择能够保留原求值结果的源码位置。") && ok;
+    ok = expect_value(translation.ja, "dialog.distance_environment_boundary_message",
+        "現在の挿入位置では文の評価結果が変わります。元の評価結果を維持できるソース位置を選択してください。") && ok;
+    ok = expect_value(translation.en, "status.edit.distance_choice_rejected",
+        "This choice already failed. Change the expression, position, or edit fields before trying again.") && ok;
+    ok = expect_value(translation.zh, "status.edit.distance_choice_rejected",
+        "此选择已验证失败。请修改表达式、位置或编辑字段后重试。") && ok;
+    ok = expect_value(translation.ja, "status.edit.distance_choice_rejected",
+        "この選択は既に失敗しています。式、挿入位置、または編集項目を変更してから再試行してください。") && ok;
+    ok = expect_value(translation.en, "status.edit.distance_resolution_blocked",
+        "The edit could not be applied. Review the Console details and adjust the edit fields.") && ok;
+    ok = expect_value(translation.zh, "status.edit.distance_resolution_blocked",
+        "无法应用此次编辑。请查看控制台中的具体原因并调整编辑字段。") && ok;
+    ok = expect_value(translation.ja, "status.edit.distance_resolution_blocked",
+        "編集を適用できませんでした。コンソールで原因を確認し、編集項目を調整してください。") && ok;
     ok = expect_value(translation.en, "frame.creator_messages", "Custom Messages") && ok;
     ok = expect_value(translation.zh, "frame.creator_messages", "自定义消息") && ok;
     ok = expect_value(translation.ja, "frame.creator_messages", "カスタムメッセージ") && ok;

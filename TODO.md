@@ -6,7 +6,6 @@ This file is the active project progress and contains unfinished items only. Com
 
 ## 待办事项列表
 
-- [ ] 优化地图语句移动和插入逻辑，减少手动选择插入位置的概率，并确保文件末尾里程可变
 - [ ] 支持通过3D操纵器编辑布景旋转
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
 - [ ] 自定义工作区：保存多种UI布局作为预设，根据不同使用场景切换UI布局

@@ -470,7 +470,9 @@ After opening `Properties/Edit`, supported objects show an edit gizmo. Dragging 
 
 #### New Map Element Wizard
 
-Open the wizard from toolbar `Add Map Element`, or right-click the current mileage in the 3D scene's `Mileage Select` mode. First choose the target source file, then choose a template and enter its parameters. Every loaded non-resource-list map source file, including a blank or distance-free one, is eligible. For distance-based elements, when the selected source has zero or one numeric distance statement, insertion appends a canonical distance block after its existing text instead of moving existing statements. Custom Messages use the header insertion rule below.
+Open the wizard from toolbar `Add Map Element`, or right-click the current mileage in the 3D scene's `Mileage Select` mode. First choose the target source file, then choose a template and enter its parameters. Every loaded non-resource-list map source file, including a blank or distance-free one, is eligible. Distance-based elements can be inserted and subsequently moved even when the source has no distance anchor, one anchor, or statements before its first anchor. Placement reuses an existing compatible block or creates a distance block while preserving other statements. Custom Messages use the header insertion rule below.
+
+An existing element in an unambiguous final source section can move beyond that section's last mileage: increasing sections extend to a larger mileage and decreasing sections to a smaller one, even if earlier sections turn. New elements first use an existing unambiguous block or bracket and only then consider the final section's EOF extension. Flat sections, turning points and repeated equivalent target blocks still require a manual choice. Existing empty distance blocks and comments remain intact; the final current mileage may change.
 
 The wizard provides the currently supported elements in these categories:
 
@@ -493,7 +495,8 @@ Important rules:
 
 - The independent `Curve.Interpolate` template appears immediately after `Curve.*` in Track Geometry. Distance is required; radius and cant are included by default with value `0`. Uncheck cant for the radius-only form, or uncheck radius to disable cant too and create `Curve.Interpolate()`. New elements use the same 2D/3D markers, Properties/Edit, Delete, Apply/Revert, and global Save lifecycle.
 - Other-track templates generate only current `Track.*` forms. Optional trailing arguments must be enabled in order; for example, `radiusH` is required before `radiusV`. A new normalized trackKey creates another track. Numeric keys and quoted string keys remain distinct.
-- If the wizard cannot choose a safe source insertion point automatically, Text Preview highlights parser-approved boundaries for you to choose from. When this manual workflow is actually required, the App Console records an English warning with the stable failure-reason code and the available source context; an automatically reused cached choice remains silent.
+- If the wizard or Inspector cannot choose a source insertion point automatically, Text Preview highlights backend-approved boundaries. A distance-expression ambiguity requests an explicit expression; an argument-variable or Include environment conflict instead offers alternative positions when they can preserve the original evaluated values. Every submitted choice still undergoes full semantic validation. An operation with no viable position is rejected without repeatedly reopening an unusable dialog. Editing a failed input remains possible, and cancelling leaves previously applied changes intact.
+- The App Console records an English warning only when manual handling is required, using readable reason codes such as `ambiguous_Source_Section` and `evaluation_Environment_Requires_Boundary` with source context. Automatically reused cached choices remain silent. Apply changes the preview; Save writes files, and Revert discards pending changes.
 
 #### Custom Messages (Message from Creator)
 

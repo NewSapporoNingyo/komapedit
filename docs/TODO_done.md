@@ -17,6 +17,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### Map Loading and Parsing
 
+- [x] Optimize map-statement movement and insertion with shared initial/gap/terminal/physical-EOF boundary planning; support zero/single-anchor continuous edits and increasing/decreasing final-section extension while preferring existing unique insertion positions. Preserve source text, Include contexts, stable identities and Apply/Save roles; recover compatible argument environments through safe boundaries, support boundary-then-expression input, and stop mixed hard failures or repeated failed choices. Debug build, all seven CTests, explicit boundary/sparse headless maps and Computer Use lifecycle/recovery checks passed on 2026-10-04; fix the Text Preview wake-up discovered during GUI validation.
 - [x] Load `BveTs Map 2.0+` map files.
 - [x] Handle UTF-8, UTF-8 with BOM, UTF-16LE, UTF-16BE, CP932/Shift_JIS, and related text encodings.
 - [x] Support `Include` references to other map files.
@@ -36,7 +37,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Add a read-only `Map Info List -> Other -> Scenario File` tab for every Scenario document, showing all eight official fields and source-relative Route/Vehicle paths with weights; direct map opens disable it, while a missing/invalid Route target or a cancelled candidate choice retains the standalone Scenario preview.
 - [x] Keep Scenario loading resilient to unusable Route/Vehicle targets: a missing Vehicle entry or a Vehicle path whose target does not exist never blocks the normal map load of a valid Route (Vehicle data stays preview-only), while a missing Route, a nonexistent Route target, or a Route target that is not a valid BVE Map degrades to the Scenario-only read-only preview with all fields retained, an English diagnostic, and no loaded map as a result; invalid Scenario syntax such as empty candidates or non-positive weights still fails deterministically.
 - [x] Edit existing Scenario fields and Route/Vehicle candidate paths/weights in Edit mode. Scenario drafts bypass the map Apply ledger and are written directly by Save with source-hash concurrency checks, minimal last-effective-field patches when candidate counts are unchanged, canonical official-syntax rewrites only when a candidate count changes, missing-scalar insertion, full-reparse validation, and original encoding/BOM/newline preservation; Route path changes remain warned until Scenario reload. Route/Vehicle path context menus can add a candidate below the current row, delete it while retaining at least one candidate, or move it up/down; new candidates start with an empty path and implicit weight `1`.
-- [x] When automatic map-statement placement actually requires manual input, write one English warning to the App Console with the stable reason code and available source, target-distance, section, direction, variable, Include-stack, and affected-edit context. Cached-choice reuse remains silent; typed contracts cover all seven first-pass reasons, and a memory-only headless contract covers all 13 stable descriptions, the unknown-code fallback, no-warning controls, and byte-identical fixture sources.
+- [x] When automatic map-statement placement actually requires manual input, write one English warning to the App Console with the stable reason code and available source, target-distance, section, direction, variable, Include-stack, and affected-edit context. Cached-choice reuse remains silent; typed contracts and the memory-only headless contract cover automatic placement, manual recovery, hard rejection, all 14 word-separated reason descriptions, the unknown-code fallback, no-warning controls, and byte-identical fixture sources.
 
 ### Own-Track and Other-Track Geometry
 
@@ -228,7 +229,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 在“地图信息列表 -> 其它 -> 场景文件”新增只读标签页：每个场景文档均显示全部八个官方字段、源码中的相对 Route/Vehicle 路径及权重；直接打开地图时选项禁用，缺少/无效 Route 目标或取消候选选择时仍保留独立场景预览
 - [x] 场景加载对不可用的 Route/Vehicle 目标保持容错：Vehicle 条目缺失或目标文件不存在时不阻断有效 Route 地图的正常加载（Vehicle 数据仅用于预览）；Route 缺失、目标不存在或目标不是有效 BVE 地图时降级为仅场景只读预览并保留全部字段，记录英文诊断且不加载地图；空候选、非正权重等非法 Scenario 语法仍按确定性诊断失败
 - [x] 在编辑模式下编辑现有场景字段及 Route/Vehicle 候选路径和权重。场景草稿不进入地图 Apply ledger，由“保存”直接写入；候选数量不变时仅补丁最后生效字段，数量变化时按官方语法重写候选值，保存校验源哈希、按需追加缺失标量并完整重解析，同时保留原编码/BOM/换行；Route/Vehicle 路径右键菜单可在当前项下新增候选、删除候选（至少保留一个）以及上移/下移，新增项默认空路径和隐式权重 `1`；Route 路径变化在重新加载场景前持续显示警告。
-- [x] 仅在地图语句自动放置确实需要人工输入时，向应用控制台输出一条英文警告，包含稳定原因代码及可用的源文件、目标里程、区段、方向、变量、Include 链和受影响 edit 上下文；缓存选择自动复用时保持静默。typed 合同覆盖全部 7 个首次可达原因，仅内存 headless 合同覆盖全部 13 个稳定说明、未知代码保底、无警告对照及夹具源文件逐字节不变。
+- [x] 优化地图语句移动和插入逻辑，共用初始块、锚点间隙、末块及物理 EOF 边界规划；支持零／单锚点连续编辑和递增／递减末段扩展，新建优先已有唯一位置。保持源码、Include 上下文、稳定身份和 Apply／Save 职责；实参环境可通过安全边界恢复，支持先选位置后填表达式，并终止混合硬错误及相同失败选择的重复尝试。2026-10-04 通过 Debug 构建、全部 7 个 CTest、明确夹具的边界／稀疏 headless，以及 Computer Use 生命周期和恢复验收；一并修复 GUI 验收发现的文本预览唤醒问题。
+- [x] 仅在地图语句自动放置确实需要人工输入时，向应用控制台输出一条英文警告，包含稳定原因代码及可用的源文件、目标里程、区段、方向、变量、Include 链和受影响 edit 上下文；缓存选择自动复用时保持静默。typed 契约和仅内存 headless 契约覆盖自动放置、人工恢复、硬拒绝、全部 14 个分词原因说明、未知代码保底、无警告对照及夹具源文件逐字节不变。
 
 ### 自轨道与他轨道几何
 

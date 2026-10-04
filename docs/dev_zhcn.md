@@ -288,7 +288,7 @@ ctest --test-dir build --output-on-failure
 - **逐类语句生成器**：`build_structure_model/sound_list/station_list/signal_aspect_statement()` 负责列表行；`build_station_put/structure_put/signal_put/repeater_statement()` 处理显式方法/参数形状转换，其中 Structure 与 Repeater 支持普通形式和零偏移形式双向转换；其余 `build_*` 覆盖曲线、坡度、他轨道、Section、限速、应答器、声音/噪声和环境效果，维持原方法与参数形状。
 - **目标发现与编辑目标快照**：模板化 `match_edit_ref()`、`find_simple_target()` 和 `find_editable_target()` 在 MapContext 强类型行中定位 edit id；`build_edit_target_snapshot()` 输出字段、原值、raw arg、约束、sourceHash 和 expectedSourceHash。
 - **插入验证**：`validate_insert_field_names()`、`validate_insert_method()`、`validate_insert_change()` 限定向导支持的 row kind、方法和字段；`build_insert_statement()` 只生成普通 BVE 语句，不接受任意 replacement 文本。
-- **距离块规划**：`DistanceSectionAnalysis/PlanningIndex` 建立同文件、Include invocation 和距离段索引；boundary 函数寻找可复用距离块或锚点后空隙。物理 Map 源内按源码顺序非递减且目标严格越过最后锚点时，直接使用 EOF；其余歧义由 `append_resolution_request()` 暴露给 GUI。变量引用与环境比较函数继续保护变量绑定。
+- **距离块规划**：`DistanceSectionAnalysis/PlanningIndex` 建立同文件、Include invocation 和距离段索引；共用 boundary 规划处理初始块、普通间隙、末块复用和物理 EOF。来源属于明确末段的移动可沿该段方向扩展 EOF，新建优先既有唯一放置；平台、转折和重复块继续人工处理。环境候选恢复和明确阻断共用变量及物理实例检查，完整语义证明仍在提交后执行。
 - **报告与事务写盘**：`build_edit_report_snapshot()` 投影补丁、消歧和提交信息；hash/临时文件函数创建同目录暂存文件；`replace_files_transactionally()` 按阶段替换并在失败时回滚，`TransactionalWriteError` 保留主错误与回滚错误。
 - **完整语义验证**：`parse_report_candidate()` 用补丁覆盖重解析；`validate_non_target_derived_state()`、`own_track_transition_state()`、`validate_edit_report()` 比较非目标元素、最终变量绑定、车站所有权、过渡配对和每个目标的期望语义；合法编辑可改变最终当前 `distance`。
 - **批次主流程**：`build_edit_report()` 预处理目标、按物理上下文和目标距离分组，解决 boundary，生成替换/删除/插入，检测重叠补丁，重解析并验证。它是 dry-run、内存 Apply 和直接 Apply 的共同核心。
@@ -603,6 +603,10 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 
 ### 编辑模型
 
+里程移动与新建共用解析器拥有的边界规划，覆盖隐式初始距离块、普通锚点间隙、现有末块和物理 EOF。无歧义的末端区段可沿递增或递减方向扩展；既有移动必须源于该段，新建则优先使用已有唯一块或括界。稀疏文件不需要伪造解析锚点即可继续编辑。候选枚举与 token 查找使用同一组规划，包含转折歧义段最后的邻接间隙。私有的每文件／Include 调用实例入口、退出环境记录末尾赋值与 Include 变量写入，随编辑元数据重建，不进入公共 ABI。
+
+环境检查区分可修复的里程表达式和语句／物理 Include 冲突。`evaluation_Environment_Requires_Boundary` 提供通过共用环境／来源检查的位置；没有可行候选则返回阻断错误。候选筛选不逐边界重解析整图，提交方案才执行完整目标／非目标证明。GUI 首次处理与缓存复用共用动作判断，阻断错误优先于其他组的处理请求。失败尝试按工作副本源 hash、结构化更改和整批人工选择限定，不使用 reset 会改变的 revision。原因字符串按单词分隔，例如 `ambiguous_Source_Section`；类型化报告布局与 ABI 版本保持不变。
+
 距离赋值在添加控制点或编辑元数据前拒绝 NaN 和无穷大；根地图和 Include 均沿用既有 fatal-load 路径，有限负距离继续保留兼容行为。放置语句编辑保留未修改的对象键表达式及其中注释、换行的字节。稀疏 Section `values.N` 更新必须指向既有参数，除非显式提供 `values.count` 调整长度；源码生成与语义验证共用该边界检查。
 
 源码补丁组装保留既有替换排序与重叠验证，再一次顺序追加原文/替换片段，并从最终位置推导身份偏移。报告顺序和前后各 80 字节的预览上下文保留原降序编辑行为，包括右侧已生效的修改。这消除了组装中的重复后缀搬移和身份区间平移，不表示完整编辑验证管线已变为线性。
@@ -759,9 +763,9 @@ plan、scene 和 `--debug-headless-own-track-edit` 共用临时 Map/Include 合�
 
 `--debug-headless-station-put-margin-edit` 要求地图在里程 `0` 含有可编辑的 `Station.Put`。它不模拟 ImGui 点击，检查 Inspector 对零值/错误符号停车容差的拒绝、新建地图元素默认值（`margin1=-5`、`margin2=5`）、向导对非法值的拒绝、合法内存新建和 Revert 清理。该命令仅进行内存 Apply。
 
-`--debug-headless-sparse-new-element` 要求显式传入地图路径：目标源文件中可有零或一条数值距离语句，或者数值距离锚点按源码顺序非递减且最后锚点小于 `866`。它直接驱动正式的 `DrawDistance.Change(500)` 向导表单；稀疏源使用里程 `25`，单调尾部情形使用 `866`。该命令验证目标仍可选择、插入不会请求距离解析、规范 EOF 距离块以新 typed 行结束，随后 Reset 并确认磁盘哈希不变。该命令仅执行内存 Apply，传入 `--commit` 会被拒绝。
+`--debug-headless-sparse-new-element` 要求显式传入地图路径：目标源文件中可有零或一条数值距离语句，或者数值距离锚点按源码顺序非递减且最后锚点小于 `866`。它直接驱动正式的 `DrawDistance.Change(500)` 向导表单；稀疏源使用里程 `25`，单调尾部情形使用 `866`。该命令检查自动插入、新行身份／值、既有源码文字及 DrawDistance 行保持，以及预期距离块顺序：等值单锚点复用，较大单锚点之前插入，其余情况尾插。随后 Reset 工作文本，并确认磁盘哈希不变。该命令仅执行内存 Apply，传入 `--commit` 会被拒绝。
 
-`--debug-headless-auto-insert-diagnostics <夹具目录>` 会加载 `testmap\auto_insert_failures` 中语法合法的地图，按物理源文件、源码行、row kind、求值里程和稳定 edit ID 选择源码目标，再驱动正式 App 的编辑账本、内存 Apply 与距离解析流程。报告逐案记录加载结果、预期/实际稳定原因、人工流程状态、应用控制台警告文本/上下文是否匹配，以及所有源文件是否逐字节不变。合法的首次请求夹具覆盖全部 7 个可达原因代码；构造的工作流请求覆盖全部 13 个稳定原因说明及未知代码保底。自动放置成功与缓存选择复用是无警告对照。该命令绝不调用 Save 或 Commit，拒绝 `--commit`，且仅在 `failed_cases=0`、`result=PASS` 时成功。
+`--debug-headless-auto-insert-diagnostics <夹具目录>` 会加载 `testmap\auto_insert_failures` 中语法合法的地图，按物理源文件、源码行、row kind、求值里程和稳定 edit ID 选择源码目标，再驱动正式 App 的编辑账本、内存 Apply 与距离解析流程。用例表区分移动和向导新建的自动成功、人工恢复、硬拒绝。每个公布候选均从重新加载的地图实际提交，表达式恢复必须完成，稀疏情形还执行第二次 Apply。检查覆盖目标值／身份、重试终止、控制台原因／上下文、Reset 及字节／hash 保持。构造请求的原因说明与未知代码保底检查独立于真实恢复验证。该命令绝不调用 Save 或 Commit，拒绝 `--commit`，且仅在 `failed_cases=0`、`result=PASS` 时成功。typed edit 契约另外覆盖临时夹具 Save／重新加载、编码、混合 EOF 批次和过期选择；Computer Use 仍是独立的界面验收步骤。
 
 `--debug-headless-other-track-key-edit` 要求显式传入地图路径。它会选择至少含两条语句的字符串键他轨道，验证整轨原子性与全地图重名保护，再执行 dry-run、内存 Apply、Reset、再次 Apply 和 Reload。`--commit` 会写入已验证工作副本，并按授权保留线路修改以检查物理 diff；报告包含原键/新键、全部目标、变更文件、依赖引用保持情况和源哈希。
 

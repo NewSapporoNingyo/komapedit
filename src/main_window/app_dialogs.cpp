@@ -695,35 +695,44 @@ void App::render_popups() {
     }
     if (ImGui::BeginPopupModal(tr("dialog.distance_resolution_title").c_str(), nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
-        ImGui::TextUnformatted(tr("dialog.distance_resolution_message").c_str());
-        if (!distance_resolution_workflow_.request.source_file.empty()) {
-            ImGui::TextDisabled("%s", distance_resolution_workflow_.request.source_file.c_str());
-        }
-        ImGui::PopTextWrapPos();
-        ImGui::Separator();
-        if (distance_resolution_workflow_.request.can_confirm_reuse) {
-            if (ImGui::Button(tr("button.confirm_reuse").c_str())) {
+        if (distance_resolution_workflow_.phase != DistanceResolutionPhase::ConfirmAction) {
+            ImGui::CloseCurrentPopup();
+        } else {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+            ImGui::TextUnformatted(tr(
+                distance_resolution_workflow_.request.reason ==
+                        "evaluation_Environment_Requires_Boundary"
+                    ? "dialog.distance_environment_boundary_message"
+                    : "dialog.distance_resolution_message").c_str());
+            if (!distance_resolution_workflow_.request.source_file.empty()) {
+                ImGui::TextDisabled("%s", distance_resolution_workflow_.request.source_file.c_str());
+            }
+            ImGui::PopTextWrapPos();
+            ImGui::Separator();
+            if (distance_resolution_workflow_.request.can_confirm_reuse) {
                 DistanceResolutionChoice choice;
                 choice.confirm_environment_mismatch = true;
-                apply_distance_resolution_choice(choice);
+                ImGui::BeginDisabled(distance_resolution_choice_rejected(choice));
+                if (ImGui::Button(tr("button.confirm_reuse").c_str())) {
+                    if (apply_distance_resolution_choice(choice)) ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+            }
+            ImGui::BeginDisabled(
+                distance_resolution_workflow_.request.allowed_boundaries.empty());
+            if (ImGui::Button(tr("button.manual_select").c_str())) {
+                distance_resolution_workflow_.phase = DistanceResolutionPhase::SelectBoundary;
+                open_text_preview_for_distance_resolution(
+                    distance_resolution_workflow_.request);
                 ImGui::CloseCurrentPopup();
             }
+            ImGui::EndDisabled();
             ImGui::SameLine();
-        }
-        ImGui::BeginDisabled(
-            distance_resolution_workflow_.request.allowed_boundaries.empty());
-        if (ImGui::Button(tr("button.manual_select").c_str())) {
-            distance_resolution_workflow_.phase = DistanceResolutionPhase::SelectBoundary;
-            open_text_preview_for_distance_resolution(
-                distance_resolution_workflow_.request);
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button(tr("button.cancel").c_str())) {
-            cancel_distance_resolution = true;
-            ImGui::CloseCurrentPopup();
+            if (ImGui::Button(tr("button.cancel").c_str())) {
+                cancel_distance_resolution = true;
+                ImGui::CloseCurrentPopup();
+            }
         }
         ImGui::EndPopup();
     }
@@ -735,38 +744,50 @@ void App::render_popups() {
     }
     if (ImGui::BeginPopupModal(tr("dialog.distance_expression_title").c_str(), nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        std::string message;
-        if (distance_resolution_workflow_.request.variable_name.empty()) {
-            message = tr("dialog.distance_expression_message");
+        if (distance_resolution_workflow_.phase != DistanceResolutionPhase::EditExpression) {
+            ImGui::CloseCurrentPopup();
         } else {
-            message = tr("dialog.distance_variable_message");
-            const std::string placeholder = "{variable}";
-            size_t placeholder_at = message.find(placeholder);
-            if (placeholder_at != std::string::npos) {
-                message.replace(placeholder_at, placeholder.size(),
-                                distance_resolution_workflow_.request.variable_name);
+            std::string message;
+            if (distance_resolution_workflow_.request.variable_name.empty()) {
+                message = tr("dialog.distance_expression_message");
+            } else {
+                message = tr("dialog.distance_variable_message");
+                const std::string placeholder = "{variable}";
+                size_t placeholder_at = message.find(placeholder);
+                if (placeholder_at != std::string::npos) {
+                    message.replace(placeholder_at, placeholder.size(),
+                                    distance_resolution_workflow_.request.variable_name);
+                }
             }
-        }
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
-        ImGui::TextUnformatted(message.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::SetNextItemWidth(520.0f);
-        ImGui::InputText("##distance_source_expression",
-                         distance_resolution_workflow_.expression_buffer.data(),
-                         distance_resolution_workflow_.expression_buffer.size());
-        ImGui::Separator();
-        ImGui::BeginDisabled(distance_resolution_workflow_.expression_buffer[0] == '\0');
-        if (ImGui::Button(tr("button.apply").c_str())) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+            ImGui::TextUnformatted(message.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::SetNextItemWidth(520.0f);
+            ImGui::InputText("##distance_source_expression",
+                             distance_resolution_workflow_.expression_buffer.data(),
+                             distance_resolution_workflow_.expression_buffer.size());
             DistanceResolutionChoice choice;
             choice.distance_expression = distance_resolution_workflow_.expression_buffer.data();
-            apply_distance_resolution_choice(choice);
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button(tr("button.cancel").c_str())) {
-            cancel_distance_resolution = true;
-            ImGui::CloseCurrentPopup();
+            const bool rejected_choice = distance_resolution_choice_rejected(choice);
+            if (rejected_choice) {
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+                ImGui::TextWrapped("%s", tr("status.edit.distance_choice_rejected").c_str());
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::Separator();
+            const bool empty_expression = std::all_of(
+                choice.distance_expression.begin(), choice.distance_expression.end(),
+                [](unsigned char ch) { return std::isspace(ch) != 0; });
+            ImGui::BeginDisabled(empty_expression || rejected_choice);
+            if (ImGui::Button(tr("button.apply").c_str())) {
+                if (apply_distance_resolution_choice(choice)) ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button(tr("button.cancel").c_str())) {
+                cancel_distance_resolution = true;
+                ImGui::CloseCurrentPopup();
+            }
         }
         ImGui::EndPopup();
     }

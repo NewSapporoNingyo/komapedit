@@ -731,6 +731,7 @@ void App::apply_edit_metadata_result(LoadResult result) {
     result.handle = nullptr;
     distance_resolution_choices_.clear();
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
     text_preview_.placement = TextPreviewPlacementState{};
     edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
     merge_edit_metadata(model_, std::move(result.model));

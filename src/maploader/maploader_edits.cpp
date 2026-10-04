@@ -3705,12 +3705,14 @@ bool same_statement_context(const MapContext& ctx,
 }
 
 struct DistanceSectionAnalysis {
+    SourceSpan context_source;
     std::vector<size_t> anchors;
     size_t origin_position = k_no_source_ref;
     size_t first_position = 0;
     size_t last_position = 0;
     std::string direction = "ambiguous";
     bool resolved = false;
+    bool includes_initial_block = false;
 };
 
 struct DistancePlanningIndex {
@@ -3720,6 +3722,7 @@ struct DistancePlanningIndex {
     std::map<std::string, std::vector<size_t>> statements_by_context;
     std::map<PhysicalKey, std::vector<size_t>> statements_by_physical_source;
     std::unordered_map<size_t, DistanceSectionAnalysis> sections_by_statement;
+    std::unordered_map<size_t, DistanceSectionAnalysis> sections_by_anchor;
 
     explicit DistancePlanningIndex(const MapContext& ctx) {
         MapTiming::Stage timing("plan.distance_index");
@@ -3786,25 +3789,38 @@ struct DistancePlanningIndex {
 
 DistanceSectionAnalysis analyze_distance_section(const MapContext& ctx,
                                                  size_t statement_index,
-                                                 DistancePlanningIndex& index) {
-    auto cached = index.sections_by_statement.find(statement_index);
-    if (cached != index.sections_by_statement.end()) return cached->second;
+                                                 DistancePlanningIndex& index,
+                                                 bool origin_is_anchor = false) {
+    auto& sections = origin_is_anchor ? index.sections_by_anchor : index.sections_by_statement;
+    auto cached = sections.find(statement_index);
+    if (cached != sections.end()) return cached->second;
     DistanceSectionAnalysis result;
     if (statement_index >= ctx.parsed_statements.size()) return result;
     const ParsedStatement& origin = ctx.parsed_statements[statement_index];
+    result.context_source = origin.source;
     result.anchors = index.anchors_for(ctx, origin.source);
     if (result.anchors.empty()) {
-        index.sections_by_statement.emplace(statement_index, result);
+        result.includes_initial_block = true;
+        result.resolved = true;
+        result.direction = "increasing";
+        sections.emplace(statement_index, result);
         return result;
     }
 
     for (size_t pos = 0; pos < result.anchors.size(); ++pos) {
         const SourceSpan& source = ctx.parsed_statements[result.anchors[pos]].source;
-        if (source.byte_start < origin.source.byte_start) result.origin_position = pos;
+        if (source.byte_start < origin.source.byte_start ||
+            (origin_is_anchor && source.byte_start == origin.source.byte_start)) result.origin_position = pos;
         else break;
     }
     if (result.origin_position == k_no_source_ref) {
-        index.sections_by_statement.emplace(statement_index, result);
+        result.includes_initial_block = true;
+        result.origin_position = 0;
+    }
+    if (result.anchors.size() == 1) {
+        result.resolved = true;
+        result.direction = "increasing";
+        sections.emplace(statement_index, result);
         return result;
     }
 
@@ -3868,7 +3884,7 @@ DistanceSectionAnalysis analyze_distance_section(const MapContext& ctx,
             if (result.first_position > 0) --result.first_position;
             if (result.last_position + 1 < result.anchors.size()) ++result.last_position;
         }
-        index.sections_by_statement.emplace(statement_index, result);
+        sections.emplace(statement_index, result);
         return result;
     }
     result.resolved = true;
@@ -3881,7 +3897,12 @@ DistanceSectionAnalysis analyze_distance_section(const MapContext& ctx,
         result.last_position = dec_last;
         result.direction = "decreasing";
     }
-    index.sections_by_statement.emplace(statement_index, result);
+    if (result.includes_initial_block && result.direction == "decreasing" &&
+        ctx.parsed_statements[result.anchors.front()].distance_value > 0.0) {
+        result.resolved = false;
+        result.direction = "ambiguous";
+    }
+    sections.emplace(statement_index, result);
     return result;
 }
 
@@ -3894,9 +3915,12 @@ struct DistanceBoundaryPlan {
     int column = 0;
     VariableEnvironmentSnapshot variable_environment;
     bool terminal_context_boundary = false;
+    bool file_boundary = false;
+    double current_distance = 0.0;
+    std::string current_expression;
 
     bool valid() const {
-        return before_anchor_position != k_no_source_ref &&
+        return (file_boundary || before_anchor_position != k_no_source_ref) &&
                (after_anchor_position != k_no_source_ref || terminal_context_boundary) &&
                insert_offset != std::string::npos;
     }
@@ -3942,6 +3966,8 @@ DistanceBoundaryPlan boundary_after_anchor(const MapContext& ctx,
     boundary.token = distance_boundary_token(ctx, before, after);
     boundary.line = after.source.line;
     boundary.variable_environment = after.variable_environment;
+    boundary.current_distance = before.distance_value;
+    boundary.current_expression = before.distance_expression;
     return boundary;
 }
 
@@ -3960,6 +3986,8 @@ DistanceBoundaryPlan terminal_boundary_for_last_anchor(
     boundary.before_anchor_position = before_position;
     boundary.terminal_context_boundary = true;
     boundary.variable_environment = before.variable_environment;
+    boundary.current_distance = before.distance_value;
+    boundary.current_expression = before.distance_expression;
 
     size_t terminal_statement_index = k_no_source_ref;
     for (size_t statement_index : index.statements_for(ctx, before.source)) {
@@ -3997,6 +4025,73 @@ DistanceBoundaryPlan terminal_boundary_for_last_anchor(
           << boundary.insert_offset;
     boundary.token = "distance-terminal-" + hex64(stable_hash64(token.str()));
     return boundary;
+}
+
+DistanceBoundaryPlan source_edge_boundary(
+    const MapContext& ctx, const SourcePatch& patch,
+    const DistanceSectionAnalysis& section, bool eof) {
+    DistanceBoundaryPlan boundary;
+    boundary.file_boundary = true;
+    boundary.terminal_context_boundary = true;
+    if (!eof && section.anchors.empty()) return {};
+    const auto key = std::make_pair(
+        ctx.source_files[section.context_source.source_file_index].source_key,
+        source_context_identity(ctx, section.context_source));
+    const auto environment = ctx.source_context_environments.find(key);
+    if (environment == ctx.source_context_environments.end()) return {};
+    if (eof) {
+        boundary.insert_offset = patch.text.size();
+        boundary.variable_environment = environment->second.exit;
+        boundary.current_distance = environment->second.exit_distance;
+        boundary.current_expression = canonical_number(boundary.current_distance);
+        boundary.line = static_cast<int>(patch.line_starts.size());
+        boundary.column = utf8_column_count(
+            patch.text, patch.line_starts.back(), patch.text.size()) + 1;
+    } else {
+        const auto& first = ctx.parsed_statements[section.anchors.front()];
+        boundary.insert_offset = source_range_in_text(patch, first.source).first;
+        boundary.variable_environment = first.variable_environment;
+        boundary.current_expression = "0";
+        boundary.line = first.source.line;
+        boundary.column = first.source.column;
+        const size_t line_start = offset_from_line_column(
+            patch.text, patch.line_starts, first.source.line, 1);
+        if (line_start != std::string::npos && line_start <= boundary.insert_offset &&
+            std::all_of(patch.text.begin() + static_cast<std::ptrdiff_t>(line_start),
+                        patch.text.begin() + static_cast<std::ptrdiff_t>(boundary.insert_offset),
+                        [](char ch) { return ch == ' ' || ch == '\t' || ch == '\r'; })) {
+            boundary.insert_offset = line_start;
+            boundary.column = 1;
+        }
+    }
+    std::ostringstream token;
+    token << key.first << '\n' << key.second << '\n'
+          << (eof ? "eof" : "initial") << '\n' << boundary.insert_offset;
+    boundary.token = "distance-edge-" + hex64(stable_hash64(token.str()));
+    return boundary;
+}
+
+std::vector<DistanceBoundaryPlan> distance_boundary_plans(
+    const MapContext& ctx, const SourcePatch& patch,
+    const DistanceSectionAnalysis& section) {
+    std::vector<DistanceBoundaryPlan> result;
+    if (section.includes_initial_block || section.anchors.size() == 1) {
+        auto first = source_edge_boundary(ctx, patch, section, false);
+        if (first.valid()) result.push_back(std::move(first));
+    }
+    if (!section.anchors.empty()) {
+        for (size_t pos = section.first_position;
+             pos <= section.last_position && pos + 1 < section.anchors.size(); ++pos) {
+            auto boundary = boundary_after_anchor(ctx, patch, section, pos);
+            if (boundary.valid()) result.push_back(std::move(boundary));
+        }
+    }
+    if (section.resolved && (section.anchors.empty() ||
+        section.last_position + 1 == section.anchors.size())) {
+        auto eof = source_edge_boundary(ctx, patch, section, true);
+        if (eof.valid()) result.push_back(std::move(eof));
+    }
+    return result;
 }
 
 std::set<std::string> referenced_variables(const std::string& expression) {
@@ -4320,7 +4415,6 @@ struct PreparedEdit {
     size_t creator_blank_line_offset = k_no_source_ref;
     size_t identity_range_begin = 0;
     size_t identity_range_end = 0;
-    bool tail_distance_block_insert = false;
     bool moves_distance = false;
     double target_distance = 0.0;
     std::string suggested_distance_expression;
@@ -4441,12 +4535,12 @@ struct ResolvedDistanceGroup {
 
 std::string source_section_key(const MapContext& ctx,
                                const DistanceSectionAnalysis& section,
-                               const ParsedStatement& origin,
                                double target_distance) {
     std::ostringstream key;
-    key << source_file_key(ctx, origin.source) << "\n"
-        << source_context_identity(ctx, origin.source) << "\n"
-        << section.direction << "\n" << canonical_number(target_distance) << "\n";
+    key << source_file_key(ctx, section.context_source) << "\n"
+        << source_context_identity(ctx, section.context_source) << "\n"
+        << section.direction << "\n" << section.includes_initial_block << "\n"
+        << canonical_number(target_distance) << "\n";
     if (!section.anchors.empty()) {
         const ParsedStatement& first = ctx.parsed_statements[
             section.anchors[std::min(section.first_position, section.anchors.size() - 1)]];
@@ -4468,18 +4562,29 @@ std::vector<DistanceResolutionBoundary> resolution_boundaries(
     const DistanceSectionAnalysis& section,
     const std::string& recommended_token) {
     std::vector<DistanceResolutionBoundary> boundaries;
-    if (section.anchors.size() < 2) return boundaries;
-    const size_t first = std::min(section.first_position, section.anchors.size() - 1);
-    const size_t last = std::min(section.last_position, section.anchors.size() - 1);
-    if (first >= last) return boundaries;
-    for (size_t pos = first;
-         pos <= last && pos + 1 < section.anchors.size(); ++pos) {
-        DistanceBoundaryPlan boundary = boundary_after_anchor(ctx, patch, section, pos);
-        if (!boundary.valid()) continue;
+    for (const auto& boundary : distance_boundary_plans(ctx, patch, section)) {
         boundaries.push_back({boundary.token, boundary.line, boundary.column,
                               boundary.token == recommended_token});
     }
     return boundaries;
+}
+
+std::string statement_environment_mismatch(
+    const MapContext& ctx, const DistanceEditGroup& group,
+    const std::vector<PreparedEdit>& prepared,
+    const DistanceBoundaryPlan& boundary) {
+    for (size_t index : group.member_indices) {
+        const auto& edit = prepared[index];
+        if (edit.operation == "insert") continue;
+        const auto& origin = ctx.parsed_statements[edit.target.statement_index];
+        if (expression_references_predefined_distance(edit.replacement_statement) &&
+            !exact_distance_value(origin.distance_value, group.target_distance)) return "distance";
+        const auto mismatch = first_environment_mismatch(
+            origin.variable_environment, boundary.variable_environment,
+            referenced_variables(edit.replacement_statement));
+        if (!mismatch.empty()) return mismatch;
+    }
+    return {};
 }
 
 void append_resolution_request(MapContext& ctx,
@@ -4493,12 +4598,11 @@ void append_resolution_request(MapContext& ctx,
                                MapEditReport& report) {
     if (group.member_indices.empty()) return;
     const PreparedEdit& first_edit = prepared[group.member_indices.front()];
-    const ParsedStatement& origin = ctx.parsed_statements[first_edit.target.statement_index];
     DistanceResolutionRequest request;
     request.resolution_key = group.key;
     request.reason = reason;
-    request.source_file = source_file_path(ctx, origin.source);
-    request.include_stack = source_include_stack(ctx, origin.source);
+    request.source_file = source_file_path(ctx, group.section.context_source);
+    request.include_stack = source_include_stack(ctx, group.section.context_source);
     request.target_distance = group.target_distance;
     request.variable_name = variable_name;
     request.suggested_expression = first_edit.suggested_distance_expression;
@@ -4550,6 +4654,26 @@ void append_resolution_request(MapContext& ctx,
     }
     request.allowed_boundaries = resolution_boundaries(
         ctx, patch, group.section, effective_recommended_token);
+    const auto plans = distance_boundary_plans(ctx, patch, group.section);
+    std::unordered_set<std::string> safe_tokens;
+    for (const auto& plan : plans) {
+        if (statement_environment_mismatch(ctx, group, prepared, plan).empty())
+            safe_tokens.insert(plan.token);
+    }
+    bool rejected_environment = false;
+    request.allowed_boundaries.erase(std::remove_if(
+        request.allowed_boundaries.begin(), request.allowed_boundaries.end(),
+        [&](const DistanceResolutionBoundary& item) {
+            const bool reject = safe_tokens.find(item.token) == safe_tokens.end();
+            rejected_environment = rejected_environment || reject;
+            return reject;
+        }), request.allowed_boundaries.end());
+    if (rejected_environment && request.allowed_boundaries.empty()) {
+        report.blocking_errors.push_back(
+            "No distance boundary preserves the statement evaluation environment: " +
+            request.source_file);
+        return;
+    }
 
     std::string nl = patch.record ? newline_text(patch.record->newline) : "\n";
     request.insertion_preview = request.suggested_expression + ";";
@@ -6883,11 +7007,8 @@ DistanceBoundaryPlan find_boundary_by_token(const MapContext& ctx,
                                             const SourcePatch& patch,
                                             const DistanceSectionAnalysis& section,
                                             const std::string& token) {
-    if (token.empty() || section.anchors.size() < 2) return {};
-    const size_t first = std::min(section.first_position, section.anchors.size() - 1);
-    const size_t last = std::min(section.last_position, section.anchors.size() - 1);
-    for (size_t pos = first; pos < last && pos + 1 < section.anchors.size(); ++pos) {
-        DistanceBoundaryPlan boundary = boundary_after_anchor(ctx, patch, section, pos);
+    if (token.empty()) return {};
+    for (auto boundary : distance_boundary_plans(ctx, patch, section)) {
         if (boundary.valid() && boundary.token == token) return boundary;
     }
     return {};
@@ -6911,21 +7032,13 @@ std::string common_group_expression(const DistanceEditGroup& group,
     return expression;
 }
 
-std::set<std::string> group_statement_variables(const DistanceEditGroup& group,
-                                                const std::vector<PreparedEdit>& prepared,
-                                                const std::string& distance_expression,
-                                                bool include_distance_expression) {
-    std::set<std::string> variables;
-    for (size_t index : group.member_indices) {
-        std::set<std::string> statement_variables =
-            referenced_variables(prepared[index].replacement_statement);
-        variables.insert(statement_variables.begin(), statement_variables.end());
-    }
-    if (include_distance_expression) {
-        std::set<std::string> expression_variables = referenced_variables(distance_expression);
-        variables.insert(expression_variables.begin(), expression_variables.end());
-    }
-    return variables;
+
+bool boundary_requires_distance_block(const DistanceBoundaryPlan& boundary,
+                                      double target_distance,
+                                      const std::string& manual_expression) {
+    return !exact_distance_value(boundary.current_distance, target_distance) ||
+        (!manual_expression.empty() &&
+         trim_field_copy(boundary.current_expression) != manual_expression);
 }
 
 bool validate_distance_group_environment(
@@ -6941,14 +7054,18 @@ bool validate_distance_group_environment(
     bool confirm_environment_mismatch,
     const DistancePlanningIndex& distance_index,
     MapEditReport& report) {
-    const ParsedStatement& destination_anchor = ctx.parsed_statements[
-        group.section.anchors[boundary.before_anchor_position]];
+    const auto statement_mismatch = statement_environment_mismatch(
+        ctx, group, prepared, boundary);
+    if (!statement_mismatch.empty()) {
+        append_resolution_request(ctx, patch, group, prepared,
+                                  "evaluation_Environment_Requires_Boundary",
+                                  statement_mismatch, false, {}, report);
+        return false;
+    }
     const bool expression_context_matters = create_distance_block ||
         force_distance_expression_check ||
-        trim_field_copy(destination_anchor.distance_expression) !=
+        trim_field_copy(boundary.current_expression) !=
             trim_field_copy(distance_expression);
-    const std::set<std::string> statement_variables =
-        group_statement_variables(group, prepared, {}, false);
     const std::set<std::string> expression_variables = expression_context_matters
         ? referenced_variables(distance_expression)
         : std::set<std::string>{};
@@ -6958,22 +7075,17 @@ bool validate_distance_group_environment(
             ctx, group.section, distance_index, expression_variables);
         if (!multi_value.empty()) {
             append_resolution_request(ctx, patch, group, prepared,
-                                      "variableHasMultipleContextValues",
+                                      "variable_Has_Multiple_Context_Values",
                                       multi_value, false, boundary.token, report);
             return false;
         }
     }
 
-    std::string statement_mismatch;
     std::string expression_mismatch;
     for (size_t index : group.member_indices) {
         const PreparedEdit& edit = prepared[index];
+        if (edit.operation == "insert") continue;
         const ParsedStatement& origin = ctx.parsed_statements[edit.target.statement_index];
-        if (statement_mismatch.empty()) {
-            statement_mismatch = first_environment_mismatch(
-                origin.variable_environment, boundary.variable_environment,
-                statement_variables);
-        }
         if (expression_mismatch.empty() && expression_context_matters) {
             expression_mismatch = first_environment_mismatch(
                 origin.variable_environment, boundary.variable_environment,
@@ -6981,33 +7093,14 @@ bool validate_distance_group_environment(
         }
     }
     if (create_distance_block &&
-        std::any_of(group.member_indices.begin(), group.member_indices.end(),
-                    [&](size_t index) {
-                        return expression_references_predefined_distance(
-                            prepared[index].replacement_statement);
-                    })) {
-        statement_mismatch = statement_mismatch.empty() ? "distance" : statement_mismatch;
-    }
-    if (create_distance_block &&
         expression_references_predefined_distance(distance_expression)) {
         expression_mismatch = expression_mismatch.empty() ? "distance" : expression_mismatch;
     }
 
-    if (!statement_mismatch.empty() && !confirm_environment_mismatch) {
-        const std::string multi_value = first_multivalued_variable(
-            ctx, group.section, distance_index, statement_variables);
-        append_resolution_request(ctx, patch, group, prepared,
-                                  multi_value.empty()
-                                      ? "incompatibleEvaluationEnvironment"
-                                      : "variableHasMultipleContextValues",
-                                  multi_value.empty() ? statement_mismatch : multi_value,
-                                  !create_distance_block, boundary.token, report);
-        return false;
-    }
     if (!expression_mismatch.empty() &&
         !confirm_environment_mismatch && !has_manual_distance_expression) {
         append_resolution_request(ctx, patch, group, prepared,
-                                  "incompatibleEvaluationEnvironment",
+                                  "incompatible_Evaluation_Environment",
                                   expression_mismatch, !create_distance_block,
                                   boundary.token, report);
         return false;
@@ -7031,7 +7124,7 @@ bool resolve_distance_group(MapContext& ctx,
         if (!change.distance_resolution_key.empty() &&
             change.distance_resolution_key != group.key) {
             append_resolution_request(ctx, patch, group, prepared,
-                                      "staleDistanceResolution", {}, false, {}, report);
+                                      "stale_Distance_Resolution", {}, false, {}, report);
             return false;
         }
     }
@@ -7053,7 +7146,7 @@ bool resolve_distance_group(MapContext& ctx,
     }
     if (boundary_token_conflict) {
         append_resolution_request(ctx, patch, group, prepared,
-                                  "conflictingManualBoundaries", {}, false, {}, report);
+                                  "conflicting_Manual_Boundaries", {}, false, {}, report);
         return false;
     }
 
@@ -7062,7 +7155,7 @@ bool resolve_distance_group(MapContext& ctx,
         common_group_expression(group, prepared, true, manual_expression_conflict);
     if (manual_expression_conflict) {
         append_resolution_request(ctx, patch, group, prepared,
-                                  "conflictingManualDistanceExpressions", {}, false, {}, report);
+                                  "conflicting_Manual_Distance_Expressions", {}, false, {}, report);
         return false;
     }
 
@@ -7071,11 +7164,9 @@ bool resolve_distance_group(MapContext& ctx,
             ctx, patch, group.section, selected_boundary_token);
         if (!boundary.valid()) {
             append_resolution_request(ctx, patch, group, prepared,
-                                      "staleDistanceBoundary", {}, false, {}, report);
+                                      "stale_Distance_Boundary", {}, false, {}, report);
             return false;
         }
-        const ParsedStatement& before =
-            ctx.parsed_statements[group.section.anchors[boundary.before_anchor_position]];
         bool expression_conflict = false;
         std::string expression = manual_expression;
         if (expression.empty()) {
@@ -7083,15 +7174,13 @@ bool resolve_distance_group(MapContext& ctx,
         }
         if (expression_conflict || expression.empty()) {
             append_resolution_request(ctx, patch, group, prepared,
-                                      "distanceExpressionRequiresManualEdit", {}, false,
+                                      "distance_Expression_Requires_Manual_Edit", {}, false,
                                       selected_boundary_token, report);
             return false;
         }
+        resolved.create_distance_block = boundary_requires_distance_block(
+            boundary, group.target_distance, manual_expression);
         resolved.boundary = std::move(boundary);
-        resolved.create_distance_block =
-            !exact_distance_value(before.distance_value, group.target_distance) ||
-            (!manual_expression.empty() &&
-             trim_field_copy(before.distance_expression) != manual_expression);
         resolved.distance_expression = std::move(expression);
         if (!validate_distance_group_environment(
                 ctx, patch, group, prepared, resolved.boundary,
@@ -7103,9 +7192,34 @@ bool resolve_distance_group(MapContext& ctx,
         return true;
     }
 
+    // The implicit initial block has its own unambiguous bracket even when
+    // later explicit anchors form a plateau or a turn.
+    if (group.section.includes_initial_block && !group.section.anchors.empty() &&
+        group.target_distance < ctx.parsed_statements[group.section.anchors.front()].distance_value) {
+        bool conflict = false;
+        const auto expression = common_group_expression(group, prepared, false, conflict);
+        if (conflict || expression.empty()) {
+            append_resolution_request(ctx, patch, group, prepared,
+                                      "distance_Expression_Requires_Manual_Edit", {}, false, {}, report);
+            return false;
+        }
+        const auto boundary = source_edge_boundary(ctx, patch, group.section, false);
+        if (boundary.valid()) {
+            if (!validate_distance_group_environment(
+                    ctx, patch, group, prepared, boundary, expression, true, false,
+                    !manual_expression.empty(), confirm_environment_mismatch,
+                    distance_index, report)) return false;
+            resolved.boundary = boundary;
+            resolved.create_distance_block = true;
+            resolved.distance_expression = expression;
+            resolved.direction = "increasing";
+            return true;
+        }
+    }
+
     if (!group.section.resolved) {
         append_resolution_request(ctx, patch, group, prepared,
-                                  "ambiguousSourceSection", {}, false, {}, report);
+                                  "ambiguous_Source_Section", {}, false, {}, report);
         return false;
     }
 
@@ -7119,7 +7233,7 @@ bool resolve_distance_group(MapContext& ctx,
     }
     if (numeric_positions.size() > 1) {
         append_resolution_request(ctx, patch, group, prepared,
-                                  "multipleEquivalentDistanceBlocks", {}, false, {}, report);
+                                  "multiple_Equivalent_Distance_Blocks", {}, false, {}, report);
         return false;
     }
 
@@ -7128,15 +7242,34 @@ bool resolve_distance_group(MapContext& ctx,
         group, prepared, false, suggested_expression_conflict);
     if (suggested_expression.empty()) {
         append_resolution_request(ctx, patch, group, prepared,
-                                  "distanceExpressionRequiresManualEdit", {}, false, {}, report);
+                                  "distance_Expression_Requires_Manual_Edit", {}, false, {}, report);
         return false;
     }
 
     size_t destination_before_position = k_no_source_ref;
     bool create_distance_block = false;
+    DistanceBoundaryPlan edge_boundary;
     if (numeric_positions.size() == 1) {
         destination_before_position = numeric_positions.front();
     } else {
+        if (group.section.anchors.empty()) {
+            edge_boundary = source_edge_boundary(ctx, patch, group.section, true);
+        } else {
+            const double first_distance = ctx.parsed_statements[
+                group.section.anchors.front()].distance_value;
+            const double last_distance = ctx.parsed_statements[
+                group.section.anchors.back()].distance_value;
+            if ((group.section.includes_initial_block || group.section.anchors.size() == 1) &&
+                group.target_distance < first_distance) {
+                edge_boundary = source_edge_boundary(ctx, patch, group.section, false);
+            } else if (group.section.last_position + 1 == group.section.anchors.size() &&
+                       (group.section.anchors.size() == 1 ||
+                        (group.section.direction == "increasing"
+                            ? group.target_distance > last_distance
+                            : group.target_distance < last_distance))) {
+                edge_boundary = source_edge_boundary(ctx, patch, group.section, true);
+            }
+        }
         std::vector<size_t> bracket_positions;
         for (size_t pos = group.section.first_position;
              pos < group.section.last_position && pos + 1 < group.section.anchors.size(); ++pos) {
@@ -7147,19 +7280,19 @@ bool resolve_distance_group(MapContext& ctx,
                 : before > group.target_distance && group.target_distance > after;
             if (bracketed) bracket_positions.push_back(pos);
         }
-        if (bracket_positions.size() != 1) {
+        if (!edge_boundary.valid() && bracket_positions.size() != 1) {
             append_resolution_request(ctx, patch, group, prepared,
                                       bracket_positions.empty()
-                                          ? "noUniqueDistanceBracket"
-                                          : "multipleDistanceBrackets",
+                                          ? "no_Unique_Distance_Bracket"
+                                          : "multiple_Distance_Brackets",
                                       {}, false, {}, report);
             return false;
         }
-        destination_before_position = bracket_positions.front();
+        if (!edge_boundary.valid()) destination_before_position = bracket_positions.front();
         create_distance_block = true;
     }
 
-    DistanceBoundaryPlan boundary = boundary_after_anchor(
+    DistanceBoundaryPlan boundary = edge_boundary.valid() ? edge_boundary : boundary_after_anchor(
         ctx, patch, group.section, destination_before_position);
     if (!boundary.valid() && !create_distance_block &&
         destination_before_position + 1 == group.section.anchors.size()) {
@@ -7168,7 +7301,7 @@ bool resolve_distance_group(MapContext& ctx,
     }
     if (!boundary.valid()) {
         append_resolution_request(ctx, patch, group, prepared,
-                                  "destinationBoundaryUnavailable", {}, false, {}, report);
+                                  "destination_Boundary_Unavailable", {}, false, {}, report);
         return false;
     }
 
@@ -7179,7 +7312,7 @@ bool resolve_distance_group(MapContext& ctx,
     }
     if (suggested_expression_conflict && create_distance_block) {
         append_resolution_request(ctx, patch, group, prepared,
-                                  "distanceExpressionRequiresManualEdit", {}, false,
+                                  "distance_Expression_Requires_Manual_Edit", {}, false,
                                   boundary.token, report);
         return false;
     }
@@ -7206,109 +7339,55 @@ bool physical_include_instances_are_compatible(
     const ResolvedDistanceGroup& resolved,
     DistancePlanningIndex& distance_index,
     std::string& mismatch_variable) {
-    const bool user_selected_boundary = std::any_of(
-        group.member_indices.begin(), group.member_indices.end(),
-        [&](size_t index) {
-            return !prepared[index].change->distance_boundary_token.empty();
-        });
-    const bool primary_terminal = resolved.boundary.terminal_context_boundary;
-    size_t primary_after_byte = 0;
-    if (!primary_terminal) {
-        const size_t primary_after_index =
-            group.section.anchors[resolved.boundary.after_anchor_position];
-        primary_after_byte = ctx.parsed_statements[primary_after_index].source.byte_start;
-    }
     for (size_t member_index : group.member_indices) {
         const PreparedEdit& member = prepared[member_index];
+        if (member.target.statement_index >= ctx.parsed_statements.size()) continue;
         const ParsedStatement& primary = ctx.parsed_statements[member.target.statement_index];
         for (size_t statement_index : distance_index.physical_counterparts(primary)) {
-            if (statement_index == member.target.statement_index) continue;
+            if (statement_index == member.target.statement_index ||
+                targeted_statement_indices.count(statement_index)) continue;
             const ParsedStatement& counterpart = ctx.parsed_statements[statement_index];
-            if (same_statement_context(ctx, counterpart.source, primary.source)) {
-                continue;
-            }
-            if (targeted_statement_indices.find(statement_index) !=
-                targeted_statement_indices.end()) {
-                // The physical source rewrite necessarily affects every Include
-                // invocation. A separately planned counterpart is validated by its
-                // own group and by the final whole-map semantic comparison.
-                continue;
-            }
-
-            DistanceSectionAnalysis section =
-                analyze_distance_section(ctx, statement_index, distance_index);
-            if (!section.resolved) return false;
-            size_t before_position = k_no_source_ref;
-            bool create_block = false;
-            if (user_selected_boundary) {
-                for (size_t pos = 0; pos + 1 < section.anchors.size(); ++pos) {
-                    const ParsedStatement& after =
-                        ctx.parsed_statements[section.anchors[pos + 1]];
-                    if (after.source.byte_start != primary_after_byte) continue;
-                    if (before_position != k_no_source_ref) return false;
-                    before_position = pos;
-                }
-                create_block = resolved.create_distance_block;
-            } else {
-                std::vector<size_t> numeric_positions;
-                for (size_t pos = section.first_position; pos <= section.last_position; ++pos) {
-                    if (exact_distance_value(
-                            ctx.parsed_statements[section.anchors[pos]].distance_value,
-                            group.target_distance)) {
-                        numeric_positions.push_back(pos);
-                    }
-                }
-                if (numeric_positions.size() == 1) {
-                    before_position = numeric_positions.front();
-                } else if (numeric_positions.empty()) {
-                    for (size_t pos = section.first_position; pos < section.last_position; ++pos) {
-                        const double before =
-                            ctx.parsed_statements[section.anchors[pos]].distance_value;
-                        const double after =
-                            ctx.parsed_statements[section.anchors[pos + 1]].distance_value;
-                        const bool bracketed = section.direction == "increasing"
-                            ? before < group.target_distance && group.target_distance < after
-                            : before > group.target_distance && group.target_distance > after;
-                        if (!bracketed) continue;
-                        if (before_position != k_no_source_ref) return false;
-                        before_position = pos;
-                    }
-                    create_block = true;
-                } else {
-                    return false;
-                }
-            }
-            if (before_position == k_no_source_ref) return false;
-            DistanceBoundaryPlan boundary = boundary_after_anchor(
-                ctx, patch, section, before_position);
-            if (!boundary.valid() && !create_block &&
-                before_position + 1 == section.anchors.size()) {
-                boundary = terminal_boundary_for_last_anchor(
-                    ctx, patch, section, before_position, distance_index);
-            }
-            const bool same_physical_boundary = boundary.valid() &&
-                boundary.terminal_context_boundary == primary_terminal &&
-                (primary_terminal
-                    ? boundary.insert_offset == resolved.boundary.insert_offset
-                    : ctx.parsed_statements[section.anchors[boundary.after_anchor_position]]
-                          .source.byte_start == primary_after_byte);
-            if (!same_physical_boundary ||
-                create_block != resolved.create_distance_block) {
-                return false;
-            }
-
-            std::set<std::string> statement_variables =
-                referenced_variables(member.replacement_statement);
-            mismatch_variable = first_environment_mismatch(
-                counterpart.variable_environment, boundary.variable_environment,
-                statement_variables);
-            if (!mismatch_variable.empty()) return false;
-            if (create_block || user_selected_boundary) {
-                std::set<std::string> expression_variables =
-                    referenced_variables(resolved.distance_expression);
+            if (same_statement_context(ctx, counterpart.source, primary.source)) continue;
+            const auto section = analyze_distance_section(
+                ctx, statement_index, distance_index, member.operation == "insert");
+            const auto& selected = resolved.boundary;
+            DistanceBoundaryPlan boundary = selected.file_boundary
+                ? source_edge_boundary(ctx, patch, section, selected.insert_offset == patch.text.size())
+                : (selected.terminal_context_boundary
+                    ? terminal_boundary_for_last_anchor(ctx, patch, section,
+                          selected.before_anchor_position, distance_index)
+                    : boundary_after_anchor(ctx, patch, section, selected.before_anchor_position));
+            if (!boundary.valid() || boundary.insert_offset != selected.insert_offset) return false;
+            if (member.operation != "insert") {
                 mismatch_variable = first_environment_mismatch(
                     counterpart.variable_environment, boundary.variable_environment,
-                    expression_variables);
+                    referenced_variables(member.replacement_statement));
+                if (!mismatch_variable.empty()) return false;
+                if (expression_references_predefined_distance(member.replacement_statement) &&
+                    !exact_distance_value(counterpart.distance_value, group.target_distance)) {
+                    mismatch_variable = "distance";
+                    return false;
+                }
+                // One physical update also relocates untargeted Include rows.
+                // A literal destination must retain their old distance. The
+                // automatically derived nonzero delta cannot preserve another
+                // invocation; an explicit expression still receives full proof.
+                if (!resolved.create_distance_block) {
+                    if (!exact_distance_value(boundary.current_distance,
+                                              counterpart.distance_value)) return false;
+                } else {
+                    double literal = 0.0;
+                    if (parse_edit_number(resolved.distance_expression, literal)) {
+                        if (!exact_distance_value(literal, counterpart.distance_value)) return false;
+                    } else if (trim_field_copy(member.change->distance_expression).empty()) {
+                        return false;
+                    }
+                }
+            }
+            if (resolved.create_distance_block) {
+                mismatch_variable = first_environment_mismatch(
+                    counterpart.variable_environment, boundary.variable_environment,
+                    referenced_variables(resolved.distance_expression));
                 if (!mismatch_variable.empty()) return false;
             }
         }
@@ -7348,38 +7427,6 @@ MapEditReport build_edit_report(MapContext& ctx,
             map_source_keys.insert(normalized_source_key(record.absolute_path));
         }
     }
-    std::map<size_t, std::map<std::pair<size_t, size_t>, size_t>>
-        physical_distance_anchor_indices_by_file;
-    bool physical_distance_anchors_built = false;
-    const auto ensure_physical_distance_anchors = [&]() {
-        if (physical_distance_anchors_built) return;
-        MapTiming::Stage index_timing("plan.physical_distance_index");
-        for (size_t statement_index = 0;
-             statement_index < ctx.parsed_statements.size(); ++statement_index) {
-            const ParsedStatement& statement = ctx.parsed_statements[statement_index];
-            if (!is_distance_statement(statement)) continue;
-            physical_distance_anchor_indices_by_file[statement.source.source_file_index].emplace(
-                std::make_pair(statement.source.byte_start, statement.source.byte_end),
-                statement_index);
-        }
-        physical_distance_anchors_built = true;
-    };
-    const auto has_monotonic_tail_insert_position = [&](size_t file_index,
-                                                        double target_distance) {
-        const auto anchors = physical_distance_anchor_indices_by_file.find(file_index);
-        if (anchors == physical_distance_anchor_indices_by_file.end() ||
-            anchors->second.empty()) {
-            return false;
-        }
-        auto anchor = anchors->second.begin();
-        double previous = ctx.parsed_statements[anchor->second].distance_value;
-        for (++anchor; anchor != anchors->second.end(); ++anchor) {
-            const double current = ctx.parsed_statements[anchor->second].distance_value;
-            if (current < previous) return false;
-            previous = current;
-        }
-        return previous < target_distance;
-    };
 
     auto change_signature = [](const MapEditChange& change) {
         std::ostringstream out;
@@ -7685,43 +7732,47 @@ MapEditReport build_edit_report(MapContext& ctx,
                     if (!parse_edit_number(target_text, target_distance)) {
                         throw std::runtime_error("invalid numeric edit value: " + target_text);
                     }
-                    ensure_physical_distance_anchors();
-                    const auto anchor_it =
-                        physical_distance_anchor_indices_by_file.find(target_file_index);
-                    const size_t physical_distance_anchor_count = anchor_it ==
-                        physical_distance_anchor_indices_by_file.end()
-                        ? 0
-                        : anchor_it->second.size();
-                    if ((physical_distance_anchor_count <= 1 ||
-                         has_monotonic_tail_insert_position(
-                             target_file_index, target_distance)) &&
+                    SourceSpan insert_context;
+                    insert_context.source_file_index = target_file_index;
+                    for (const auto& entry : ctx.source_context_environments) {
+                        if (entry.first.first != file.source_key) continue;
+                        auto invocation = ctx.include_invocation_indices.find(entry.first.second);
+                        if (invocation != ctx.include_invocation_indices.end()) {
+                            insert_context.include_invocation_index = invocation->second;
+                        }
+                        break;
+                    }
+                    const auto& context_statements =
+                        get_distance_index().statements_for(ctx, insert_context);
+                    if (!context_statements.empty()) {
+                        insert_context = ctx.parsed_statements[context_statements.front()].source;
+                    }
+                    const auto& context_anchors = get_distance_index().anchors_for(ctx, insert_context);
+                    if (context_anchors.size() <= 1 &&
                         map_source_keys.find(file.source_key) != map_source_keys.end()) {
                         PreparedEdit edit;
                         edit.change = &change;
                         edit.input_ordinal = input_ordinal;
                         edit.operation = "insert";
-                        edit.target.statement_index = k_no_source_ref;
+                        edit.target.statement_index = context_statements.empty()
+                            ? k_no_source_ref : context_statements.front();
                         edit.target.row_kind = change.row_kind;
                         edit.target.element_index = 0;
                         edit.target.elements_for_statement = 1;
                         edit.source_file_index = target_file_index;
                         edit.source_range = {target_patch.text.size(), target_patch.text.size()};
-                        edit.removal_range = {};
-                        edit.replacement_statement = change.replacement_statement.empty()
-                            ? build_insert_statement(change)
-                            : trim_field_copy(change.replacement_statement);
-                        if (edit.replacement_statement.empty()) {
-                            throw std::runtime_error("insert produced an empty statement");
-                        }
+                        edit.replacement_statement = build_insert_statement(change);
                         edit.target_distance = target_distance;
-                        // A source with no or one physical numeric anchor, or
-                        // a source-order nondecreasing anchor sequence whose
-                        // target lies strictly beyond its tail, has an
-                        // unambiguous EOF placement. Append a canonical
-                        // distance block, preserving preceding source text and
-                        // leaving the full reparse/non-target checks as the
-                        // safety gate.
-                        edit.tail_distance_block_insert = true;
+                        edit.moves_distance = true;
+                        edit.suggested_distance_expression =
+                            trim_field_copy(change.distance_expression).empty()
+                                ? canonical_number(target_distance)
+                                : trim_field_copy(change.distance_expression);
+                        edit.section.context_source = insert_context;
+                        edit.section.anchors = context_anchors;
+                        edit.section.includes_initial_block = true;
+                        edit.section.resolved = true;
+                        edit.section.direction = "increasing";
                         ++report.insert_count;
                         prepared.push_back(std::move(edit));
                         continue;
@@ -7789,11 +7840,11 @@ MapEditReport build_edit_report(MapContext& ctx,
                             (gap == best_gap && tie_breaks_before(fallback_origin_index))) {
                             fallback_origin_index = i;
                             fallback_section = analyze_distance_section(
-                                ctx, i, get_distance_index());
+                                ctx, i, get_distance_index(), true);
                             best_gap = gap;
                         }
                         const DistanceSectionAnalysis section = analyze_distance_section(
-                            ctx, i, get_distance_index());
+                            ctx, i, get_distance_index(), true);
                         if (!section_can_place_target(section)) continue;
                         if (origin_index == k_no_source_ref ||
                             gap < best_resolved_gap ||
@@ -7802,6 +7853,25 @@ MapEditReport build_edit_report(MapContext& ctx,
                             selected_section = section;
                             best_resolved_gap = gap;
                         }
+                    }
+                    if (origin_index == k_no_source_ref && !context_anchors.empty()) {
+                        const size_t tail_index = context_anchors.back();
+                        const auto tail = analyze_distance_section(
+                            ctx, tail_index, get_distance_index(), true);
+                        const double tail_distance = ctx.parsed_statements[tail_index].distance_value;
+                        if (tail.resolved &&
+                            (tail.direction == "increasing" ? target_distance > tail_distance
+                                                             : target_distance < tail_distance)) {
+                            origin_index = tail_index;
+                            selected_section = tail;
+                        }
+                    }
+                    if (origin_index == k_no_source_ref && !context_anchors.empty() &&
+                        target_distance < ctx.parsed_statements[context_anchors.front()].distance_value) {
+                        origin_index = context_anchors.front();
+                        selected_section = analyze_distance_section(
+                            ctx, origin_index, get_distance_index(), true);
+                        selected_section.includes_initial_block = true;
                     }
                     if (origin_index == k_no_source_ref) {
                         origin_index = fallback_origin_index;
@@ -7953,9 +8023,8 @@ MapEditReport build_edit_report(MapContext& ctx,
     for (size_t index = 0; index < prepared.size(); ++index) {
         PreparedEdit& edit = prepared[index];
         if (!edit.moves_distance) continue;
-        const ParsedStatement& statement = ctx.parsed_statements[edit.target.statement_index];
         const std::string key = source_section_key(
-            ctx, edit.section, statement, edit.target_distance);
+            ctx, edit.section, edit.target_distance);
         DistanceEditGroup& group = distance_groups[key];
         if (group.member_indices.empty()) {
             group.key = key;
@@ -7992,11 +8061,54 @@ MapEditReport build_edit_report(MapContext& ctx,
                     targeted_distance_statement_indices, resolved,
                     get_distance_index(), mismatch_variable)) {
                 append_resolution_request(ctx, patch, group, prepared,
-                                          "physicalSourceHasIncompatibleIncludeContexts",
+                                          "evaluation_Environment_Requires_Boundary",
                                           mismatch_variable, false,
-                                          resolved.boundary.token, report);
+                                          {}, report);
             } else {
                 resolved_groups.push_back(std::move(resolved));
+            }
+        }
+        // Report only physical gaps accepted in every Include invocation.
+        // This is a cheap source/environment check, not one full reparse per
+        // candidate. The selected edit still undergoes complete semantic proof.
+        const auto candidate_plans = distance_boundary_plans(ctx, patch, group.section);
+        std::unordered_map<std::string, const DistanceBoundaryPlan*> plans_by_token;
+        for (const auto& plan : candidate_plans) plans_by_token.emplace(plan.token, &plan);
+        for (auto request = report.resolution_requests.begin();
+             request != report.resolution_requests.end();) {
+            if (request->resolution_key != group.key) { ++request; continue; }
+            bool conflict = false;
+            const auto expression = common_group_expression(group, prepared, false, conflict);
+            if (expression.empty() || conflict) { ++request; continue; }
+            const auto manual_expression = common_group_expression(group, prepared, true, conflict);
+            if (conflict) { ++request; continue; }
+            bool rejected = false;
+            auto& boundaries = request->allowed_boundaries;
+            boundaries.erase(std::remove_if(boundaries.begin(), boundaries.end(),
+                [&](const DistanceResolutionBoundary& item) {
+                    ResolvedDistanceGroup candidate;
+                    candidate.group = &group;
+                    const auto plan = plans_by_token.find(item.token);
+                    if (plan == plans_by_token.end()) { rejected = true; return true; }
+                    candidate.boundary = *plan->second;
+                    candidate.distance_expression = expression;
+                    candidate.create_distance_block = boundary_requires_distance_block(
+                        candidate.boundary, group.target_distance, manual_expression);
+                    std::string mismatch;
+                    const bool reject = !candidate.boundary.valid() ||
+                        !physical_include_instances_are_compatible(
+                            ctx, patch, group, prepared, targeted_distance_statement_indices,
+                            candidate, get_distance_index(), mismatch);
+                    rejected = rejected || reject;
+                    return reject;
+                }), boundaries.end());
+            if (rejected && boundaries.empty()) {
+                report.blocking_errors.push_back(
+                    "No distance boundary preserves all physical Include instances: " +
+                    request->source_file);
+                request = report.resolution_requests.erase(request);
+            } else {
+                ++request;
             }
         }
     }
@@ -8138,7 +8250,6 @@ MapEditReport build_edit_report(MapContext& ctx,
             }
             continue;
         }
-        if (edit.tail_distance_block_insert) continue;
         if (edit.moves_distance && edit.operation != "insert") {
             add_source_replacement(edit.source_file_index,
                                    edit.removal_range.first,
@@ -8231,9 +8342,8 @@ MapEditReport build_edit_report(MapContext& ctx,
         std::stable_sort(members.begin(), members.end(), [&](size_t lhs, size_t rhs) {
             const PreparedEdit& a = prepared[lhs];
             const PreparedEdit& b = prepared[rhs];
-            const SourceSpan& as = ctx.parsed_statements[a.target.statement_index].source;
-            const SourceSpan& bs = ctx.parsed_statements[b.target.statement_index].source;
-            if (as.byte_start != bs.byte_start) return as.byte_start < bs.byte_start;
+            if (a.source_range.first != b.source_range.first)
+                return a.source_range.first < b.source_range.first;
             return a.input_ordinal < b.input_ordinal;
         });
 
@@ -8262,7 +8372,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                 return prepared[index].operation == "insert";
             });
         std::string part_statement_indent;
-        if (any_insert_member) {
+        if (any_insert_member && resolved.boundary.before_anchor_position != k_no_source_ref) {
             const ParsedStatement& before_anchor = ctx.parsed_statements[
                 group.section.anchors[resolved.boundary.before_anchor_position]];
             const SourcePatch& group_patch = patches[group.source_file_index];
@@ -8300,7 +8410,8 @@ MapEditReport build_edit_report(MapContext& ctx,
                 0,
                 0,
                 edit.target.element_index,
-                ctx.parsed_statements[edit.target.statement_index].global_order,
+                edit.target.statement_index < ctx.parsed_statements.size()
+                    ? ctx.parsed_statements[edit.target.statement_index].global_order : 0,
             };
             const auto physical_key = edit.operation == "insert"
                 ? std::make_tuple(edit.source_range.first,
@@ -8484,74 +8595,6 @@ MapEditReport build_edit_report(MapContext& ctx,
         patch.replacements.push_back(std::move(insertion));
     }
 
-    std::map<size_t, std::vector<const PreparedEdit*>> tail_distance_block_inserts;
-    for (const PreparedEdit& edit : prepared) {
-        if (edit.tail_distance_block_insert) {
-            tail_distance_block_inserts[edit.source_file_index].push_back(&edit);
-        }
-    }
-    for (auto& entry : tail_distance_block_inserts) {
-        const size_t file_index = entry.first;
-        std::vector<const PreparedEdit*>& inserts = entry.second;
-        std::stable_sort(inserts.begin(), inserts.end(),
-                         [](const PreparedEdit* left, const PreparedEdit* right) {
-                             if (!exact_distance_value(left->target_distance,
-                                                       right->target_distance)) {
-                                 return left->target_distance < right->target_distance;
-                             }
-                             return left->input_ordinal < right->input_ordinal;
-                         });
-
-        SourcePatch& patch = patches[file_index];
-        const std::string nl = newline_text(patch.record->newline);
-        std::string insertion_body;
-        std::vector<TextReplacementIdentity> insertion_identities;
-        for (size_t distance_begin = 0; distance_begin < inserts.size();) {
-            size_t distance_end = distance_begin + 1;
-            while (distance_end < inserts.size() &&
-                   exact_distance_value(inserts[distance_begin]->target_distance,
-                                        inserts[distance_end]->target_distance)) {
-                ++distance_end;
-            }
-            if (!insertion_body.empty()) insertion_body += nl;
-            insertion_body += canonical_number(inserts[distance_begin]->target_distance) + ";";
-            ++report.created_distance_block_count;
-            for (size_t index = distance_begin; index < distance_end; ++index) {
-                const PreparedEdit& edit = *inserts[index];
-                insertion_body += nl;
-                const size_t statement_begin = insertion_body.size();
-                insertion_body += edit.replacement_statement;
-                const auto identity_range =
-                    source_identity_range(edit, edit.replacement_statement);
-                insertion_identities.push_back({
-                    edit.change->edit_id,
-                    edit.target.row_kind,
-                    statement_begin + identity_range.first,
-                    statement_begin + identity_range.second,
-                    edit.target.element_index,
-                    0,
-                });
-            }
-            distance_begin = distance_end;
-        }
-        TextReplacement insertion;
-        insertion.begin = patch.text.size();
-        insertion.end = patch.text.size();
-        insertion.text = statement_insertion_text(
-            patch.text, insertion.begin, insertion_body, *patch.record);
-        const size_t body_offset = insertion.text.find(insertion_body);
-        if (body_offset == std::string::npos) {
-            report.blocking_errors.push_back(
-                "failed to retain edit identity in a generated distance insertion");
-        } else {
-            for (TextReplacementIdentity& identity : insertion_identities) {
-                identity.relative_begin += body_offset;
-                identity.relative_end += body_offset;
-            }
-            insertion.identities = std::move(insertion_identities);
-        }
-        patch.replacements.push_back(std::move(insertion));
-    }
 
     timing.next("plan.patch_sources");
     for (auto& patch_entry : patches) {

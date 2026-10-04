@@ -60,6 +60,14 @@ public:
     }
 
     void parse() {
+        const auto environment_key = std::make_pair(
+            loaded_.normalized_key, ctx_.current_include_invocation_key);
+        if (ctx_.parse_options.collect_edit_metadata) {
+            ctx_.current_include_invocation_index = intern_include_invocation_key(
+                ctx_, ctx_.current_include_invocation_key);
+            ctx_.source_context_environments[environment_key].entry =
+                current_variable_environment_snapshot(ctx_);
+        }
         while (true) {
             skip();
             if (eof()) break;
@@ -74,6 +82,11 @@ public:
             }
         }
         flush_pending_includes();
+        if (ctx_.parse_options.collect_edit_metadata) {
+            auto& environment = ctx_.source_context_environments[environment_key];
+            environment.exit = current_variable_environment_snapshot(ctx_);
+            environment.exit_distance = ctx_.distance;
+        }
     }
 
 private:
@@ -570,6 +583,9 @@ private:
     }
 
     void merge_include_context(MapContext& child) {
+        ctx_.source_context_environments.insert(
+            child.source_context_environments.begin(),
+            child.source_context_environments.end());
         ctx_.timing.read_decode_seconds += child.timing.read_decode_seconds;
         for (const std::string& key : child.external_variable_reads) {
             if (ctx_.variable_writes.find(key) == ctx_.variable_writes.end()) {
