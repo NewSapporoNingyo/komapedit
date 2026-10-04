@@ -4,9 +4,9 @@
 
 # komapedit
 
-komapedit is a lightweight Windows viewer and editor for BVE Trainsim map files. It loads route maps and their Include files, calculates own-track and other-track geometry, presents the route in 2D charts and a 3D scene, exposes map data in searchable tables, previews Structure models, and exports calculated track geometry to CSV.
+komapedit is a lightweight Windows viewer and editor for BVE Trainsim map files, with 2D route views, 3D scene previews, and source-backed map editing.
 
-Editing is source-backed but still experimental. Back up route files or keep them under version control before enabling Edit mode. komapedit is not yet a complete map editor: some BVE syntax is preview-only or unsupported, and some supported statements can be edited but not created or manipulated graphically. See [Current BVE Map Syntax Support](#current-bve-map-syntax-support) for the current boundaries and [TODO.md](TODO.md) for implementation progress.
+Editing is experimental. Back up route files or keep them under version control before use. See [Current BVE Map Syntax Support](#current-bve-map-syntax-support) for supported statements and [TODO.md](TODO.md) for development progress.
 
 ## Documentation
 
@@ -19,127 +19,109 @@ Editing is source-backed but still experimental. Back up route files or keep the
 
 ## Features
 
-- Opens BVE Trainsim 2.0+ map files in UTF-8, UTF-16, CP932/Shift_JIS-related encodings, including nested `Include` files; missing or invalid included maps are skipped with a warning so remaining elements can load.
-- Opens maps through BVE Scenario files (`BveTs Scenario 2.00`) by resolving the official `Route` entry relative to the scenario directory; multiple weighted candidates are chosen in a selection dialog. `Map Info List -> Other -> Scenario File` shows all eight official fields and existing Route/Vehicle candidates. Enable Edit mode to edit those values; Scenario drafts are written directly by Save (there is no Apply-to-memory step), with source encoding, comments, unknown rows, duplicate-field compatibility, candidate order/count, and external-change protection preserved.
-- Displays plan, elevation/profile, curve-radius, station, speed-limit, other-track, marker, and measurement information.
-- Provides searchable tables for stations, tracks, Structures, repeaters, signals, beacons, sounds, trains, and environmental effects.
-- Previews Structure models and a route scene in 3D.
-- Supports source-backed Apply, Save, Revert, and Reload for the statement families listed below, plus selected live X/Y/Z placement edits in the 3D scene.
-- With Edit enabled, the File Structure Diagram can import an existing submap or exclusively create a UTF-8 submap with the standard BVE header, then stage its Include in the selected physical source file.
-- `File -> New...` opens a New File Wizard for a header-only `BveTs Map 2.02` map, a `BveTs Scenario 2.00` scenario file filled with official-field content, and Structure, Signal, Sound, Sound3D, and Station list files. Resource-list templates offer `Import File`, which selects an existing `.txt`/`.csv` and fills its editable name, directory, and suffix fields. The wizard always appends its selected `.txt` (default) or `.csv` suffix to the raw name, so `route.csv` with `.txt` becomes `route.csv.txt`; an existing regular target file is reused without being written, otherwise the file is created with content (a header-only map or list, or the scenario fields entered in the wizard, written in official key order). The scenario template has no `Import File` or `Reference in` controls; instead it shows the same eight official field inputs as the Scenario File tab: `Title`, `Route`, `RouteTitle`, `Vehicle`, `VehicleTitle`, `Author`, `Image`, and `Comment` may all stay empty (empty fields omit the row), Route/Vehicle/Image are single paths relative to the scenario directory with a file picker, and values containing weights, multi-candidates, or comment characters are rejected. Selecting any loaded non-resource-list map source file stages its `include` or matching `*.Load` reference in the working copy; official BVE does not require a distance statement in the target, so distance-free blank maps are valid reference targets too. Normal Save writes that parent-map reference, while Revert leaves created files on disk. The Presets category is currently empty and the wizard does not add list rows.
-- Resource lists that only carry their file header are valid starting points: the resource-list tables offer an `Add Row` button (and context-menu insertion) that creates the first row directly, without a comma placeholder line.
-- Exports calculated own-track and other-track geometry to CSV.
-- Offers Simplified Chinese, English, and Japanese UI languages.
+- **Interface**: Movable, dockable windows, searchable data tables, and navigation between tables, 2D views, and the 3D scene.
+- **Preview**: Route plans, elevation profiles, markers, Structure models, and 3D scenes, with background-image alignment, measurement, and track-geometry CSV export.
+- **Editing**: Modify, delete, or add supported map elements through property windows, resource lists, and wizards; adjust some elements' positions with 3D gizmos. Manage submaps and create or edit Map, Scenario, and resource-list files.
+- **UI languages**: Simplified Chinese, English, and Japanese.
 
 
 ## Current BVE Map Syntax Support
 
-- Preview: the syntax actually feeds track geometry, tables, markers, or the 3D scene.
-- Basic editing: existing statements can be changed and written back through the property inspector; this does not imply support for creating new statements.
-- New element: the New Map Element wizard can insert a corresponding source statement.
-- Graphical editing: elements can be dragged or manipulated directly on the 2D/3D canvas; opening the property window from a context menu does not count.
+- Preview: displays data through track geometry, tables, markers, or the 3D scene.
+- Basic editing: change existing statements through Properties/Edit or tables and save them.
+- New element: the New Map Element wizard inserts the corresponding source statement.
+- Graphical editing: drag elements or use gizmos directly on the 2D/3D canvas.
 - √ = fully supported; △ = partially or indirectly supported; ✕ = currently unsupported; - = support is not planned or not applicable.
 
-The statement names and `[legacy]` aliases below follow the [official BVE map file-format reference](https://bvets.net/jp/edit/formats/route/map.html). The project-specific `Legacy.*` compatibility statements are retained for completeness. The wizard does not insert `Load`/resource-definition rows; numeric target distances use the existing source-expression and distance-boundary workflow, preserving or safely adjusting existing `$` expressions where possible.
+The table covers [official BVE map syntax](https://bvets.net/jp/edit/formats/route/map.html), legacy aliases, and the project's `Legacy.*` compatibility statements. New element refers to the map-element wizard; use the New File wizard for files and their `Include`/`Load` references, and the corresponding tables to add resource-list rows.
 
-| Map syntax                                                                                                                                                                                  | Preview | Basic editing | New element | Graphical editing | Current behavior                                                                                                                                                              |
+| Map syntax                                                                                                                                                                                  | Preview | Basic editing | New element | Graphical editing | Notes |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----: | :-----------: | :---------: | :---------------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| File header, version, and encoding                                                                                                                                                          |    △    |       ✕       |      -      |         -         | Loads BVE Map 2.0+ files in UTF-8/BOM, UTF-16LE/BE, and CP932/Shift_JIS-related encodings; arbitrary declared encodings are not supported                                     |
-| Comments and basic statement syntax                                                                                                                                                         |    √    |       ✕       |      -      |         -         | Supports `#`/`//` comments, semicolon-separated calls, keyed/nested elements, whitespace, multiline statements, and case-insensitive names; there is no general source editor |
-| Variables in assignments, arguments, and keys                                                                                                                                               |    √    |       ✕       |      -      |         -         | Evaluated during parsing and shown in a read-only, case-insensitively grouped assignment/source list                                                                          |
-| Arithmetic operators (`+`, `-`, `*`, `/`, `%`)                                                                                                                                              |    √    |       ✕       |      -      |         -         | Supports numeric arithmetic, unary signs, parentheses, and `+` string concatenation; comparison/logical and compound assignment operators are unsupported                     |
-| Distance declarations and `distance` expressions                                                                                                                                            |    √    |       △       |      -      |         ✕         | Existing supported element distances are editable; insertion may create/reuse a distance block, but there is no standalone distance editor                                    |
-| Mathematical functions                                                                                                                                                                      |    √    |       ✕       |      -      |         -         | Supports `rand`, `abs`, `sin`, `cos`, `atan2`, `sqrt`, `exp`, `log`, `floor`, `ceil`, and `pow`                                                                               |
-| `include 'file';`                                                                                                                                                                           |    √    |       △       |      ✕      |         -         | Nested Include files participate in parsing and supported contained elements can be written back; a missing or invalid child map is skipped with a warning; with Edit enabled, the File Structure Diagram context menu can change an Include reference to another .txt/.csv file (relative path preferred, absolute fallback) or remove it, and edits are blocked when surviving statements still depend on that file |
-| `Curve.SetGauge(value)` / `[legacy] Curve.Gauge(value)`                                                                                                                                     |    √    |       √       |      √      |         ✕         | Distance and gauge support edit/delete; the wizard emits only current `SetGauge` with default `1.067`, while existing legacy `Gauge` retains its method on edit. Independent `CG` boards appear in 2D/3D when enabled |
-| `Curve.SetCenter(x)`                                                                                                                                                                        |    √    |       √       |      √      |         ✕         | Distance and cant-center offset support edit, creation, and deletion; the wizard default is `0`. Independent `CC` boards appear in 2D/3D when enabled                        |
-| `Curve.SetFunction(id)`                                                                                                                                                                     |    √    |       √       |      √      |         ✕         | Distance and interpolation function support edit, creation, and deletion; evaluated `id` is restricted to `0` or `1`, with wizard default `0`. Independent `CF` boards appear in 2D/3D when enabled |
-| `Curve.BeginTransition()`                                                                                                                                                                   |    √    |       △       |      △      |         ✕         | The consolidated `Curve.*` form adds it only before a canted `Curve.Begin` or selected `Curve.End`; paired start/end transition options stay linked and keep separate distances |
-| `Curve.Begin(radius, cant)` / `[legacy] Curve.BeginCircular(radius, cant)`                                                                                                                  |    √    |       √       |      △      |         ✕         | The `Curve.*` form emits current `Curve.Begin(radius, cant)` only with a preceding transition at its own distance; `Curve.BeginCircular` remains edit-only                  |
-| `Curve.Begin(radius)` / `Curve.Change(radius)`                                                                                                                                              |    √    |       √       |      √      |         ✕         | The `Curve.*` form selects current Begin or Change and can atomically add the supported end position; existing rows retain their method                                     |
-| `Curve.End()`                                                                                                                                                                               |    √    |       √       |      √      |         ✕         | The `Curve.*` form adds End alone or with a start position, optionally preceded by a transition at its own distance; existing rows remain editable/deletable                |
-| `Curve.Interpolate(radius, cant)` / `Curve.Interpolate(radius)` / `Curve.Interpolate()`                                                                                                     |    √    |       √       |      √      |         ✕         | All official 0/1/2-argument forms are typed Curve rows and retain their original arity: edit distance only for 0 arguments, distance/radius for 1, or distance/radius/cant for 2. With `Curve Radius` enabled, the 2D endpoint and 3D board open the shared Properties/Edit and Delete actions; the independent Curve.Interpolate wizard template creates all three forms |
-| `Gradient.BeginTransition()`                                                                                                                                                                |    √    |       △       |      △      |         ✕         | The consolidated `Gradient.*` form adds it before selected Begin/End positions; paired transition options stay linked and keep separate distances                           |
-| `Gradient.Begin(gradient)` / `[legacy] Gradient.BeginConst(gradient)`                                                                                                                       |    √    |       √       |      √      |         ✕         | The `Gradient.*` form adds current `Gradient.Begin(gradient)` alone or with End, optionally with a preceding transition; `Gradient.BeginConst` remains edit-only           |
-| `Gradient.End()`                                                                                                                                                                            |    √    |       √       |      √      |         ✕         | The `Gradient.*` form adds End alone or with Begin, optionally with a preceding transition at its own distance; existing rows remain editable/deletable                    |
-| `Gradient.Interpolate(gradient)` / `Gradient.Interpolate()`                                                                                                                                 |    √    |       ✕       |      ✕      |         ✕         | Both official 0/1-argument forms feed geometry, but are not exposed as editable gradient rows                                                                                 |
-| `Legacy.Turn`, `Legacy.Curve`, `Legacy.Pitch`                                                                                                                                               |    √    |       △       |      ✕      |         ✕         | Project compatibility syntax: all feed own-track geometry; only existing `Legacy.Curve` rows have source-backed value/distance editing                                        |
-| `Track[trackKey].X.Interpolate(x, radius)` / `Track[trackKey].X.Interpolate(x)` / `Track[trackKey].X.Interpolate()`                                                                         |    √    |       △       |      √      |         ✕         | The wizard creates all current forms. Existing distance/numeric fields and deletion are supported; `trackKey` stays read-only in Properties/Edit but can be renamed for the whole track from Other Tracks |
-| `Track[trackKey].Y.Interpolate(y, radius)` / `Track[trackKey].Y.Interpolate(y)` / `Track[trackKey].Y.Interpolate()`                                                                         |    √    |       △       |      √      |         ✕         | The wizard creates all current forms; existing rows retain the same editing boundary as X interpolation                                                                       |
-| `Track[trackKey].Position(x, y, radiusH, radiusV)` / `Track[trackKey].Position(x, y, radiusH)` / `Track[trackKey].Position(x, y)`                                                           |    √    |       △       |      √      |         ✕         | The wizard creates all current forms; existing numeric fields/distance and deletion are supported, but statement shape and track key are read-only                            |
-| `Track[trackKey].Cant.SetGauge(gauge)` / `[legacy] Track[trackKey].Gauge(gauge)`                                                                                                            |    √    |       △       |      √      |         ✕         | The wizard creates only the current `Cant.SetGauge` form. Legacy `Gauge` remains readable/editable/deletable with method/key read-only                                       |
-| `Track[trackKey].Cant.SetCenter(x)`                                                                                                                                                         |    √    |       △       |      √      |         ✕         | The wizard creates the current form; existing value/distance and deletion are supported, with method/key read-only                                                           |
-| `Track[trackKey].Cant.SetFunction(id)`                                                                                                                                                      |    √    |       △       |      √      |         ✕         | The wizard creates the current form with id `0` or `1`; existing value/distance and deletion are supported, with method/key read-only                                        |
-| `Track[trackKey].Cant.BeginTransition()`                                                                                                                                                    |    √    |       △       |      √      |         ✕         | The wizard creates the current form; existing distance and deletion are supported, with method/key read-only                                                                 |
-| `Track[trackKey].Cant.Begin(cant)`                                                                                                                                                          |    √    |       △       |      √      |         ✕         | The wizard creates the current form; existing value/distance and deletion are supported, with method/key read-only                                                           |
-| `Track[trackKey].Cant.End()`                                                                                                                                                                |    √    |       △       |      √      |         ✕         | The wizard creates the current form; existing distance and deletion are supported, with method/key read-only                                                                 |
-| `Track[trackKey].Cant.Interpolate(cant)` / `Track[trackKey].Cant.Interpolate()` / `[legacy] Track[trackKey].Cant(cant)`                                                                     |    √    |       △       |      √      |         ✕         | The wizard creates only the current 0/1-argument forms. Legacy `Cant` remains readable/editable/deletable with shape/key read-only                                          |
-| `Structure.Load(filePath)`                                                                                                                                                                  |    √    |       △       |      ✕      |         -         | Existing loaded-list key/path rows support inline edit, clear, reorder, delete, and right-click insertion above/below; inserted rows use two CSV fields. Edit mode can replace the Load path with a loader-compatible `BveTs Structure List` (1.00+) |
-| `Structure[structureKey].Put(trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                                                                                    |    √    |       √       |      √      |         △         | All fields can be written back or created; 3D directly manipulates X/Y/Z only                                                                                                 |
-| `Structure[structureKey].Put0(trackKey, tilt, span)`                                                                                                                                        |    √    |       √       |      √      |         △         | `Properties/Edit` can add/remove coordinate offsets to convert between `Put0` and `Put`; `Put0` uses a Z-only whole-metre distance gizmo                                      |
-| `Structure[structureKey].PutBetween(trackKey1, trackKey2, flag)` / `Structure[structureKey].PutBetween(trackKey1, trackKey2)`                                                               |    √    |       √       |      √      |         △         | Both official forms preview/edit; Inspector drafts update the deformed 3D vertices live, and a Z-only gizmo changes `distance` in whole-metre steps                            |
-| `Repeater[repeaterKey].Begin(trackKey, x, y, z, rx, ry, rz, tilt, span, interval, structureKey1, ...)` / `Repeater[repeaterKey].Begin0(trackKey, tilt, span, interval, structureKey1, ...)` |    √    |       △       |      √      |         △         | The wizard creates Begin/Begin0 alone or atomically with End; a confirmed Begin-only overlap becomes a change point, while paired interval overlaps are rejected. `Properties/Edit` also offers `Insert Change Point`, which opens the source-matched Begin/Begin0 form with Begin-only selected and current inspector drafts prefilled. `repeaterKey` renames, linked deletion/trim, form conversion, and gizmos are supported |
-| `Repeater[repeaterKey].End()`                                                                                                                                                               |    √    |       △       |      √      |         △         | The wizard can create End alone or with Begin/Begin0. An open Repeater's `Properties/Edit` opens an End-only form with its source file and key prefilled. It allows isolated End statements but rejects an End inside a same-name interval that is already explicitly closed; existing End distance and linked deletion/trim remain supported |
-| `Background.Change(structureKey)`                                                                                                                                                           |    √    |       √       |      √      |         ✕         | Distance/key can be edited, created, or deleted; it feeds background data and the scene preview                                                                               |
-| `Station.Load(filePath)`                                                                                                                                                                    |    √    |       △       |      ✕      |         -         | Existing station-definition rows support inline edit, clear, reorder, delete, and right-click insertion above/below; inserted rows use 13 CSV fields. When an edited or inserted row is serialized, blank `stoppageTime`, `signalFlag`, `alightingTime`, `passengers`, `doorReopen`, and `stuckInDoor` fields are written as `0`; empty keys, names, times, and sound keys remain empty. With Edit enabled, the Load path can be replaced with a loader-compatible `BveTs Station List` (existing 0.04+ compatibility). When any station row uses a non-empty `arrivalSoundKey` or `depertureSoundKey` and `Sound.Load` is not logically earlier than `Station.Load` (same file: source line/column; different files: shallower Include depth), loading emits a `[WARN]` with the source location but the map still loads |
-| `Station[stationKey].Put(door, margin1, margin2)`                                                                                                                                           |    √    |       √       |      √      |         ✕         | Distance, key, and door side can be edited, created, or deleted. Stop tolerances require `margin1 < 0` and `margin2 > 0`; loaded violations warn with source location, while edits/creation are blocked |
-| `Section.Begin(...)` / `[legacy] Section.BeginNew(...)`                                                                                                                                     |    √    |       √       |      √      |         ✕         | Distance and variable-length signal-index parameters support edit, creation, and deletion; markers appear in 2D/3D                                                            |
-| `Section.SetSpeedLimit(...)` / `[legacy] Signal.SpeedLimit(...)`                                                                                                                            |    √    |       √       |      √      |         ✕         | Distance and variable-length speeds support edit, creation, and deletion; active values feed the 3D signal summary                                                            |
-| `Signal.Load(filePath)`                                                                                                                                                                     |    √    |       △       |      ✕      |         -         | Aspect/glare rows support inline edit, clear, reorder, delete, right-click insertion above/below, and independent trailing-column changes. New primary rows initially have six CSV fields; main/glare blocks remain together and `Add Glare` is explicit. At most 509 structure-key columns are displayed; further fields are retained with a warning |
-| `Signal[signalAspectKey].Put(section, trackKey, x, y)` / `Signal[signalAspectKey].Put(section, trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                  |    √    |       √       |      √      |         △         | Both official forms edit; the wizard emits the full form. Short-form extended edits require confirmed conversion; 3D directly manipulates X/Y/Z                               |
-| `Beacon.Put(type, section, sendData)`                                                                                                                                                       |    √    |       √       |      √      |         ✕         | Distance and all arguments can be edited, created, or deleted                                                                                                                 |
-| `SpeedLimit.Begin(v)` / `SpeedLimit.End()`                                                                                                                                                  |    √    |       √       |      √      |         ✕         | Independent Begin/End points support edit, creation, and deletion without pairing or type conversion                                                                          |
-| `PreTrain.Pass(time)` / `PreTrain.Pass(second)` | √ | √ | √ | ✕ | Source-backed distance/time editing and deletion from 2D/3D marker menus; creation in the Signal wizard. Enter hh:mm:ss without quotes or finite seconds; unchanged source expressions are retained. Hover over the `passTime` label in Properties/Edit or the wizard to show input-format help; moving away hides it. No separate list or gizmo. |
-| `Light.Ambient(...)`, `Light.Diffuse(...)`, `Light.Direction(...)`                                                                                                                          |    √    |       √       |      √      |         ✕         | The Light Sources tab supports source-backed RGB/pitch/yaw editing and deletion. The Effects wizard creates each official form in the selected source file at distance `0` (without a distance input). RGB must be in `[0, 1]`; Direction must be at distance `0`; duplicate declarations of one kind anywhere in the root map or Includes invalidate that kind and report every source location. No markers or 3D lighting simulation are implemented |
-| `Fog.Interpolate(density, red, green, blue)` / `Fog.Interpolate(density)` / `Fog.Interpolate()` / `[legacy] Fog.Set(density, red, green, blue)`                                             |    √    |       √       |      √      |         ✕         | All official 0/1/4-argument Interpolate forms and the legacy Set form support edit, creation, and deletion; 3D applies interpolated exponential fog                           |
-| `[compatibility] Legacy.Fog(start, end, red, green, blue)`                                                                                                                                   |    √    |       √       |      √      |         ✕         | Legacy BVE linear-fog syntax; supports source-backed editing and deletion from the list and plan/scene markers, plus creation in the Effects wizard; 3D applies linear fog, including transitions and mixing with Fog |
-| `DrawDistance.Change(value)`                                                                                                                                                                |    √    |       √       |      √      |         ✕         | Distance/value support edit, creation, and deletion; the statement can optionally control scene draw distance                                                                 |
-| `CabIlluminance.Interpolate(value)` / `CabIlluminance.Interpolate()` / `[legacy] CabIlluminance.Set(value)`                                                                                   |    √    |       √       |      √      |         ✕         | Distance/value support edit, creation, and deletion; a blank value writes `Interpolate()`, which inherits the previous explicit CabIlluminance value in table and 3D marker labels (blank when none); cab brightness is not simulated |
-| `Irregularity.Change(x, y, r, lx, ly, lr)`                                                                                                                                                  |    √    |       √       |      √      |         ✕         | Distance and all six values support edit, creation, and deletion; vehicle vibration is not simulated                                                                          |
-| `Adhesion.Change(a)` / `Adhesion.Change(a, b, c)`                                                                                                                                           |    √    |       √       |      √      |         ✕         | Both official shapes support edit, creation, and deletion; adhesion effects are not simulated                                                                                 |
-| `Sound.Load(filePath)`                                                                                                                                                                      |    √    |       △       |      ✕      |         -         | Existing sound-list rows support inline edit, clear, reorder, delete, and right-click insertion above/below; inserted rows use three CSV fields. Edit mode can replace the Load path with a loader-compatible `BveTs Sound List` (2.00+). A wrong `Sound.Load`/`Station.Load` order when station rows use arrival/deperture sound keys warns but does not block loading (see `Station.Load`) |
-| `Sound[soundKey].Play()`                                                                                                                                                                    |    √    |       √       |      √      |         ✕         | Distance/key support edit, creation, and deletion; audio is not played                                                                                                        |
-| `Sound3D.Load(filePath)`                                                                                                                                                                    |    √    |       △       |      ✕      |         -         | Existing 3D-sound-list rows support inline edit, clear, reorder, delete, and right-click insertion above/below; inserted rows use three CSV fields. Edit mode can replace the Load path with a loader-compatible `BveTs Sound List` (2.00+) |
-| `Sound3D[soundKey].Put(x, y)`                                                                                                                                                               |    √    |       √       |      √      |         ✕         | Distance/key/X/Y support edit, creation, and deletion; the 3D tag points at the fixed source and its X/Y/Z gizmo edits X/Y or whole-metre distance; audio is not played         |
-| `RollingNoise.Change(index)`                                                                                                                                                                |    √    |       √       |      √      |         ✕         | Distance/index support edit, creation, and deletion; audio is not played                                                                                                      |
-| `FlangeNoise.Change(index)`                                                                                                                                                                 |    √    |       √       |      √      |         ✕         | Distance/index support edit, creation, and deletion; audio is not played                                                                                                      |
-| `JointNoise.Play(index)`                                                                                                                                                                    |    √    |       √       |      √      |         ✕         | Distance/index support edit, creation, and deletion; audio is not played                                                                                                      |
-| `Train.Add(trainKey, filePath, trackKey, direction)` / `Train[trainKey].Load(filePath, trackKey, direction)`                                                                                |    △    |       ✕       |      ✕      |         ✕         | Definitions are shown, but external other-train files are only partially modeled                                                                                              |
-| `Train[trainKey].Enable(time)` / `Train[trainKey].Enable(second)`                                                                                                                           |    √    |       ✕       |      ✕      |         ✕         | The unique enable time is shown read-only above the matching other-train stop table                                                                                           |
-| `Train[trainKey].Stop(decelerate, stopTime, accelerate, speed)`                                                                                                                             |    √    |       ✕       |      ✕      |         ✕         | Generates read-only other-train stop tables, paths, and map markers                                                                                                           |
+| File header, version, and encoding                                                                                                                                                          |    △    |       ✕       |      -      |         -         | Supports BVE Map 2.0+ and UTF-8 (with or without BOM), UTF-16LE/BE, and CP932/Shift_JIS encodings |
+| Comments and basic statement syntax                                                                                                                                                         |    √    |       ✕       |      -      |         -         | Supports `#`/`//` comments, semicolon separation, keyed and nested elements, and multiline statements; names are case-insensitive |
+| Variables in assignments, arguments, and keys                                                                                                                                               |    √    |       ✕       |      -      |         -         | Evaluated during parsing; the variable table groups assignments and source locations by name |
+| Arithmetic operators (`+`, `-`, `*`, `/`, `%`)                                                                                                                                              |    √    |       ✕       |      -      |         -         | Supports numeric arithmetic, unary signs, parentheses, and `+` string concatenation |
+| Distance declarations and `distance` expressions                                                                                                                                            |    √    |       △       |      -      |         ✕         | Edit distance through supported elements; new elements create or reuse distance blocks |
+| Mathematical functions                                                                                                                                                                      |    √    |       ✕       |      -      |         -         | Supports `rand`, `abs`, `sin`, `cos`, `atan2`, `sqrt`, `exp`, `log`, `floor`, `ceil`, and `pow` |
+| `include 'file';`                                                                                                                                                                           |    √    |       △       |      ✕      |         -         | Supports nested Includes and editing elements in child maps; the File Structure Diagram can replace or remove references after dependency checks. Missing or invalid child maps are skipped with a warning |
+| `Curve.SetGauge(value)` / `[legacy] Curve.Gauge(value)`                                                                                                                                     |    √    |       √       |      √      |         ✕         | Edit distance and gauge; the wizard creates `SetGauge` with default `1.067`; `CG` boards can be shown in 2D/3D |
+| `Curve.SetCenter(x)`                                                                                                                                                                        |    √    |       √       |      √      |         ✕         | Edit distance and cant-center offset; the creation default is `0`; `CC` boards can be shown in 2D/3D |
+| `Curve.SetFunction(id)`                                                                                                                                                                     |    √    |       √       |      √      |         ✕         | Edit distance and interpolation function with `id` set to `0` or `1`; the creation default is `0`; `CF` boards can be shown in 2D/3D |
+| `Curve.BeginTransition()`                                                                                                                                                                   |    √    |       △       |      △      |         ✕         | The `Curve.*` form adds a preceding transition with a canted Begin or an End; start/end transition options are linked, with separate distances |
+| `Curve.Begin(radius, cant)` / `[legacy] Curve.BeginCircular(radius, cant)`                                                                                                                  |    √    |       √       |      △      |         ✕         | The wizard creates a canted Begin together with a preceding transition; existing legacy BeginCircular statements can be edited |
+| `Curve.Begin(radius)` / `Curve.Change(radius)`                                                                                                                                              |    √    |       √       |      √      |         ✕         | The wizard offers Begin or Change and can add an end position at the same time |
+| `Curve.End()`                                                                                                                                                                               |    √    |       √       |      √      |         ✕         | Create alone or with a start position, optionally with a preceding transition |
+| `Curve.Interpolate(radius, cant)` / `Curve.Interpolate(radius)` / `Curve.Interpolate()`                                                                                                     |    √    |       √       |      √      |         ✕         | Supports 0/1/2 arguments, preserving the argument count during editing; enable Curve Radius to edit or delete through 2D/3D markers |
+| `Gradient.BeginTransition()`                                                                                                                                                                |    √    |       △       |      △      |         ✕         | The `Gradient.*` form adds a preceding transition with Begin/End; start/end transition options are linked, with separate distances |
+| `Gradient.Begin(gradient)` / `[legacy] Gradient.BeginConst(gradient)`                                                                                                                       |    √    |       √       |      √      |         ✕         | The wizard can add Begin alone or together with End and preceding transitions; existing legacy BeginConst statements can be edited |
+| `Gradient.End()`                                                                                                                                                                            |    √    |       √       |      √      |         ✕         | Create alone or with Begin, optionally with a preceding transition |
+| `Gradient.Interpolate(gradient)` / `Gradient.Interpolate()`                                                                                                                                 |    √    |       ✕       |      ✕      |         ✕         | Both 0/1-argument forms feed track geometry |
+| `Legacy.Turn`, `Legacy.Curve`, `Legacy.Pitch`                                                                                                                                               |    √    |       △       |      ✕      |         ✕         | All three statements feed own-track geometry; existing Legacy.Curve values and distances can be edited |
+| `Track[trackKey].X.Interpolate(x, radius)` / `Track[trackKey].X.Interpolate(x)` / `Track[trackKey].X.Interpolate()`                                                                         |    √    |       △       |      √      |         ✕         | Supports all listed argument forms; edit existing distances and values or delete statements. `trackKey` is read-only in Properties/Edit; rename the whole track from Other Tracks |
+| `Track[trackKey].Y.Interpolate(y, radius)` / `Track[trackKey].Y.Interpolate(y)` / `Track[trackKey].Y.Interpolate()`                                                                         |    √    |       △       |      √      |         ✕         | Supports all listed argument forms, with the same editing scope as X.Interpolate |
+| `Track[trackKey].Position(x, y, radiusH, radiusV)` / `Track[trackKey].Position(x, y, radiusH)` / `Track[trackKey].Position(x, y)`                                                           |    √    |       △       |      √      |         ✕         | Supports all listed argument forms; edit existing distances and values or delete statements, preserving the argument count and key |
+| `Track[trackKey].Cant.SetGauge(gauge)` / `[legacy] Track[trackKey].Gauge(gauge)`                                                                                                            |    √    |       △       |      √      |         ✕         | New statements use Cant.SetGauge; edit values and distances or delete either form, preserving the method and key |
+| `Track[trackKey].Cant.SetCenter(x)`                                                                                                                                                         |    √    |       △       |      √      |         ✕         | Edit values and distances or delete statements, preserving the method and key |
+| `Track[trackKey].Cant.SetFunction(id)`                                                                                                                                                      |    √    |       △       |      √      |         ✕         | New statements require `id` to be `0` or `1`; edit values and distances or delete statements, preserving the method and key |
+| `Track[trackKey].Cant.BeginTransition()`                                                                                                                                                    |    √    |       △       |      √      |         ✕         | Edit distances or delete statements, preserving the method and key |
+| `Track[trackKey].Cant.Begin(cant)`                                                                                                                                                          |    √    |       △       |      √      |         ✕         | Edit values and distances or delete statements, preserving the method and key |
+| `Track[trackKey].Cant.End()`                                                                                                                                                                |    √    |       △       |      √      |         ✕         | Edit distances or delete statements, preserving the method and key |
+| `Track[trackKey].Cant.Interpolate(cant)` / `Track[trackKey].Cant.Interpolate()` / `[legacy] Track[trackKey].Cant(cant)`                                                                     |    √    |       △       |      √      |         ✕         | New statements use the 0/1-argument Interpolate forms; edit existing values and distances or delete statements, preserving the form and key |
+| `Structure.Load(filePath)`                                                                                                                                                                  |    √    |       △       |      ✕      |         -         | Replace the list path; edit, add, delete, or reorder key/path rows in the table. Supports list version 1.00+ |
+| `Structure[structureKey].Put(trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                                                                                    |    √    |       √       |      √      |         △         | All fields are editable; 3D gizmos adjust X/Y/Z |
+| `Structure[structureKey].Put0(trackKey, tilt, span)`                                                                                                                                        |    √    |       √       |      √      |         △         | Properties/Edit converts between Put0 and Put; the Put0 Z-axis gizmo adjusts distance in whole meters |
+| `Structure[structureKey].PutBetween(trackKey1, trackKey2, flag)` / `Structure[structureKey].PutBetween(trackKey1, trackKey2)`                                                               |    √    |       √       |      √      |         △         | Supports both argument forms; property drafts update the 3D shape live, and the Z-axis gizmo adjusts distance in whole meters |
+| `Repeater[repeaterKey].Begin(trackKey, x, y, z, rx, ry, rz, tilt, span, interval, structureKey1, ...)` / `Repeater[repeaterKey].Begin0(trackKey, tilt, span, interval, structureKey1, ...)` |    √    |       △       |      √      |         △         | Create Begin/Begin0 alone or paired with End; supports change points, whole-segment renaming, linked deletion, form conversion, and position gizmos. Paired intervals with the same key must not overlap |
+| `Repeater[repeaterKey].End()`                                                                                                                                                               |    √    |       △       |      √      |         △         | Create alone, with Begin/Begin0, or to close an open interval; supports distance editing and linked deletion. An additional End inside a closed interval with the same key is rejected |
+| `Background.Change(structureKey)`                                                                                                                                                           |    √    |       √       |      √      |         ✕         | Edit distance and key; preview the background in the scene |
+| `Station.Load(filePath)`                                                                                                                                                                    |    √    |       △       |      ✕      |         -         | Replace the list path; edit, add, delete, or reorder station rows in the table. Supports list version 0.04+. When stations reference sounds, Sound.Load/Station.Load order is checked and warnings are reported |
+| `Station[stationKey].Put(door, margin1, margin2)`                                                                                                                                           |    √    |       √       |      √      |         ✕         | Edit distance, key, door side, and stop tolerances; requires `margin1 < 0` and `margin2 > 0` |
+| `Section.Begin(...)` / `[legacy] Section.BeginNew(...)`                                                                                                                                     |    √    |       √       |      √      |         ✕         | Edit distance and the signal-index list; markers appear in 2D/3D |
+| `Section.SetSpeedLimit(...)` / `[legacy] Signal.SpeedLimit(...)`                                                                                                                            |    √    |       √       |      √      |         ✕         | Edit distance and the speed-limit list; effective values appear in the 3D signal summary |
+| `Signal.Load(filePath)`                                                                                                                                                                     |    √    |       △       |      ✕      |         -         | Edit aspect rows, glare rows, and trailing columns; main/glare rows are handled as a group, with glare added manually. Displays up to 509 structure-key columns |
+| `Signal[signalAspectKey].Put(section, trackKey, x, y)` / `Signal[signalAspectKey].Put(section, trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                  |    √    |       √       |      √      |         △         | Both forms are editable; new statements use the full form. Extending a short form requires conversion confirmation; 3D gizmos adjust X/Y/Z |
+| `Beacon.Put(type, section, sendData)`                                                                                                                                                       |    √    |       √       |      √      |         ✕         | Edit distance and all parameters |
+| `SpeedLimit.Begin(v)` / `SpeedLimit.End()`                                                                                                                                                  |    √    |       √       |      √      |         ✕         | Edit, create, and delete Begin/End independently |
+| `PreTrain.Pass(time)` / `PreTrain.Pass(second)` | √ | √ | √ | ✕ | Edit distance and passing time or delete through 2D/3D markers; create in the wizard's Signal category. Enter time as hh:mm:ss or seconds; hover over `passTime` for format help |
+| `Light.Ambient(...)`, `Light.Diffuse(...)`, `Light.Direction(...)`                                                                                                                          |    √    |       √       |      √      |         ✕         | View and edit parameters in Light Sources; create at distance `0` in the wizard's Effects category. RGB range is `[0, 1]`, Direction requires distance `0`, and each statement type must be unique across the root map and Includes |
+| `Fog.Interpolate(density, red, green, blue)` / `Fog.Interpolate(density)` / `Fog.Interpolate()` / `[legacy] Fog.Set(density, red, green, blue)`                                             |    √    |       √       |      √      |         ✕         | Supports 0/1/4-argument Interpolate and legacy Set; previews exponential fog and its transitions in 3D |
+| `[compatibility] Legacy.Fog(start, end, red, green, blue)`                                                                                                                                   |    √    |       √       |      √      |         ✕         | Edit through tables or 2D/3D markers; previews linear fog and its transitions in 3D, including mixed use with Fog |
+| `DrawDistance.Change(value)`                                                                                                                                                                |    √    |       √       |      √      |         ✕         | Edit distance and value; can control scene draw distance |
+| `CabIlluminance.Interpolate(value)` / `CabIlluminance.Interpolate()` / `[legacy] CabIlluminance.Set(value)`                                                                                   |    √    |       √       |      √      |         ✕         | Edit distance and illuminance; a blank value writes Interpolate(). Tables and 3D boards show the previous effective value, or remain blank if none exists |
+| `Irregularity.Change(x, y, r, lx, ly, lr)`                                                                                                                                                  |    √    |       √       |      √      |         ✕         | View data in tables and markers; edit distance and all six parameters |
+| `Adhesion.Change(a)` / `Adhesion.Change(a, b, c)`                                                                                                                                           |    √    |       √       |      √      |         ✕         | View data in tables and markers; supports 1/3-argument forms |
+| `Sound.Load(filePath)`                                                                                                                                                                      |    √    |       △       |      ✕      |         -         | Replace the list path; edit, add, delete, or reorder sound rows in the table. Supports list version 2.00+ |
+| `Sound[soundKey].Play()`                                                                                                                                                                    |    √    |       √       |      √      |         ✕         | View sound events in tables and markers; edit distance and key |
+| `Sound3D.Load(filePath)`                                                                                                                                                                    |    √    |       △       |      ✕      |         -         | Replace the list path; edit, add, delete, or reorder 3D sound rows in the table. Supports list version 2.00+ |
+| `Sound3D[soundKey].Put(x, y)`                                                                                                                                                               |    √    |       √       |      √      |         △         | Edit distance, key, and X/Y; 3D boards mark sound-source positions, and gizmos adjust X/Y offsets and change distance in whole meters |
+| `RollingNoise.Change(index)`                                                                                                                                                                |    √    |       √       |      √      |         ✕         | View noise events in tables and markers; edit distance and index |
+| `FlangeNoise.Change(index)`                                                                                                                                                                 |    √    |       √       |      √      |         ✕         | View noise events in tables and markers; edit distance and index |
+| `JointNoise.Play(index)`                                                                                                                                                                    |    √    |       √       |      √      |         ✕         | View noise events in tables and markers; edit distance and index |
+| `Train.Add(trainKey, filePath, trackKey, direction)` / `Train[trainKey].Load(filePath, trackKey, direction)`                                                                                |    △    |       ✕       |      ✕      |         ✕         | Displays other-train definitions with partial reading of external definition files |
+| `Train[trainKey].Enable(time)` / `Train[trainKey].Enable(second)`                                                                                                                           |    √    |       ✕       |      ✕      |         ✕         | Displays the enable time above the other-train stop-position table |
+| `Train[trainKey].Stop(decelerate, stopTime, accelerate, speed)`                                                                                                                             |    √    |       ✕       |      ✕      |         ✕         | Displays read-only other-train stop-position tables, paths, and map markers |
 
 ## Installation and Startup
 
-This repository does not currently provide a standalone installer or prebuilt release package. Follow the [developer guide](docs/dev.md) to build the application, then run the generated executable.
+Follow the [developer guide](docs/dev.md) to build the application, then run the generated executable.
 
-After building, run `build_release\komapedit.exe`. The executable stays at the
-top level, while `maploader.dll`, `model_loader.dll`, and copied Assimp/runtime
-dependencies are loaded from `build_release\bin`.
+After a Release build, run `build_release\komapedit.exe`. The application loads `maploader.dll`, `model_loader.dll`, and their dependencies from the adjacent `bin` directory. Debug builds use the corresponding `build` directory.
 
-On startup, the application creates the `settings` directory when necessary and
-creates or reads the following files there:
+On startup, the application creates the `settings` directory as needed and creates or reads:
 
-- `settings/imgui.ini`: stores UI window positions and related ImGui layout data.
-- `settings/settings.ini`: stores UI language, font/component/station-marker sizes, 2D line widths, theme color, edit-mode warning state, and 3D canvas options such as automatic scene-preview loading on map open, fog, draw distance, gizmo size, camera speed, and performance warnings.
-- `settings/history.ini`: stores recent maps, background-image alignment parameters, and per-map Custom Message display preferences.
+- `settings/imgui.ini`: UI window positions and layout.
+- `settings/settings.ini`: UI language, font/component/station-marker sizes, 2D line widths, theme color, edit-mode warning state, and 3D settings such as automatic scene loading when opening a map, fog, draw distance, gizmo size, camera speed, and performance warnings.
+- `settings/history.ini`: Recent maps, background-image alignment parameters, and per-map Custom Message display preferences.
 
-The settings readers accept only the exact sections, keys, and value forms
-written by the current application. Obsolete aliases, values in the wrong
-section, and loose value forms are ignored and use defaults. Loading an existing
-partial or obsolete file does not rewrite it; an explicit settings save writes a
-complete current-format file.
+Use the interface to change settings. The application reads valid entries in the current settings format and uses defaults for other entries; saving writes a complete settings file.
 
-The bundled executable requires maploader API v13 and loads maps only through
-`kv_load_map_ex()`. Earlier DLLs are rejected by the exact API-version check.
-Build and distribution-cleanup scripts do not migrate or delete obsolete
-root-level INIs or DLLs: if either is present, they stop and require a clean
-`bin`/`settings` layout.
+Use the executable and DLLs from the same build. If a build script reports old INI or DLL files in the output root, follow its instructions to arrange them under `bin`/`settings`, then build again.
 
 ## Usage
 
-This section follows the interface from top to bottom, then covers 2D, 3D, and finally the editing workflow. You do not need to enable `Enable Edit` just to view a map. Before changing files, read section 10 and back up the map.
+This section covers the interface, previews, and editing. You can use the views directly to inspect a map; before changing files, read section 10 and back up the map.
 
-### 1. Main Window Components
+### 1. Main Window
 
 The main window contains these areas:
 
@@ -150,31 +132,31 @@ The main window contains these areas:
 - **Console window**: Usually docked at the lower right. It shows detailed messages from map loading, model loading, editing, and saving.
 - **Bottom status bar**: Shows the current operation and the number of errors and warnings.
 
-If you close a window, reopen it from `Map Info List`, `2D View`, `3D View`, or `Auxiliary Info`. Window visibility and docking layout are saved automatically. Failed settings or layout saves remain pending and retry after one second, including while the window is idle or occluded.
+If you close a window, reopen it from `Map Info List`, `2D View`, `3D View`, or `Auxiliary Info`. Window visibility and docking layout are saved automatically.
 
-### 2. Top Menu Functions
+### 2. Top Menu
 
 #### File
 
 - `New...`: Opens the New File Wizard. It can create a map, Scenario, or resource-list file. See section 10 for details.
 - `Open...`: Selects a `.txt` or `.csv` map or scenario file. The toolbar `Open` button does the same thing.
-- `Recent Maps`: Opens a recently used map. `Clear List` removes only the history entries; it does not delete map files.
+- `Recent Maps`: Opens a recently used map or clears the history.
 - `Reload`: Reads the current map again and reloads the current Structure Model Preview. The shortcut is `F5`. If there are unsaved changes, the program asks for confirmation first.
-- `Export CSV...`: Selects a directory and exports geometry data for the own track and every other track. Conflicting output filenames, including names that differ only in case, reject the export before any file is written; the console identifies the conflicting tracks. File-write failures are also reported. See the appendix for the CSV fields.
+- `Export CSV...`: Selects a directory and exports geometry data for the own track and every other track. Filename conflicts stop the export; check the Console for conflicts or write errors. See the appendix for the CSV fields.
 - `Exit`: Closes the program. If there are unsaved changes, you can save them, discard them, or cancel the exit.
 
-When you open a `BveTs Scenario 2.00` scenario file, the Scenario document remains available independently of whether its Route can be loaded:
+Opening a `BveTs Scenario 2.00` file lets you view its Scenario data and load a map from it:
 
-- `Map Info List -> Other -> Scenario File` shows the scenario fields, the original Route/Vehicle paths, and their weights. With Edit mode enabled, the existing rows are editable; right-click Route or Vehicle paths to select a file, open its directory in Explorer, add a candidate below the current row, delete the current candidate, or move it up/down. Added rows start with an empty path and implicit weight `1`; a Route/Vehicle field must retain at least one candidate, and the first/last row disables the corresponding move action. Image paths retain the file-selection and Explorer actions only.
+- `Map Info List -> Other -> Scenario File` shows Scenario fields, Route/Vehicle paths, and weights. Enable editing to modify existing fields. Right-click a path to select a file or open its directory; Route/Vehicle candidates can also be added, deleted, or moved up and down. New candidates start with an empty path and weight `1`. Each existing Route/Vehicle field must retain at least one candidate.
 - If there is one valid Route, its map loads directly. If there are several candidates, you choose one.
-- If Route is missing, its target does not exist, or you cancel the choice, you can still view the scenario file, but no map is loaded. The same degradation applies when the Route target exists but is not a valid BVE map. A missing Vehicle entry or a Vehicle path whose target does not exist never blocks loading the map of a valid Route; Vehicle data is preview-only.
-- Scenario changes are saved directly with the toolbar `Save`/`Ctrl+Shift+S`; they are not part of the map Apply ledger. If map edits and Scenario edits are both pending, map changes are committed first. A changed Scenario Route path is warned in the console and status bar and can be saved on a subsequent click after map changes are clear. Weights are validated but are not used to choose a Route automatically.
-- `Recent Maps`, background alignment history, `Reload`, and geometry-only reload use the Scenario path as the document entry. Reload reparses the Scenario and shows the candidate selector again when needed, then refreshes the model preview; geometry-only reload keeps existing scene models/camera where possible. Opening a map file directly keeps the existing map-entry behavior.
+- If Route is missing or invalid, or you cancel the choice, the Scenario preview stays available. Map loading depends on the selected Route; Vehicle data is used for preview, and candidate weights are validated.
+- Toolbar `Save` or `Ctrl+Shift+S` writes Scenario changes directly to its file. When both the map and Scenario have changes, the map is saved first. If the Route path has also changed, the program prompts you to save the Scenario again; reloading then switches the map.
+- Recent files, background alignment history, and reloads use the Scenario file as the entry point. Reload rereads the Scenario, selects a Route when needed, and refreshes models. `Reload Track Geometry` keeps scene models and the camera where possible.
 
 #### Options
 
 - `UI Settings...`: Changes text size, UI component size, and the interface theme color.
-- `2D Canvas Settings -> Canvas Element Sizes`: Changes marker sizes, own-track and other-track line widths, chart marker lines, and grid lines.
+- `2D Canvas Settings -> Canvas Element Sizes`: Changes marker sizes and line widths for the own track, other tracks, chart guides, and grid.
 - `2D Canvas Settings -> Plot Range...`: Limits the mileage range currently shown.
 - `2D Canvas Settings -> Control Points...`: Changes the range and interval used to sample track geometry.
 - `3D Canvas Settings`: Changes scene draw distance, edit component size, camera speed, fog, map-driven draw distance, automatic loading, and performance warnings.
@@ -197,7 +179,7 @@ Opens tables grouped by stations, structures, track geometry, signals, sounds, e
 #### Auxiliary Info
 
 - Controls groups of station, track-geometry, signal, sound, and effect markers in 2D and 3D.
-- Under Track Geometry, `Gauge Setting Points`, `Cant Center Setting Points`, and `Transition Function Setting Points` independently show white rectangular `CG`, `CC`, and `CF` markers in the plan and matching white two-line boards in the 3D scene. These three options are off by default and are independent of `Curve Radius`.
+- Under Track Geometry, `Gauge Setting Points`, `Cant Center Setting Points`, and `Transition Function Setting Points` control white rectangular `CG`, `CC`, and `CF` markers in the plan and matching white two-line boards in 3D. These three switches are independent and off by default.
 - `Section Markers` is off by default. When enabled, green `S` markers and their signal-index parameters appear in 2D and 3D.
 - `Own Track Markers` and `Show Current Position on Plan` control helper displays shared by the 3D scene and 2D plan.
 - `Other -> Custom Messages`, `File Structure Diagram`, `Text Preview`, and `Console` open the corresponding tool windows.
@@ -209,21 +191,21 @@ Signal markers are also controlled by the `Show` checkbox in each `Ground Signal
 - `Language`: Switches between Simplified Chinese, English, and Japanese.
 - `Help`: Opens the online documentation, issue-reporting page, or About window.
 
-### 3. Toolbar Functions
+### 3. Toolbar
 
 - **Open**: Selects and opens a map or scenario file.
 - **Reload**: Reads the map again and reloads the current single-model preview. It is the same as pressing `F5`.
 - **Reload Track Geometry**: Reads the map geometry again while keeping already loaded 3D scene models where possible. Use it after changing only route code.
 - **Enable Edit**: Turns editing on or off. A risk warning appears the first time you enable it.
-- **Add Map Element**: Opens the New Map Element Wizard. It is available only after editing is enabled and the edit metadata is ready.
-- **Save**: Writes changes already applied to the in-memory preview back to the source files. The shortcut is `Ctrl+Shift+S`. Save is blocked while a resource-list table still has an unapplied draft.
+- **Add Map Element**: Opens the New Map Element Wizard once editing is enabled and edit data has loaded.
+- **Save**: Writes applied map changes and Scenario changes to their source files. The shortcut is `Ctrl+Shift+S`. Apply all resource-list drafts before saving.
 - **Revert**: Discards all unsaved changes and restores the version on disk. The program asks for confirmation first.
 - **Station Jump**: Selects a station and moves the 2D View to it. If the 3D scene is running, its camera also moves.
 - **Jump to distance(m)**: Enter a number and click `Jump`, or press `Enter` in the input box. If the 3D scene is running, its camera also moves.
 
-The currently implemented global shortcuts are `F5` for Reload and `Ctrl+Shift+S` for Save. Mouse and keyboard controls for the 2D and 3D canvases are listed in sections 5 and 9.
+The global shortcuts are `F5` for Reload and `Ctrl+Shift+S` for Save. See sections 5 and 9 for 2D and 3D canvas controls.
 
-### 4. Bottom Status Bar and Console Functions
+### 4. Status Bar and Console
 
 #### Bottom Status Bar
 
@@ -234,13 +216,13 @@ The currently implemented global shortcuts are `F5` for Reload and `Ctrl+Shift+S
 
 The Console shows complete loading, parsing, model, and editing logs. Check it first when a map does not open, a model is missing, or saving fails.
 
-Apply, Save, and Delete report their total execution time in the status bar. English `edit timing:` console records show the operation, pending change count, 3D state, stage durations in milliseconds, and execution counts. The total includes required synchronous preview/Inspector/3D updates; time spent choosing a source location and subsequent asynchronous model loading is excluded. Stages are inclusive and must not be added together. Full reparse and source-write safety checks remain enabled, so editing a large route can still take more than a second.
+Apply, Save, and Delete show their total execution time in the status bar. Per-stage timings appear in the Console's `edit timing:` records.
 
 - **Clear**: Removes all log messages and resets the error and warning counts.
 - **Copy**: Copies the full log to the clipboard for use in a bug report.
-- New messages scroll into view automatically only when the log is already at the bottom. If you scroll up, the Console does not force you back to the bottom.
+- The log follows new messages while at the bottom; scroll up to stay on earlier messages.
 
-### 5. 2D Canvas Functions
+### 5. 2D Canvas
 
 At the top of the 2D View, choose `Move` or `Measure` mode and set the grid to `Fixed`, `Movable`, or `None`. Use the vertical splitter to change the height of the plan and the charts below it. Use the horizontal splitter to change the widths of the Profile and Curve Radius charts.
 
@@ -265,26 +247,26 @@ For touch input, drag with one finger to pan. Use two fingers to pan, zoom, and 
 
 #### Markers, Navigation, and Editing
 
-- Use `Auxiliary Info` to choose which markers are visible. This avoids showing too much information at once on a large map.
-- When `Curve Radius` is enabled, every `Curve.Interpolate` endpoint appears in the plan as the speed-limit line marker recolored to curve-radius green, with its evaluated signed radius immediately to the right. An omitted radius displays its inherited value. Right-click an endpoint to open `Properties/Edit` or `Delete`; the actions remain disabled until Edit mode is enabled.
+- Use `Auxiliary Info` to choose which markers to show.
+- With `Curve Radius` enabled, `Curve.Interpolate` endpoints appear as green markers with their evaluated signed radius beside them. An omitted radius displays its inherited value.
 - Right-click a marker to locate its table row. Items with a 3D object can also be located in the 3D scene.
-- Enabled `CG`/`CC`/`CF` parameter markers remain visible outside Edit mode; their context actions are disabled until editing is enabled. Editable own-track curve and gradient change points and other-track change points otherwise follow the existing edit-mode visibility rules. Right-click an enabled editable marker to open `Properties/Edit` or delete it.
-- In the Profile and Curve Radius charts, only correctly paired curve or gradient change points have an edit menu.
+- Enable editing to right-click supported markers for `Properties/Edit` or `Delete`. Own-track curve/gradient and other-track edit control points appear in this mode; `Curve.Interpolate` and `CG`/`CC`/`CF` markers follow their respective visibility switches.
+- Paired curve or gradient change points have an edit menu in the Profile and Curve Radius charts.
 
 #### Background Image
 
 After importing an image from `2D View -> Background Image`, you can show it, adjust it manually, or choose `Align Background to Stations`. For station alignment, select two stations and double-click their matching positions on the image. The program calculates the image position, scale, and rotation.
 
-### 6. Table Functions
+### 6. Map Information Tables
 
 #### Common Actions
 
 - Open the required table from `Map Info List`. Right-click a mileage cell that has a locate menu to move to that position in the Plan or a running 3D scene.
 - Right-click a source-file or resource-file path to open its directory. Hover over a path to see the original argument and resolved absolute path when available.
 - The Structure List, Signal Aspects List, Sound File List, and 3D Sound File List tables support partial or exact searches, previous and next results, and searches for unused entries.
-- Unused Sound File searches include station arrival/departure sound references and current station-list drafts, including inserted or deleted rows. These references belong to the ordinary Sound List, not the 3D Sound List.
+- Unused Sound File searches include station arrival/departure sounds and use the current station-list draft to determine references.
 - In a map-placement row, right-click a resource key to jump to the matching Structure List, Signal Aspects List, or sound definition.
-- Without editing, tables provide only viewing, searching, navigation, and preview actions. With editing enabled, right-clicking an editable map element also shows `Properties/Edit` and `Delete`. Some tables also open `Properties/Edit` on double-click.
+- With editing enabled, right-click an editable element's cell for `Properties/Edit` or `Delete`. Some tables also open `Properties/Edit` on double-click.
 
 #### Stations and Structures
 
@@ -292,17 +274,16 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 - **Map Structure List**: Shows `Structure.Put` and `Structure.Put0`. You can locate an item in the Plan, the 3D scene, or its model definition.
 - **Map Structure List (PutBetween)**: Shows `Structure.PutBetween` structures deformed between two tracks.
 - **Structure List**: Shows each structureKey and model path. Right-click a key to preview the model or fill that key into an open New Map Element Wizard of a matching type.
-- **Repeater List**: Combines related `Repeater.Begin`/`Begin0`/`End` statements into intervals. You can jump to a start, end, or change point. If an interval has several Begin statements, the delete menu offers `Delete All`, `Delete Change Point`, `Trim to Change Point`, and `Start from Change Point`.
-  Each Begin starts its own placement grid at `begin + k * interval`, using the `k % N` entry of its original structure list. End and the next same-name Begin exclude their boundary from the preceding segment. Events at the same distance follow source parse order, including Includes: Begin then End leaves no active segment, while End then Begin starts a new one. Missing model references leave gaps in the cycle; they do not shift later models. A zero-length segment remains editable and draws no instances.
+- **Repeater List**: Groups `Repeater.Begin`/`Begin0`/`End` statements with the same key into intervals, with jumps to start, end, and change points. Multi-segment intervals support `Delete All`, `Delete Change Point`, `Trim to Change Point`, and `Start from Change Point`. Each Begin cycles through models at regular intervals from its own start, ending before End or the next Begin with the same key. Events at the same mileage follow source order. Missing models leave gaps in the cycle; zero-length segments show only editing information.
 - **Other Train List**: Shows other-train definitions, stop positions, and the read-only `Train.Enable` time. You can control each path separately and locate stop positions in the Plan.
 
 #### Track Geometry, Signals, and Sections
 
-- **Other Tracks**: Controls the visibility, mileage range, and color of each other track. With editing enabled, right-click `Key` to rename matching `Track[...]` statements. References to that track in Structure, Signal, and Repeater statements are not renamed automatically.
+- **Other Tracks**: Controls each track's visibility, range, and color. With editing enabled, right-click `Key` to rename matching `Track[...]` statements; update track references in Structure, Signal, and Repeater statements separately.
 - **Track Irregularity, Adhesion Change Point, and Speed Limit Point lists**: Show the corresponding positions and can locate them in 2D or 3D. Speed-limit Begin and End may exist independently; End edits only its mileage.
 - **Signal Aspects List**: Shows signal aspect definitions and their structure keys. You can jump from a structure key to its model.
 - **Ground Signal List**: Shows `Signal.Put` positions and parameters. Each row's `Show` checkbox controls its Plan marker.
-- **Section List**: Shows `Section.Begin`/`BeginNew` separately from `Section.SetSpeedLimit`/`Signal.SpeedLimit`, including variable-length parameters and explicit `null` values. The table displays up to 508 parameters per row; longer rows show a notice, and Properties/Edit retains all parameters.
+- **Section List**: Shows `Section.Begin`/`BeginNew` and `Section.SetSpeedLimit`/`Signal.SpeedLimit`, with variable-length parameters and explicit `null` values. Each row displays up to 508 parameters; view the full set in `Properties/Edit`.
 - **Beacon List**: Shows and locates `Beacon.Put` statements.
 - **Variable List**: Groups all assignments by case-insensitive variable name. Hover to see the original expression. This table is read-only.
 
@@ -311,44 +292,44 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 - **Sound File List and 3D Sound File List**: Show sound keys, file paths, and buffer counts. You can open a file's directory or fill its key into a matching New Map Element Wizard.
 - **Sound Playback Point List, Fixed Sound Source List, Rolling Noise Change Point List, Flange Noise Change Point List, and Joint Noise Play Point List**: Show and locate playback or change positions.
 - **Background Change Point List, Cab Illuminance Change Point List, Fog Change Point List, Legacy Fog Change Point List, and Scenery Draw Distance Change Point List**: Show and locate the corresponding effects.
-- **Scenario File**: Available only when a Scenario document is open. It shows every official scenario field and existing candidates. The fields are read-only until Edit mode is enabled; Route/Vehicle candidate menus support add, delete, and reordering while retaining at least one candidate, and Scenario Save writes the source file directly.
+- **Scenario File**: Shows the open Scenario's fields and candidates. See section 2 for editing and saving.
 
 #### Inline Editing in Resource Lists
 
 Station definitions, Structure List, Signal Aspects List, Sound File List, and 3D Sound File List use the same inline editing controls:
 
 - Double-click an editable cell to type, then press `Enter` to finish that cell. Right-click to select a file, insert a row above or below, move the whole row up or down, clear the cell, or delete the whole row.
-- A list that only carries its file header shows an `Add Row` button; inserting into it appends the first row after the header, so no comma placeholder line is needed.
+- Use `Add Row` to add the first entry to an empty list.
 - `Select File` stores a relative path where possible and an absolute path otherwise.
-- A Signal primary row and its glare row form one block for row insertion, movement, and deletion. A new primary row starts with six fields and no glare; use `Add Glare` when needed.
-- `Apply` in a table submits only that table's drafts to the in-memory preview. The toolbar `Save` is available only after every resource-list draft has been applied.
+- A signal aspect's primary and glare rows move or are deleted as a block. A new primary row starts with six fields; use `Add Glare` to add a glare row.
+- Click the table's `Apply` to update the in-memory preview. After applying all table drafts, click toolbar `Save` to write the files.
 
-The Signal Aspects List preserves each physical CSV row's actual width, including trailing empty fields. Shorter rows show a diagonal line in cells beyond their actual width; these cells cannot be edited. A real empty field remains editable. The table displays up to 509 structure-key columns and warns when later columns are hidden; hidden fields remain part of the source and draft.
+The Signal Aspects List uses each CSV row's actual field count, including trailing empty fields. A diagonal line marks a field absent from that row; existing empty fields are editable. The table displays up to 509 structure-key columns, with a notice for additional fields retained in the source and draft.
 
-Historical files with multiple consecutive glare rows for one aspect retain those separate source rows during value edits and block moves; explicit glare deletion removes all of them. Their glare fields are shown as one combined row; changing that combined glare width is rejected on Apply because its physical-row destination is ambiguous. Ordinary aspects with at most one glare row support the column operations below without this restriction.
+Multiple consecutive glare rows for one aspect appear as a combined row. You can edit values or move the block; `Delete Glare` removes all its glare rows. Keep their total glare field count unchanged, as changing it causes an error on `Apply`. An aspect usually has one glare row and supports the column operations below directly.
 
-- Right-click an actual CSV cell to append an empty cell, remove all trailing empty cells, or remove the last cell in that physical row. The primary and glare rows can have different widths.
-- Beside `Apply`, `Align All Columns` pads every primary and existing glare row to the actual maximum width. `Add Column on Right` and `Delete Rightmost Column` add or remove one cell independently in each row; they do not align rows. `Delete All Trailing Empty Cells` trims each row independently.
-- Column operations always retain the first CSV field and at least one structure-key field. All structure fields may be empty, including in newly inserted rows; a glare row is removed only by its explicit row action. Its first CSV field remains empty and cannot be edited.
-- Removing a nonempty last cell requires confirmation; a global removal asks once for the entire operation. The active cell's latest input is included. Cancelling retains the draft and its row widths.
-- The rightmost cell means the actual last field, even beyond the display limit. Alignment also uses the actual maximum width. All column changes follow the same draft, `Apply`, `Save`, and `Revert` workflow as other list edits.
+- Right-click a CSV cell to append a cell at the right, trim trailing empty cells, or remove the last cell in that row. Primary and glare rows can have different field counts.
+- `Align All Columns` pads each row to the maximum field count. `Add Column on Right` and `Delete Rightmost Column` add or remove one cell per row. `Delete All Trailing Empty Cells` trims each row's trailing empty fields.
+- Each row retains its first CSV field and at least one structure-key field, which may be empty. A glare row's first field is fixed as empty; use `Delete Glare` to remove the row.
+- Deleting a nonempty last cell requires confirmation; a batch deletion asks once.
+- Column operations include fields beyond the display limit. Submit changes with `Apply`, then `Save`.
 
-A map can load only one resource list of each type. If a list is not specified, the table shows `New or Import File`. To replace an existing list, right-click `Source path` at the top of its table and choose `Change File...`. If that list has unapplied or unsaved edits to the old file, the program asks for confirmation and discards only that list's old drafts.
+A map can load one resource list of each type. To add a missing list, click `New or Import File` in the table. To replace it, right-click `Source path` at the top and choose `Change File...`. If that list has unapplied or unsaved changes, the program asks for confirmation before discarding that list's changes.
 
-When importing or replacing a resource list, the program checks its header and version. Station List uses the existing 0.04+ compatibility rule, Structure List requires 1.00+, and Signal Aspects List and both Sound Lists require 2.00+. Resource lists support `#` comments. For compatibility with existing routes, unquoted `//` also starts a comment; `//` inside a double-quoted CSV field remains normal text.
+Importing or replacing a resource list checks its header and version: Station List supports 0.04+, Structure List 1.00+, and Signal Aspects List and the Sound Lists used for ordinary and 3D sounds 2.00+. Comments can use `#` or `//` outside CSV double quotes; quoted `//` is treated as text.
 
-The map is rejected if the entry map and its Includes load the same unkeyed resource-list type more than once, or contain duplicate case-insensitive `Train[].Enable` statements. The reason is shown in the Console.
+List uniqueness is checked across the entry map and its Includes. `Train[].Enable` keys must also be unique, ignoring case. Duplicate definitions cause loading to fail; see the Console for details.
 
-### 7. File Structure Diagram Functions
+### 7. File Structure Diagram
 
-Each Map file starts with its own `distance` at `0`. An Include does not change the parent file's current distance when it returns; ordinary `$variables` are shared. To position a submap relative to the parent, assign `$dis=distance;` before the Include and use `$dis+offset;` inside it. Structure coordinate/rotation arguments can independently use variables and expressions.
+Each Map file starts with its own `distance` at `0`; returning from an Include restores the parent's mileage. Ordinary `$variables` are shared. To position a submap relative to the parent, assign `$dis=distance;` before the Include and use `$dis+offset;` inside it. Structure coordinates and rotation parameters also support variables and expressions.
 
 Open this window from `Auxiliary Info -> Other -> File Structure Diagram`. The entry map is on the left, and its included submaps are shown by level to the right. Hover over a node to see the Include argument and absolute path.
 
 #### Viewing Files
 
 - Right-click a valid node and choose `Preview Text` to view its source and line numbers in the read-only Text Preview.
-- `Open in File Explorer` opens the target file's directory. If the file is missing, it still tries to open the target directory. If that directory is also missing, an error is reported in the Console.
+- `Open in File Explorer` opens the target directory; a missing directory is reported in the Console.
 - Missing or invalid Include targets are red. Text preview, submap import, and new-submap actions are disabled for them.
 
 #### Editing Includes
@@ -358,11 +339,11 @@ The following actions require editing to be enabled:
 - **Change Included File...**: Selects a new `.txt` or `.csv` submap and rewrites the Include path in its parent file. A relative path is preferred; an absolute path is used if needed.
 - **Unlink Include**: Deletes the Include statement from its parent. The action is blocked if later statements still depend on data from that submap.
 - **Import Submap...**: Selects an existing BVE map and stages a new Include in the source file represented by the current node.
-- **New Submap...**: Creates a blank submap with the `BveTs Map 2.02:utf-8` header, UTF-8 without BOM, and CRLF line endings, then stages its Include. It does not overwrite an existing file.
+- **New Submap...**: Creates a blank submap at a new file path with the `BveTs Map 2.02:utf-8` header, UTF-8 without BOM, and CRLF line endings, then stages its Include.
 
-A new Include is placed after the last existing Include before the first local distance statement. If there is no suitable Include, it is placed before the first distance statement. If neither exists, it is appended to the file. These changes refresh the in-memory preview immediately, but only `Save` writes them to the parent map.
+A new Include goes after the last Include preceding the first local distance statement. With no preceding Include, it goes before the first distance statement; with neither, it is appended to the file. Changes update the preview immediately and are written to the parent map on `Save`.
 
-### 8. 3D Model Preview Functions
+### 8. 3D Model Preview
 
 Open `3D View -> Structure Model Preview`, then right-click a structureKey in the Structure List and choose `Preview Model`.
 
@@ -372,11 +353,11 @@ Open `3D View -> Structure Model Preview`, then right-click a structureKey in th
 - **Background Color**: Selects any RGB color or uses the white, black, gray, blue, or green shortcut colors.
 - Drag with the left mouse button to rotate the model. Scroll the mouse wheel to zoom.
 
-If a model or texture cannot be loaded, the window remains usable and the detailed warning or error appears in the Console.
+Check the Console for details of model or texture loading failures.
 
-### 9. 3D Scene Preview Functions
+### 9. 3D Scene Preview
 
-Open `3D View -> 3D Scene Preview`, then click `Start 3D Scene Preview`. If `Options -> 3D Canvas Settings -> Automatically load scene preview when opening a map` is enabled, opening or reloading a map starts the preview automatically. This option is off by default.
+Open `3D View -> 3D Scene Preview` and click `Start 3D Scene Preview`. To start it whenever a map opens or reloads, enable `Automatically load scene preview when opening a map` in `Options -> 3D Canvas Settings` (off by default).
 
 The top of the window has `Start 3D Scene Preview`, `Reload (Models)`, and `Close`:
 
@@ -398,7 +379,7 @@ Keyboard movement works in `Move`, `Select`, and `Mileage Select` modes. Draggin
 | Hold `Ctrl` | Move faster with the keys above |
 | `X` | Reset the camera to its default pose above the own-track center at the current mileage |
 
-Set the camera speed in `3D Canvas Settings`. Toolbar station and mileage jumps also move the scene camera. The camera can move up to 100 m behind the own-track start mileage; requests below that are clamped. If `Show Current Position on Plan` is enabled, the 2D Plan also shows the camera position.
+Set the camera speed in `3D Canvas Settings`. Use the toolbar to jump to a station or mileage. The camera can move up to 100 m behind the own-track start. Enable `Show Current Position on Plan` to show its position in the 2D Plan.
 
 #### Select Mode
 
@@ -408,44 +389,44 @@ Set the camera speed in `3D Canvas Settings`. Toolbar station and mileage jumps 
 
 #### Mileage Select Mode
 
-- The nearest whole-metre cross-section on the own-track plane and its mileage label appear near the pointer.
+- The nearest whole-meter cross-section on the own-track plane and its mileage label appear near the pointer.
 - With editing enabled, right-click this position and choose `Add Map Element at Current Mileage`. The wizard fills in `distance` automatically.
 
 #### Scene Overlay and Settings
 
-The canvas shows the camera offset, height, and mileage; current curve radius and cant; gradient; speed limit; section signal speed; and next-station information. Inside a `Curve.Interpolate` interval, the curve line shows both endpoint radii and cants, each nonzero endpoint's curve direction, and a triangular arrow between them; when both evaluated endpoint radii are zero, it shows the localized `Straight` label instead. The bottom also shows scene chunks, instances, loaded models, and frame rate.
+The canvas shows the camera position, current curve radius and cant, gradient, speed limit, section signal speed, and next-station information. A `Curve.Interpolate` interval shows both endpoints' radii, cants, and curve directions; when both radii are zero, it shows `Straight`. The bottom shows scene chunks, instances, loaded models, and frame rate.
 
-The displayed FPS is the average scene-canvas render-call rate over the most recent completed 0.2-second active window, not swap-chain Present completion or the monitor refresh rate. A gap longer than 0.1 seconds discards the unfinished window while preserving the last published value, so resuming movement does not publish a rate from only a few short submission intervals.
+FPS is the scene canvas's average render-call rate over the latest `0.2`-second active window; the last value is kept while idle.
 
 `3D Canvas Settings` can immediately toggle fog, map-driven draw distance, and performance warnings, and can change the normal draw distance. Related marker visibility stays synchronized with `Auxiliary Info`.
 
-The fog toggle controls both exponential `Fog.Interpolate`/`Fog.Set` and linear `Legacy.Fog`. Legacy start/end values are camera-depth distances in meters, and its RGB inputs use 0–255. A Legacy statement at mileage zero takes effect immediately; later statements transition from the previous fog state over the following 25 meters when both states are linear. Different fog modes hold the earlier state until the next node, then switch immediately. This also applies when the two statement families are mixed. Maps without fog statements retain the existing clear preview.
+Fog supports exponential `Fog.Interpolate`/`Fog.Set` and linear `Legacy.Fog`. Legacy start/end values are camera-depth distances in meters, and RGB uses the 0–255 scale. Legacy settings at mileage zero take effect immediately; later settings transition over 25 meters when both states are linear. Fog interpolates between nodes of the same type; different types switch at the later node.
 
-In Edit mode, the Legacy Fog list and its plan/scene markers offer Properties/Edit and Delete. The Effects category of New Map Element includes `Legacy.Fog(start, end, red, green, blue)`, initially at distance `0` with start `0`, end `600`, and RGB `128/128/128`; opening from a canvas prefills the chosen mileage. All five parameters require finite numbers. Depths use meters and RGB uses the 0–255 scale, but compatibility editing preserves negative, equal, or reversed depth ranges and finite RGB values outside that scale. Apply changes the preview; Save writes the owning source file, and Revert discards pending changes.
+With editing enabled, edit or delete `Legacy.Fog` through its list or 2D/3D markers, or add it from the New Map Element Wizard's Effects category.
 
 #### Scene Boards
 
-Marker visibility follows `Auxiliary Info`. When `Curve Radius` is enabled, every `Curve.Interpolate` point shows a board styled like the other curve-radius boards, with the evaluated radius, cant, and curve direction; an evaluated zero radius shows `Intpl. 0` instead of a direction arrow. Interpolate boards support picking, the shared blue highlight, and the same `Properties/Edit` and `Delete` context actions as the 2D endpoints. Creation is available through the independent `Curve.Interpolate` template.
+Use `Auxiliary Info` to control board visibility. With `Curve Radius` enabled, `Curve.Interpolate` points show radius, cant, and curve direction; a zero radius shows `Intpl. 0`. Boards support picking and highlighting, plus right-click editing and deletion when editing is enabled.
 
-### 10. Editing, the New Map Element/New File Wizards, Applying Changes, and Saving
+### 10. Editing, Creating, and Saving
 
 #### Before Editing
 
-Editing is still experimental. The first time you enable `Enable Edit` on the toolbar, a risk warning appears. Back up the map first, or keep a recoverable version with a version-control tool such as Git. Select `Don't show again` and confirm to hide future warnings.
+The first time you turn on `Enable Edit` on the toolbar, a prompt appears. You can select `Don't show again` and confirm.
 
-If you disable editing, open another document, reload, or exit while changes are unsaved, the program asks for confirmation. `Apply` and `Save` are different operations.
+When you disable editing, open another document, reload, or exit, the program prompts you to handle any unsaved changes.
 
 #### Drafts, Apply, Save, and Revert
 
-Editing has three stages:
+Map and resource-list editing follows these steps:
 
-1. **Window draft**: You have entered values in `Properties/Edit`, a resource-list table, or a wizard. The map may show only some live draft effects, and no source file has changed.
-2. **Apply to preview**: Click `Apply` in the window. The program validates and reparses its in-memory working copy, then refreshes the 2D View, tables, and 3D preview. Files on disk still have not changed.
-3. **Save to disk**: Click toolbar `Save` or press `Ctrl+Shift+S`. Only now are all applied changes written to their map, Include, or resource-list source files.
+1. **Edit the draft**: Enter values in `Properties/Edit`, a resource-list table, or a wizard. Some objects provide a live preview.
+2. **Apply to preview**: Click `Apply` in the window to validate and reparse the in-memory working copy, then refresh the 2D View, tables, and 3D preview.
+3. **Save to disk**: Click toolbar `Save` or press `Ctrl+Shift+S` to write all applied changes to the corresponding map, Include, or resource-list files.
 
-Toolbar `Revert` discards every unsaved change and restores the disk version. `Reload` also reads the files from disk again, but first asks before discarding unsaved changes. If a resource list still has an unapplied draft, click `Apply` in that table before saving.
+Toolbar `Revert` discards all unsaved changes. `Reload` reads the files from disk again and asks for confirmation before discarding changes. Apply resource-list and Custom Messages drafts in their tables before saving.
 
-Before saving, the program reparses all affected files and checks the intended result, file encoding, and outside changes to files on disk. If new text cannot be represented in the original encoding, or another program has changed a file, Save is blocked instead of silently changing the encoding or overwriting the outside change.
+Before saving, the program reparses and verifies the edited result, preserving the original encoding, BOM, and line endings. If the new text cannot be represented in the original encoding, or another program has changed a file, saving is blocked with an explanation.
 
 #### Editing or Deleting Existing Map Elements
 
@@ -454,53 +435,49 @@ Before saving, the program reparses all affected files and checks the intended r
 3. Click `Apply` to refresh the in-memory preview.
 4. Check the 2D View, tables, and 3D result. If they are correct, use toolbar `Save`.
 
-Editable items include station, structure, signal, and beacon placements; Repeaters; Sections; speed limits; curves and gradients; other-track changes; track irregularity; map sounds and noises; backgrounds; adhesion; cab illuminance; fog; and draw distance. Deletion also enters the in-memory preview first and removes the statement from the source file only after Save.
+Editable items include stations, structures, signals, beacons, Repeaters, Sections, speed limits, curves and gradients, other tracks, track irregularity, sounds, backgrounds, adhesion, cab illuminance, fog, lighting parameters, draw distance, and PreTrain pass points. Choose `Delete` from the context menu to apply a deletion to the preview, then save it to the source file.
 
-The `Properties/Edit` window for `Structure.Put`/`Put0` and `Repeater.Begin`/`Begin0` provides `Add Coordinate Offsets` and `Remove Coordinate Offsets`. Removing nonzero offsets discards all six offset values, so the program asks for confirmation. A short-form `Signal.Put` also asks for confirmation before it is converted to the full form needed to edit Z, rotation, tilt, or span.
+Use `Add Coordinate Offsets` or `Remove Coordinate Offsets` to switch between `Structure.Put`/`Put0` or `Repeater.Begin`/`Begin0`. Removing nonzero offsets requires confirmation. Editing Z, rotation, tilt, or span in a short-form `Signal.Put` requires confirmation to convert it to the full form.
 
 #### Live Adjustment in the 3D Scene
 
-After opening `Properties/Edit`, supported objects show an edit gizmo. Dragging changes only the current window draft. You must still click `Apply` and then `Save`.
+Open `Properties/Edit` and drag a supported object's gizmo to adjust its draft, then apply and save as described above.
 
 - `Structure.Put`, full-form `Signal.Put`, and `Repeater.Begin` use X/Y/Z axes to change coordinates.
-- For `Sound3D[soundKey].Put(x, y)`, X/Y change the relative position in 0.001 m steps, and Z changes `distance` in whole metres.
-- `Structure.Put0` and `Repeater.Begin0` show only a Z axis and change mileage in whole metres. Adding coordinate offsets in the Inspector switches to the full coordinate gizmo.
-- A Repeater with an explicit End also shows a Z axis at its end position and changes EndDistance in whole metres.
-- `Structure.PutBetween` uses a Z axis to change whole-metre mileage and recalculates the deformed model live.
+- For `Sound3D[soundKey].Put(x, y)`, X/Y adjust the relative position in 0.001 m steps, and Z adjusts mileage in whole meters.
+- `Structure.Put0` and `Repeater.Begin0` use Z to adjust mileage in whole meters. Adding coordinate offsets enables the full coordinate gizmo.
+- A Repeater with an explicit End provides a Z axis at its end position to adjust the end mileage in whole meters.
+- `Structure.PutBetween` uses a Z axis to change whole-meter mileage and recalculates the deformed model live.
 
 #### New Map Element Wizard
 
-Open the wizard from toolbar `Add Map Element`, or right-click the current mileage in the 3D scene's `Mileage Select` mode. First choose the target source file, then choose a template and enter its parameters. Every loaded non-resource-list map source file, including a blank or distance-free one, is eligible. Distance-based elements can be inserted and subsequently moved even when the source has no distance anchor, one anchor, or statements before its first anchor. Placement reuses an existing compatible block or creates a distance block while preserving other statements. Custom Messages use the header insertion rule below.
+Open the wizard from toolbar `Add Map Element`, or right-click the current mileage in 3D `Mileage Select` mode. Choose a target source file and template, then enter the parameters. Any loaded map source file, including a blank or distance-free file, can be a target.
 
-An existing element in an unambiguous final source section can move beyond that section's last mileage: increasing sections extend to a larger mileage and decreasing sections to a smaller one, even if earlier sections turn. New elements first use an existing unambiguous block or bracket and only then consider the final section's EOF extension. Flat sections, turning points and repeated equivalent target blocks still require a manual choice. Existing empty distance blocks and comments remain intact; the final current mileage may change.
+When creating or moving an element, the program reuses a suitable distance block or creates one, preserving other statements and comments. An unambiguous mileage sequence in the final source section can extend beyond its last mileage. If the position or expression is ambiguous, follow the prompt to choose a highlighted insertion point in Text Preview or enter an explicit mileage expression. The edited values are validated before Apply succeeds.
 
 The wizard provides the currently supported elements in these categories:
 
 - **Structures**: `Structure.Put`, `Put0`, `PutBetween`, and `Repeater.Begin`/`Begin0`/`End`.
 - **Station**: `Station.Put`.
-- **Track Geometry**: Curves, gradients, track irregularity, and adhesion changes.
-- **Other Tracks**: Current `Track.*` forms for position, X/Y interpolation, and cant.
-- **Signal**: `Signal.Put`, speed-limit Begin/End, Section, signal speed, and `Beacon.Put`.
+- **Track Geometry**: Curves, gradients, gauge, curve center and interpolation function, track irregularity, and adhesion changes.
+- **Other Tracks**: `Track.*` statements for position, X/Y interpolation, and cant.
+- **Signal**: Signals, speed limits, Sections, signal speed, beacons, and `PreTrain.Pass` points.
 - **Sound**: Map sounds, 3D sound sources, rolling noise, flange noise, and joint noise.
-- **Effects**: Background, cab illuminance, fog, and draw distance.
-- **Other**: Custom Messages, stored as comments below the selected map file's header without a mileage field.
+- **Effects**: Background, cab illuminance, fog, lighting parameters, and draw distance.
+- **Other**: Custom Messages, stored as comments below the map file header.
 
-`Apply` creates the element and refreshes the preview. `Apply and Edit` closes the wizard after a successful Apply and opens `Properties/Edit` for the primary new statement, or the Custom Messages tab for a message. A change-point wizard opened from a Repeater Inspector does not offer `Apply and Edit`.
+`Apply` creates the element and refreshes the preview. `Apply and Edit` also closes the wizard and opens `Properties/Edit` for the new element, or the Custom Messages tab. Use `Apply` in the Repeater change-point wizard.
 
-Important rules:
+Template tips:
 
-- A Repeater can add Begin, End, or both at once. When both are added, End mileage cannot be less than Begin mileage. A change point can be inserted inside an active same-name interval only under the supported rules; normal intervals cannot overlap.
-- `Insert Change Point` in Repeater `Properties/Edit` copies the current draft parameters and fills both mileage fields with the current Begin mileage so you can adjust them.
-- The Curve wizard supports `Curve.Begin(radius)`, `Curve.Change(radius)`, and `Curve.End()`. The Gradient wizard supports `Gradient.Begin(gradient)` and `Gradient.End()`. An optional transition start and its statement are created together in the correct source order. Legacy aliases and Gradient.Interpolate forms cannot be created.
-
-- The independent `Curve.Interpolate` template appears immediately after `Curve.*` in Track Geometry. Distance is required; radius and cant are included by default with value `0`. Uncheck cant for the radius-only form, or uncheck radius to disable cant too and create `Curve.Interpolate()`. New elements use the same 2D/3D markers, Properties/Edit, Delete, Apply/Revert, and global Save lifecycle.
-- Other-track templates generate only current `Track.*` forms. Optional trailing arguments must be enabled in order; for example, `radiusH` is required before `radiusV`. A new normalized trackKey creates another track. Numeric keys and quoted string keys remain distinct.
-- If the wizard or Inspector cannot choose a source insertion point automatically, Text Preview highlights backend-approved boundaries. A distance-expression ambiguity requests an explicit expression; an argument-variable or Include environment conflict instead offers alternative positions when they can preserve the original evaluated values. Every submitted choice still undergoes full semantic validation. An operation with no viable position is rejected without repeatedly reopening an unusable dialog. Editing a failed input remains possible, and cancelling leaves previously applied changes intact.
-- The App Console records an English warning only when manual handling is required, using readable reason codes such as `ambiguous_Source_Section` and `evaluation_Environment_Requires_Boundary` with source context. Automatically reused cached choices remain silent. Apply changes the preview; Save writes files, and Revert discards pending changes.
+- **Repeater**: Add Begin, End, or both. When added as a pair, the end mileage must be at least the start mileage. Same-name intervals must avoid overlap. To add a change within an interval, use `Properties/Edit -> Insert Change Point`; the wizard prefills the current parameters and start mileage.
+- **Curves and gradients**: The curve template provides `Curve.Begin`, `Curve.Change`, and `Curve.End`; the gradient template provides `Gradient.Begin` and `Gradient.End`. Both can create the corresponding transition starts.
+- **Curve interpolation points**: `Curve.Interpolate` requires distance; radius and cant both default to `0`. Uncheck cant for the one-argument form, or radius for the zero-argument form.
+- **Other tracks**: Enable optional trailing arguments in order; for example, include `radiusH` before `radiusV`. A new trackKey creates another track. Numeric keys and quoted string keys are treated separately.
 
 #### Custom Messages (Message from Creator)
 
-Choose `Other -> Custom Messages` in the New Map Element Wizard, select a loaded map source, and enter a single-line message. `Apply` stages it in memory; `Save` writes it to the selected Map file. The writer keeps one blank line after the header (reusing an existing blank line), appends to a consecutive message block there, and preserves the existing content:
+Choose `Other -> Custom Messages` in the New Map Element Wizard, select a map source file, and enter a single-line message. After applying and saving, the message is written after the blank line below the file header in this comment format, or appended to an existing message block:
 
 ```plaintext
 BveTs Map 2.02
@@ -508,23 +485,27 @@ BveTs Map 2.02
 //--kme--message-from-creator:"content"
 ```
 
-This is komapedit metadata inside an ordinary BVE `//` comment. Contents are literal: leading/trailing spaces, quotes and backslashes are preserved, and escape sequences are not decoded. Empty messages are valid; actual line breaks and NUL are rejected. Files retain their encoding, BOM and line endings; unrepresentable text blocks saving.
+Messages are stored as ordinary BVE `//` comments. Contents are literal, preserving spaces, quotes, and backslashes. Empty messages are allowed; content must be a single line without NUL characters.
 
-Opening a map, directly or through a Scenario, displays messages from the root Map and its loaded Includes. Repeated Includes show each physical message once; identical messages on different lines remain separate. Multiple messages have previous/next buttons. `OK` stores the `Do not show again` selection for the resolved root Map in `settings/history.ini`, independently of the recent-file limit. The preference survives message changes and temporary removal of every message. Reload, enabling editing and Apply do not reopen the popup.
+Opening a map or Scenario displays messages from the root map and its loaded Includes, with paging for multiple messages. Repeated references to the same file show each message once. Select `Do not show again` and confirm to remember that choice for the root map.
 
-Open `Auxiliary Info -> Other -> Custom Messages` to view the source file, line and content even when automatic display is suppressed. Content wraps to the column width. With editing enabled, double-click a content cell to edit it; Enter or leaving the cell stages the text, while Esc cancels the current input. Right-click the content cell and choose `Delete Entire Row` to stage deletion. Click the tab's `Apply` button, then use `Save` on the top toolbar. Unapplied drafts, including active cell input, block Save; the toolbar's `Revert` discards them and pending memory edits. The tab has no separate content editor, delete button, Save or Revert buttons. `Apply and Edit` in the message wizard opens this tab. Display wrapping does not add line breaks to the stored message. Messages have no distance or 2D/3D marker.
+Open `Auxiliary Info -> Other -> Custom Messages` at any time to view the source file, line number, and content. With editing enabled, double-click a content cell to edit it; Enter or leaving the cell stages the draft, while Esc cancels the current input. Choose `Delete Entire Row` from the cell's context menu to stage deletion. Click the tab's `Apply`, then toolbar `Save`.
 
 #### New File Wizard
 
-Open it from `File -> New...`. It can create seven file types: `BveTs Map 2.02`, the `BveTs Scenario 2.00` scenario file, Structure List, Signal Aspects List, Sound List, the Sound List used by 3D Sound, and Station List.
+Open `File -> New...` to create a Map, Scenario, Structure List, Signal Aspects List, Sound List, Sound List for Sound3D, or Station List.
 
 1. Choose the file type, enter a file name, choose `.txt` or `.csv`, and select a directory.
-2. For a resource list, you can first click `Import File` to fill the form with an existing `.txt` or `.csv` file's name, directory, and suffix. You can still edit these fields.
-3. The scenario template shows the same eight official field inputs as the Scenario File tab: `Title`, `Route`, `RouteTitle`, `Vehicle`, `VehicleTitle`, `Author`, `Image`, and `Comment` may all stay empty (empty fields omit the row); `Route`, `Vehicle`, and `Image` are single paths relative to the scenario directory with a `Select File` picker, and values containing weights, multi-candidates, or comment characters are rejected. Weighted multi-candidate editing remains in the Scenario File tab.
-4. To make the current map reference the file, select a target source file under `Reference in`. This requires editing to be enabled. Every loaded non-resource-list map source file is a candidate; official BVE does not require a distance statement for `include` or `*.Load`, so distance-free blank maps are listed as well.
-5. Click `Confirm` to create or reuse the file. The map and scenario templates provide `Confirm and Load`, which opens the created file through the normal document flow; a loaded scenario can be edited further in the Scenario File tab.
+2. For a resource list, use `Import File` to prefill the name, directory, and suffix from an existing `.txt` or `.csv`, then adjust them as needed.
+3. For a Scenario, fill in the desired fields; empty fields are omitted. Use `Select File` to fill `Route`, `Vehicle`, or `Image` with a relative path.
+4. To reference the file from the current map, enable editing and choose a loaded map source under `Reference in`.
+5. Click `Confirm` to create or reuse the file. Maps and Scenarios also offer `Confirm and Load`.
 
-The selected suffix is always appended to the entered name. If the target is an existing regular file, it is reused without changing its contents. Otherwise, the wizard writes content: maps and lists get the standard header only, while scenario files get the non-empty wizard fields in official key order (UTF-8, CRLF). A reference is first applied only to the current map's in-memory preview: maps use `include`, and resource lists use the matching `*.Load`. Use toolbar `Save` to write the reference. A map can reference only one resource list of each type. If a reference already exists, the wizard disables another one and tells you to replace the file from the `Source path` context menu at the top of the matching table.
+The selected suffix is appended to the file name. Existing regular files are reused as they are. New files use UTF-8 and CRLF: maps and resource lists contain the standard header, while Scenarios write their contents in standard field order.
+
+The Scenario template provides eight fields: `Title`, `Route`, `RouteTitle`, `Vehicle`, `VehicleTitle`, `Author`, `Image`, and `Comment`. Each path field accepts one path, and field values must avoid comment characters such as `#` and `;`. Edit multiple path candidates and weights in the Scenario File tab after loading.
+
+The wizard creates the file immediately. Its `include` or corresponding `*.Load` reference is applied to the map preview and written by toolbar `Save`. A map can reference one resource list of each type. To replace a referenced file, use the `Source path` context menu at the top of its table.
 
 ## Appendix: CSV Data Formats
 
@@ -585,7 +566,7 @@ Field reference:
 | center           | Track center offset                                                           |
 | gauge            | Track gauge                                                                   |
 
-Exported numeric values use fixed six-decimal formatting. CSV export currently includes track geometry only; it does not export stations, Structures, repeaters, signals, beacons, sound/noise events, track-irregularity or adhesion changes, background change points, cab-illuminance change points, fog, draw-distance changes, or 3D scene data.
+CSV export contains track geometry, with numeric values formatted to six decimal places.
 
 ## License and Third-Party Notices
 

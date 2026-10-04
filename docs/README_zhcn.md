@@ -4,9 +4,9 @@
 
 # komapedit
 
-komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编辑工具。它可读取线路地图及其 Include 文件，计算自轨道和他轨道几何，在二维图表与三维场景中显示线路，通过可搜索表格查看地图数据，预览 Structure 模型，并将计算后的轨道几何导出为 CSV。
+komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编辑工具，支持二维线路图、三维场景预览和基于源码的地图编辑。
 
-基于源码的编辑功能仍处于实验阶段。启用编辑模式前，请备份线路文件或使用版本控制管理。komapedit 尚不是完整的地图编辑器：部分 BVE 语法仅支持预览或尚未支持，部分已支持语句可以编辑但不能新建或图形化操纵。当前边界见[支持的 BVE 地图语法](#支持的-bve-地图语法)，开发进度见 [TODO.md](../TODO.md)。
+编辑功能处于实验阶段，使用前请备份线路文件或使用版本控制管理。各类语句的支持范围见[支持的 BVE 地图语法](#支持的-bve-地图语法)，开发进度见 [TODO.md](../TODO.md)。
 
 ## 文档导航
 
@@ -19,101 +19,92 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 
 ## 主要功能
 
-- 打开 BVE Trainsim 2.0+ 地图，支持 UTF-8、UTF-16、CP932/Shift_JIS 相关编码及嵌套 `Include` 文件；缺失或无效的子地图会以 Warning 跳过，其它元素继续加载。
-- 支持通过 BVE Scenario 文件（`BveTs Scenario 2.00`）打开地图：按官方 `Route` 条目以 Scenario 文件目录为基准解析；存在多个加权候选时通过选择对话框确定。“地图信息列表 -> 其它 -> Scenario 文件”显示全部八个官方字段及现有 Route/Vehicle 候选。启用编辑模式后可编辑这些值；Scenario 草稿不经过“应用到内存”，由“保存”直接写入源文件，并保留编码、注释、未知行、重复字段兼容规则、候选顺序/数量及外部修改保护。
-- 显示平面图、纵断面图、曲线半径、车站、限速、他轨道、辅助标记和测量信息。
-- 通过可搜索表格查看车站、轨道、布景、连续布景、信号、应答器、音效、列车及环境效果。
-- 在三维窗口中预览 Structure 模型和线路场景。
-- 对下表所列语句提供基于源码的应用、保存、撤销和重新加载流程，并支持部分三维 X/Y/Z 放置编辑。
-- 启用编辑后，可在文件结构图中导入已有子地图，或排他新建带标准 BVE 文件头的 UTF-8 子地图，并将其 Include 暂存到选定的物理源文件。
-- `文件 -> 新建...` 打开“新建文件向导”，可新建仅含文件头的 `BveTs Map 2.02` 地图、含官方字段内容的 `BveTs Scenario 2.00` 场景文件，以及 Structure、Signal、Sound、Sound3D、Station 五类列表文件。资源列表模板提供“导入文件”，可选择已有 `.txt`/`.csv` 并填入仍可编辑的文件名、目录和后缀。向导会将所选的 `.txt`（默认）或 `.csv` 后缀无条件追加到原始文件名，例如输入 `route.csv` 并选择 `.txt` 会生成 `route.csv.txt`；目标已存在普通文件时会复用且绝不写入，否则新建文件并写入内容（地图与列表仅含文件头，场景文件按官方键序写入向导中填写的非空字段）。场景文件模板不提供“导入文件”和“在以下文件中引用”，取而代之的是与“Scenario 文件”标签页相同的 8 个官方字段输入框：`Title`、`Route`、`RouteTitle`、`Vehicle`、`VehicleTitle`、`Author`、`Image`、`Comment` 均可留空（留空字段整行省略），Route/Vehicle/Image 为相对场景文件目录的单路径并提供文件选择，含权重、多候选或注释字符的值会被拒绝。引用目标可以是任意已加载的非资源列表地图源文件，官方 BVE 不要求目标含有距离语句，因此完全空白、无距离语句的地图同样是合法的引用目标；对应 `include` 或 `*.Load` 引用会先暂存在内存工作副本中，正常“保存”才写入父地图，“撤销”会保留已新建的文件。“预设”分类暂为空，不新增资源列表行。
-- 仅含文件头的资源列表是合法起点：资源列表表格提供“新增行”按钮（以及右键插入），可直接创建第一行，无需手工插入逗号占位行。
-- 将计算后的自轨道和他轨道几何导出为 CSV。
-- 提供简体中文、英语和日语界面。
+- **界面**：可拖动、停靠的多窗口布局，提供数据表格搜索，以及表格、二维图和三维场景之间的定位跳转。
+- **预览**：显示线路平面图、纵断面图、辅助标记、布景模型和三维场景；支持背景图对齐、测量和轨道几何 CSV 导出。
+- **编辑**：通过属性窗口、资源列表和新建向导修改、删除或添加受支持的地图元素，使用三维操纵器调整部分元素的位置；支持子地图管理，以及地图、Scenario 和资源列表文件的创建与编辑。
+- **界面语言**：简体中文、英语和日语。
 
 ## 支持的 BVE 地图语法
 
-- 预览：实际进入轨道几何、表格、标记或 3D 场景。
-- 基本编辑：已有语句可通过属性检查器修改并写回；不代表支持新建该语句。
+- 预览：通过轨道几何、表格、标记或 3D 场景显示数据。
+- 基本编辑：通过属性窗口或表格修改已有语句并保存。
 - 新建元素：“新建地图元素”向导可插入对应的源码语句。
-- 图形化编辑：可在 2D/3D 画布直接拖动或操纵；右键打开属性窗口不算。
+- 图形化编辑：在 2D/3D 画布中直接拖动元素或使用操纵器修改。
 - √ = 完整支持；△ = 部分或间接支持；✕ = 暂不支持；- = 没有计划支持或无必要性。
 
-下列语句名称及“[旧式]”别名以 [BVE 官方地图文件格式说明](https://bvets.net/jp/edit/formats/route/map.html)为准，并保留项目额外兼容的 `Legacy.*` 语句以完整描述当前支持范围。向导不新增 `Load` 或资源/定义列表行；数值目标 distance 使用现有源码表达式和距离边界流程，并尽可能保留或安全调整已有 `$` 表达式。
+下表列出 [BVE 官方地图语法](https://bvets.net/jp/edit/formats/route/map.html)、旧式别名及项目兼容的 `Legacy.*` 语句。“新建元素”指地图元素向导；文件及其 `Include`/`Load` 引用通过新建文件向导管理，资源列表行在对应表格中添加。
 
-| 地图语法                                                                                                                                                                                    | 预览  | 基本编辑 | 新建元素 | 图形化编辑 | 当前实际情况                                                                                                   |
+| 地图语法                                                                                                                                                                                    | 预览  | 基本编辑 | 新建元素 | 图形化编辑 | 说明 |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---: | :------: | :------: | :--------: | -------------------------------------------------------------------------------------------------------------- |
-| 文件头、版本及编码                                                                                                                                                                          |   △   |    ✕     |    -     |     -      | 可加载 BVE Map 2.0+ 及 UTF-8/BOM、UTF-16LE/BE、CP932/Shift_JIS 相关编码；不支持任意声明编码                    |
-| 注释及基本语句结构                                                                                                                                                                          |   √   |    ✕     |    -     |     -      | 支持 `#`/`//` 注释、分号分隔调用、带 key/嵌套元素、空白、多行语句及名称大小写不敏感；没有通用源码编辑器        |
-| 赋值、参数及 key 中的变量                                                                                                                                                                   |   √   |    ✕     |    -     |     -      | 解析时求值，并在只读变量列表中按大小写不敏感名称分组显示赋值与来源                                             |
-| 算术运算符（`+`、`-`、`*`、`/`、`%`）                                                                                                                                                       |   √   |    ✕     |    -     |     -      | 支持数值算术、单目正负号、括号和使用 `+` 的字符串拼接；不支持比较/逻辑及复合赋值运算符                         |
-| 距离声明及 `distance` 表达式                                                                                                                                                                |   √   |    △     |    -     |     ✕      | 可编辑已有受支持元素的距离；新建元素时可生成或复用距离块，但没有独立距离编辑器                                 |
+| 文件头、版本及编码                                                                                                                                                                          |   △   |    ✕     |    -     |     -      | 支持 BVE Map 2.0+，以及 UTF-8（含 BOM）、UTF-16LE/BE、CP932/Shift_JIS 编码 |
+| 注释及基本语句结构                                                                                                                                                                          |   √   |    ✕     |    -     |     -      | 支持 `#`/`//` 注释、分号分隔、带 key 及嵌套元素、多行语句；名称大小写不敏感 |
+| 赋值、参数及 key 中的变量                                                                                                                                                                   |   √   |    ✕     |    -     |     -      | 解析时求值；变量表按名称分组显示赋值及来源 |
+| 算术运算符（`+`、`-`、`*`、`/`、`%`）                                                                                                                                                       |   √   |    ✕     |    -     |     -      | 支持数值运算、单目正负号、括号及 `+` 字符串拼接 |
+| 距离声明及 `distance` 表达式                                                                                                                                                                |   √   |    △     |    -     |     ✕      | 随受支持元素编辑里程；新建元素时生成或复用距离块 |
 | 数学函数                                                                                                                                                                                    |   √   |    ✕     |    -     |     -      | 支持 `rand`、`abs`、`sin`、`cos`、`atan2`、`sqrt`、`exp`、`log`、`floor`、`ceil` 和 `pow`                      |
-| `include 'file';`                                                                                                                                                                           |   √   |    △     |    ✕     |     -      | 支持嵌套 Include，且可写回其中受支持元素；缺失或无效的子地图会以 Warning 跳过；启用编辑后可在文件结构图右键菜单中将 Include 引用更换为其它 .txt/.csv 子地图（优先相对路径，失败时自动使用绝对路径），或删除该引用；后续语句仍依赖所引用文件时编辑会被阻止 |
-| `Curve.SetGauge(value)` / `[旧式] Curve.Gauge(value)`                                                                                                                                       |   √   |    √     |    √     |     ✕      | 可编辑/删除里程和轨距；向导仅以默认值 `1.067` 新建现行 `SetGauge`，编辑旧式 `Gauge` 时保留原方法名。启用后在 2D/3D 显示独立 `CG` 标牌 |
-| `Curve.SetCenter(x)`                                                                                                                                                                        |   √   |    √     |    √     |     ✕      | 可编辑、新建和删除里程及超高中心偏移；向导默认值为 `0`。启用后在 2D/3D 显示独立 `CC` 标牌                      |
-| `Curve.SetFunction(id)`                                                                                                                                                                     |   √   |    √     |    √     |     ✕      | 可编辑、新建和删除里程及插值函数；求值后的 `id` 仅允许 `0` 或 `1`，向导默认值为 `0`。启用后在 2D/3D 显示独立 `CF` 标牌 |
-| `Curve.BeginTransition()`                                                                                                                                                                   |   √   |    △     |    △     |     ✕      | 合并后的 `Curve.*` 表单仅在带超高的 `Curve.Begin` 或选定 `Curve.End` 前添加；起止缓和选项联动且各自保留独立里程 |
-| `Curve.Begin(radius, cant)` / `[旧式] Curve.BeginCircular(radius, cant)`                                                                                                                    |   √   |    √     |    △     |     ✕      | `Curve.*` 表单仅将当前 `Curve.Begin(radius, cant)` 与独立里程的前置缓和曲线一同输出；旧式 `Curve.BeginCircular` 仍仅可编辑 |
-| `Curve.Begin(radius)` / `Curve.Change(radius)`                                                                                                                                              |   √   |    √     |    √     |     ✕      | `Curve.*` 表单可选择当前 Begin 或 Change，并可原子添加受支持的结束位置；已有行保持原方法                      |
-| `Curve.End()`                                                                                                                                                                               |   √   |    √     |    √     |     ✕      | `Curve.*` 表单可单独或随起始位置添加 End，并可带独立里程的前置缓和曲线；已有行仍可编辑或删除                  |
-| `Curve.Interpolate(radius, cant)` / `Curve.Interpolate(radius)` / `Curve.Interpolate()`                                                                                                     |   √   |    √     |    √     |     ✕      | 官方 0/1/2 参数形式均生成类型化 Curve 行并保持原参数个数：0 参数仅编辑 distance，1 参数编辑 distance/radius，2 参数编辑 distance/radius/cant。开启“曲线半径”后，可从 2D 端点和 3D 标牌使用共享的“属性/编辑”和“删除”；独立 Curve.Interpolate 向导模板可新建全部三种形式 |
-| `Gradient.BeginTransition()`                                                                                                                                                                |   √   |    △     |    △     |     ✕      | 合并后的 `Gradient.*` 表单可在选定 Begin/End 前添加；起止缓和选项联动且各自保留独立里程                      |
-| `Gradient.Begin(gradient)` / `[旧式] Gradient.BeginConst(gradient)`                                                                                                                         |   √   |    √     |    √     |     ✕      | `Gradient.*` 表单可单独或随 End 添加当前 `Gradient.Begin(gradient)`，并可带前置缓和曲线；旧式 `Gradient.BeginConst` 仍仅可编辑 |
-| `Gradient.End()`                                                                                                                                                                            |   √   |    √     |    √     |     ✕      | `Gradient.*` 表单可单独或随 Begin 添加 End，并可带独立里程的前置缓和曲线；已有行仍可编辑或删除               |
-| `Gradient.Interpolate(gradient)` / `Gradient.Interpolate()`                                                                                                                                 |   √   |    ✕     |    ✕     |     ✕      | 官方 0/1 参数形式均进入几何，但不生成可编辑坡度行                                                              |
-| `Legacy.Turn`、`Legacy.Curve`、`Legacy.Pitch`                                                                                                                                               |   √   |    △     |    ✕     |     ✕      | 项目兼容语法：均进入自轨道几何；只有已有 `Legacy.Curve` 行支持基于源码的值/距离编辑                            |
-| `Track[trackKey].X.Interpolate(x, radius)` / `Track[trackKey].X.Interpolate(x)` / `Track[trackKey].X.Interpolate()`                                                                         |   √   |    △     |    √     |     ✕      | 向导可新建全部现行形式；可编辑已有距离/数值字段或删除。`trackKey` 在“属性/编辑”中只读，但可从“其他轨道”表统一重命名整条轨道 |
-| `Track[trackKey].Y.Interpolate(y, radius)` / `Track[trackKey].Y.Interpolate(y)` / `Track[trackKey].Y.Interpolate()`                                                                         |   √   |    △     |    √     |     ✕      | 向导可新建全部现行形式；已有行的编辑边界与 X 插值相同                                                        |
-| `Track[trackKey].Position(x, y, radiusH, radiusV)` / `Track[trackKey].Position(x, y, radiusH)` / `Track[trackKey].Position(x, y)`                                                           |   √   |    △     |    √     |     ✕      | 向导可新建全部现行形式；可编辑已有数值/距离或删除，但语句形状及 track key 只读                                |
-| `Track[trackKey].Cant.SetGauge(gauge)` / `[旧式] Track[trackKey].Gauge(gauge)`                                                                                                              |   √   |    △     |    √     |     ✕      | 向导只新建现行 `Cant.SetGauge`；旧式 `Gauge` 保持可读取/编辑/删除，方法/key 只读                              |
-| `Track[trackKey].Cant.SetCenter(x)`                                                                                                                                                         |   √   |    △     |    √     |     ✕      | 向导新建现行形式；已有值/距离可编辑或删除，方法/key 只读                                                      |
-| `Track[trackKey].Cant.SetFunction(id)`                                                                                                                                                      |   √   |    △     |    √     |     ✕      | 向导以 `0` 或 `1` 的 id 新建现行形式；已有值/距离可编辑或删除，方法/key 只读                                  |
-| `Track[trackKey].Cant.BeginTransition()`                                                                                                                                                    |   √   |    △     |    √     |     ✕      | 向导新建现行形式；已有距离可编辑或删除，方法/key 只读                                                         |
-| `Track[trackKey].Cant.Begin(cant)`                                                                                                                                                          |   √   |    △     |    √     |     ✕      | 向导新建现行形式；已有值/距离可编辑或删除，方法/key 只读                                                      |
-| `Track[trackKey].Cant.End()`                                                                                                                                                                |   √   |    △     |    √     |     ✕      | 向导新建现行形式；已有距离可编辑或删除，方法/key 只读                                                         |
-| `Track[trackKey].Cant.Interpolate(cant)` / `Track[trackKey].Cant.Interpolate()` / `[旧式] Track[trackKey].Cant(cant)`                                                                       |   √   |    △     |    √     |     ✕      | 向导只新建现行 0/1 参数形式；旧式 `Cant` 保持可读取/编辑/删除，形状/key 只读                                  |
-| `Structure.Load(filePath)`                                                                                                                                                                  |   √   |    △     |    ✕     |     -      | 已加载列表中的 key/path 可行内编辑、清空、调整顺序、删除或右键在上下新增行；新增行固定为 2 个 CSV 字段。编辑模式可将 Load 路径更换为加载器兼容的 `BveTs Structure List`（1.00+） |
-| `Structure[structureKey].Put(trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                                                                                    |   √   |    √     |    √     |     △      | 所有字段均可写回或新建；3D 仅直接操纵 X/Y/Z                                                                    |
-| `Structure[structureKey].Put0(trackKey, tilt, span)`                                                                                                                                        |   √   |    √     |    √     |     △      | “属性/编辑”可添加/去除坐标偏移，在 `Put0` 与 `Put` 间双向转换；`Put0` 使用仅 Z 轴、整米步进的里程操纵器        |
-| `Structure[structureKey].PutBetween(trackKey1, trackKey2, flag)` / `Structure[structureKey].PutBetween(trackKey1, trackKey2)`                                                               |   √   |    √     |    √     |     △      | 官方两种形式均可预览/编辑；检查器草稿会实时更新变形后的 3D 顶点，且仅 Z 轴操纵器会以整米步进修改 `distance`     |
-| `Repeater[repeaterKey].Begin(trackKey, x, y, z, rx, ry, rz, tilt, span, interval, structureKey1, ...)` / `Repeater[repeaterKey].Begin0(trackKey, tilt, span, interval, structureKey1, ...)` |   √   |    △     |    √     |     △      | 向导可单独新建 Begin/Begin0，或与 End 原子新建；同名区间内的 Begin-only 经确认后作为变化点，成对区间仍拒绝重叠。“属性/编辑”的“插入变化点”会打开与源语句对应的 Begin/Begin0 表单，默认仅添加 Begin，并预填当前检查器草稿参数。支持 `repeaterKey` 改名、关联删除/修剪、形式转换和操纵器 |
-| `Repeater[repeaterKey].End()`                                                                                                                                                               |   √   |    △     |    √     |     △      | 向导可单独或随 Begin/Begin0 新建 End；未闭合 Repeater 的“属性/编辑”可打开已预填源文件和 key 的仅添加 End 表单。允许孤立 End，但拒绝在已有显式 End 的同名有效区间内增加 End。现有 End 距离和关联删除/修剪仍受支持 |
-| `Background.Change(structureKey)`                                                                                                                                                           |   √   |    √     |    √     |     ✕      | 可编辑、新建或删除距离/key；数据进入背景及场景预览                                                             |
-| `Station.Load(filePath)`                                                                                                                                                                    |   √   |    △     |    ✕     |     -      | 车站定义行可行内编辑、清空、调整顺序、删除或右键在上下新增行；新增行固定为 13 个 CSV 字段。编辑或新增行写回时，空的 `stoppageTime`、`signalFlag`、`alightingTime`、`passengers`、`doorReopen` 和 `stuckInDoor` 统一写为 `0`；空的 key、名称、时间和音效 key 仍保留为空。打开编辑模式后可更换 Load 路径为加载器兼容的 `BveTs Station List`（沿用既有 0.04+ 兼容性）。当车站列表任一行使用了非空 `arrivalSoundKey` 或 `depertureSoundKey`，且 `Sound.Load` 在逻辑上不早于 `Station.Load`（同一文件按源码行/列，不同文件按更浅的 Include 深度）时，加载会输出带源码位置的 `[WARN]` 警告，但地图仍会继续加载 |
-| `Station[stationKey].Put(door, margin1, margin2)`                                                                                                                                           |   √   |    √     |    √     |     ✕      | 可编辑、新建或删除距离、key 和车门侧。停车余量要求 `margin1 < 0`、`margin2 > 0`；加载违规项会给出源码位置警告，编辑/新建会被阻止 |
-| `Section.Begin(...)` / `[旧式] Section.BeginNew(...)`                                                                                                                                       |   √   |    √     |    √     |     ✕      | 距离及可变数量信号索引参数支持编辑、新建和删除；2D/3D 显示标记                                                 |
-| `Section.SetSpeedLimit(...)` / `[旧式] Signal.SpeedLimit(...)`                                                                                                                              |   √   |    √     |    √     |     ✕      | 距离及可变数量限速参数支持编辑、新建和删除；生效值进入 3D 信号摘要                                             |
-| `Signal.Load(filePath)`                                                                                                                                                                     |   √   |    △     |    ✕     |     -      | 现示/glare 行可行内编辑、清空、调整顺序、删除、右键在上下新增行，并可独立增删尾部列。新增主行初始为 6 个 CSV 字段；主行/glare 作为整体，需手动“新增眩光”。最多显示 509 个结构键列，后续字段保留并显示警告 |
-| `Signal[signalAspectKey].Put(section, trackKey, x, y)` / `Signal[signalAspectKey].Put(section, trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                  |   √   |    √     |    √     |     △      | 官方两种形式均可编辑；向导生成完整式。短式扩展编辑需确认转换；3D 可直接操纵 X/Y/Z                              |
-| `Beacon.Put(type, section, sendData)`                                                                                                                                                       |   √   |    √     |    √     |     ✕      | 可编辑、新建或删除距离及全部参数                                                                               |
-| `SpeedLimit.Begin(v)` / `SpeedLimit.End()`                                                                                                                                                  |   √   |    √     |    √     |     ✕      | Begin/End 独立支持编辑、新建和删除，不做配对或类型转换                                                         |
-| `PreTrain.Pass(time)` / `PreTrain.Pass(second)` | √ | √ | √ | ✕ | 通过 2D／3D 标记菜单编辑里程、通行时间及删除，通过“信号”新建模板创建。时间输入不带引号的 hh:mm:ss 或有限秒数；保留未修改的原始表达式。在“属性/编辑”或向导中，将鼠标停留在 `passTime` 标题上可查看输入格式提示，移开后提示消失。无独立列表或操纵器。 |
-| `Light.Ambient(...)`、`Light.Diffuse(...)`、`Light.Direction(...)`                                                                                                                          |   √   |    √     |    √     |     ✕      | “光照效果”标签页支持基于源码的 RGB/pitch/yaw 编辑与删除。“效果”向导会在用户选定源文件的里程 `0` 新建每种官方形式（不显示里程输入框）。RGB 必须在 `[0, 1]`；Direction 必须位于里程 `0`；根地图及全部 Include 中同类语句重复时，该类全部无效并报告所有源码位置。不实现标记或 3D 光照模拟 |
-| `Fog.Interpolate(density, red, green, blue)` / `Fog.Interpolate(density)` / `Fog.Interpolate()` / `[旧式] Fog.Set(density, red, green, blue)`                                               |   √   |    √     |    √     |     ✕      | 官方 0/1/4 参数 Interpolate 及旧式 Set 均支持编辑、新建和删除；3D 显示插值指数雾                               |
-| `[兼容] Legacy.Fog(start, end, red, green, blue)`                                                                                                                                            |   √   |    √     |    √     |     ✕      | BVE 旧式线性雾语法；支持源码编辑、新建和删除，列表及既有平面图/3D 标牌提供编辑入口；3D 显示线性雾，支持过渡及与 Fog 混用 |
-| `DrawDistance.Change(value)`                                                                                                                                                                |   √   |    √     |    √     |     ✕      | 距离/数值支持编辑、新建和删除；可选地控制场景绘制距离                                                          |
-| `CabIlluminance.Interpolate(value)` / `CabIlluminance.Interpolate()` / `[旧式] CabIlluminance.Set(value)`                                                                                     |   √   |    √     |    √     |     ✕      | 距离/数值支持编辑、新建和删除；留空写为 `Interpolate()`，表格及 3D 标牌继承上一条带值 CabIlluminance（此前没有带值时保持空显示）；不模拟实际驾驶台亮度 |
-| `Irregularity.Change(x, y, r, lx, ly, lr)`                                                                                                                                                  |   √   |    √     |    √     |     ✕      | 距离及全部 6 个数值支持编辑、新建和删除；不模拟车辆振动                                                        |
-| `Adhesion.Change(a)` / `Adhesion.Change(a, b, c)`                                                                                                                                           |   √   |    √     |    √     |     ✕      | 官方两种形状均支持编辑、新建和删除；不模拟粘着效果                                                             |
-| `Sound.Load(filePath)`                                                                                                                                                                      |   √   |    △     |    ✕     |     -      | 音效列表行可行内编辑、清空、调整顺序、删除或右键在上下新增行；新增行固定为 3 个 CSV 字段。编辑模式可将 Load 路径更换为加载器兼容的 `BveTs Sound List`（2.00+）。车站行使用到达/出发音效 key 时，`Sound.Load`/`Station.Load` 顺序错误会警告但不阻止加载（见 `Station.Load`） |
-| `Sound[soundKey].Play()`                                                                                                                                                                    |   √   |    √     |    √     |     ✕      | 距离/key 支持编辑、新建和删除；不实际播放音频                                                                  |
-| `Sound3D.Load(filePath)`                                                                                                                                                                    |   √   |    △     |    ✕     |     -      | 3D 音效列表行可行内编辑、清空、调整顺序、删除或右键在上下新增行；新增行固定为 3 个 CSV 字段。编辑模式可将 Load 路径更换为加载器兼容的 `BveTs Sound List`（2.00+） |
-| `Sound3D[soundKey].Put(x, y)`                                                                                                                                                               |   √   |    √     |    √     |     ✕      | 距离/key/X/Y 支持编辑、新建和删除；3D 标牌指向固定音源，X/Y/Z 操纵器编辑 X/Y 或整米里程；不实际播放音频        |
-| `RollingNoise.Change(index)`                                                                                                                                                                |   √   |    √     |    √     |     ✕      | 距离/index 支持编辑、新建和删除；不实际播放音频                                                                |
-| `FlangeNoise.Change(index)`                                                                                                                                                                 |   √   |    √     |    √     |     ✕      | 距离/index 支持编辑、新建和删除；不实际播放音频                                                                |
-| `JointNoise.Play(index)`                                                                                                                                                                    |   √   |    √     |    √     |     ✕      | 距离/index 支持编辑、新建和删除；不实际播放音频                                                                |
-| `Train.Add(trainKey, filePath, trackKey, direction)` / `Train[trainKey].Load(filePath, trackKey, direction)`                                                                                |   △   |    ✕     |    ✕     |     ✕      | 可显示定义，但外部他列车文件仅被部分建模                                                                       |
-| `Train[trainKey].Enable(time)` / `Train[trainKey].Enable(second)`                                                                                                                           |   √   |    ✕     |    ✕     |     ✕      | 唯一 Enable 时间以只读形式显示在对应他列车停止位置表上方                                                       |
-| `Train[trainKey].Stop(decelerate, stopTime, accelerate, speed)`                                                                                                                             |   √   |    ✕     |    ✕     |     ✕      | 生成只读他列车停止位置表、路径和地图标记                                                                       |
+| `include 'file';`                                                                                                                                                                           |   √   |    △     |    ✕     |     -      | 支持嵌套 Include 和子地图元素编辑；文件结构图可更换或删除引用，操作需通过依赖检查。缺失或无效的子地图会跳过并记录警告 |
+| `Curve.SetGauge(value)` / `[旧式] Curve.Gauge(value)`                                                                                                                                       |   √   |    √     |    √     |     ✕      | 编辑里程与轨距；向导新建 `SetGauge`，默认 `1.067`；2D/3D 可显示 `CG` 标牌 |
+| `Curve.SetCenter(x)`                                                                                                                                                                        |   √   |    √     |    √     |     ✕      | 编辑里程与超高中心偏移；新建默认值为 `0`；2D/3D 可显示 `CC` 标牌 |
+| `Curve.SetFunction(id)`                                                                                                                                                                     |   √   |    √     |    √     |     ✕      | 编辑里程与插值函数，`id` 为 `0` 或 `1`；新建默认 `0`；2D/3D 可显示 `CF` 标牌 |
+| `Curve.BeginTransition()`                                                                                                                                                                   |   √   |    △     |    △     |     ✕      | 在 `Curve.*` 表单中随带超高的 Begin 或 End 添加前置缓和曲线；起止缓和选项联动，里程分别设置 |
+| `Curve.Begin(radius, cant)` / `[旧式] Curve.BeginCircular(radius, cant)`                                                                                                                    |   √   |    √     |    △     |     ✕      | 向导将带超高的 Begin 与前置缓和曲线一同添加；旧式 BeginCircular 支持已有语句编辑 |
+| `Curve.Begin(radius)` / `Curve.Change(radius)`                                                                                                                                              |   √   |    √     |    √     |     ✕      | 向导可选择 Begin 或 Change，并一同添加结束位置 |
+| `Curve.End()`                                                                                                                                                                               |   √   |    √     |    √     |     ✕      | 可单独新建或随起点添加，也可设置前置缓和曲线 |
+| `Curve.Interpolate(radius, cant)` / `Curve.Interpolate(radius)` / `Curve.Interpolate()`                                                                                                     |   √   |    √     |    √     |     ✕      | 支持 0/1/2 参数形式，编辑时保留参数个数；开启“曲线半径”后可从 2D/3D 标记编辑或删除 |
+| `Gradient.BeginTransition()`                                                                                                                                                                |   √   |    △     |    △     |     ✕      | 在 `Gradient.*` 表单中随 Begin/End 添加前置缓和曲线；起止缓和选项联动，里程分别设置 |
+| `Gradient.Begin(gradient)` / `[旧式] Gradient.BeginConst(gradient)`                                                                                                                         |   √   |    √     |    √     |     ✕      | 向导可单独添加 Begin，或一同添加 End、前置缓和曲线；旧式 BeginConst 支持已有语句编辑 |
+| `Gradient.End()`                                                                                                                                                                            |   √   |    √     |    √     |     ✕      | 可单独新建或随 Begin 添加，也可设置前置缓和曲线 |
+| `Gradient.Interpolate(gradient)` / `Gradient.Interpolate()`                                                                                                                                 |   √   |    ✕     |    ✕     |     ✕      | 0/1 参数形式均用于轨道几何计算 |
+| `Legacy.Turn`、`Legacy.Curve`、`Legacy.Pitch`                                                                                                                                               |   √   |    △     |    ✕     |     ✕      | 三种语句均用于自轨道几何；已有 Legacy.Curve 可编辑数值与里程 |
+| `Track[trackKey].X.Interpolate(x, radius)` / `Track[trackKey].X.Interpolate(x)` / `Track[trackKey].X.Interpolate()`                                                                         |   √   |    △     |    √     |     ✕      | 支持各参数形式；已有语句可编辑里程、数值或删除。`trackKey` 在属性窗口中只读，可在“其他轨道”表统一改名 |
+| `Track[trackKey].Y.Interpolate(y, radius)` / `Track[trackKey].Y.Interpolate(y)` / `Track[trackKey].Y.Interpolate()`                                                                         |   √   |    △     |    √     |     ✕      | 支持各参数形式；编辑范围与 X.Interpolate 相同 |
+| `Track[trackKey].Position(x, y, radiusH, radiusV)` / `Track[trackKey].Position(x, y, radiusH)` / `Track[trackKey].Position(x, y)`                                                           |   √   |    △     |    √     |     ✕      | 支持各参数形式；已有语句可编辑里程、数值或删除，参数个数与 key 保持原样 |
+| `Track[trackKey].Cant.SetGauge(gauge)` / `[旧式] Track[trackKey].Gauge(gauge)`                                                                                                              |   √   |    △     |    √     |     ✕      | 新建使用 Cant.SetGauge；两种形式均可编辑数值、里程或删除，方法与 key 保持原样 |
+| `Track[trackKey].Cant.SetCenter(x)`                                                                                                                                                         |   √   |    △     |    √     |     ✕      | 可编辑数值、里程或删除，方法与 key 保持原样 |
+| `Track[trackKey].Cant.SetFunction(id)`                                                                                                                                                      |   √   |    △     |    √     |     ✕      | 新建时 `id` 为 `0` 或 `1`；可编辑数值、里程或删除，方法与 key 保持原样 |
+| `Track[trackKey].Cant.BeginTransition()`                                                                                                                                                    |   √   |    △     |    √     |     ✕      | 可编辑里程或删除，方法与 key 保持原样 |
+| `Track[trackKey].Cant.Begin(cant)`                                                                                                                                                          |   √   |    △     |    √     |     ✕      | 可编辑数值、里程或删除，方法与 key 保持原样 |
+| `Track[trackKey].Cant.End()`                                                                                                                                                                |   √   |    △     |    √     |     ✕      | 可编辑里程或删除，方法与 key 保持原样 |
+| `Track[trackKey].Cant.Interpolate(cant)` / `Track[trackKey].Cant.Interpolate()` / `[旧式] Track[trackKey].Cant(cant)`                                                                       |   √   |    △     |    √     |     ✕      | 新建使用 Interpolate 的 0/1 参数形式；已有语句可编辑数值、里程或删除，形式与 key 保持原样 |
+| `Structure.Load(filePath)`                                                                                                                                                                  |   √   |    △     |    ✕     |     -      | 可更换列表路径，并在表格中编辑、新增、删除或调整 key/path 行顺序；兼容列表版本 1.00+ |
+| `Structure[structureKey].Put(trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                                                                                    |   √   |    √     |    √     |     △      | 全部字段可编辑；3D 操纵器调整 X/Y/Z |
+| `Structure[structureKey].Put0(trackKey, tilt, span)`                                                                                                                                        |   √   |    √     |    √     |     △      | 属性窗口可在 Put0/Put 间转换；Put0 的 Z 轴操纵器按整米调整里程 |
+| `Structure[structureKey].PutBetween(trackKey1, trackKey2, flag)` / `Structure[structureKey].PutBetween(trackKey1, trackKey2)`                                                               |   √   |    √     |    √     |     △      | 支持两种参数形式；属性草稿实时更新 3D 形状，Z 轴操纵器按整米调整里程 |
+| `Repeater[repeaterKey].Begin(trackKey, x, y, z, rx, ry, rz, tilt, span, interval, structureKey1, ...)` / `Repeater[repeaterKey].Begin0(trackKey, tilt, span, interval, structureKey1, ...)` |   √   |    △     |    √     |     △      | 可单独新建 Begin/Begin0 或与 End 成对添加；支持变化点、整段改名、关联删除、形式转换与位置操纵器。同名成对区间须避免重叠 |
+| `Repeater[repeaterKey].End()`                                                                                                                                                               |   √   |    △     |    √     |     △      | 可单独或随 Begin/Begin0 新建，也可为未闭合区间添加结束点；支持里程编辑及关联删除，同名闭合区间内禁止重复添加 End |
+| `Background.Change(structureKey)`                                                                                                                                                           |   √   |    √     |    √     |     ✕      | 编辑里程与 key；在场景中预览背景 |
+| `Station.Load(filePath)`                                                                                                                                                                    |   √   |    △     |    ✕     |     -      | 可更换列表路径，并在表格中编辑、新增、删除或调整车站行顺序；兼容列表版本 0.04+。车站引用音效时会检查 Sound.Load 与 Station.Load 的顺序并提示警告 |
+| `Station[stationKey].Put(door, margin1, margin2)`                                                                                                                                           |   √   |    √     |    √     |     ✕      | 编辑里程、key、车门侧及停车余量；余量要求 `margin1 < 0`、`margin2 > 0` |
+| `Section.Begin(...)` / `[旧式] Section.BeginNew(...)`                                                                                                                                       |   √   |    √     |    √     |     ✕      | 编辑里程与信号索引列表；2D/3D 显示标记 |
+| `Section.SetSpeedLimit(...)` / `[旧式] Signal.SpeedLimit(...)`                                                                                                                              |   √   |    √     |    √     |     ✕      | 编辑里程与限速列表；生效值显示在 3D 信号摘要中 |
+| `Signal.Load(filePath)`                                                                                                                                                                     |   √   |    △     |    ✕     |     -      | 支持现示行、眩光行及尾部列编辑；主行与眩光行作为一组操作，眩光行手动添加。最多显示 509 个结构键列 |
+| `Signal[signalAspectKey].Put(section, trackKey, x, y)` / `Signal[signalAspectKey].Put(section, trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                  |   √   |    √     |    √     |     △      | 两种形式均可编辑，新建使用完整式；短式扩展需确认转换；3D 操纵器调整 X/Y/Z |
+| `Beacon.Put(type, section, sendData)`                                                                                                                                                       |   √   |    √     |    √     |     ✕      | 编辑里程与全部参数 |
+| `SpeedLimit.Begin(v)` / `SpeedLimit.End()`                                                                                                                                                  |   √   |    √     |    √     |     ✕      | Begin/End 分别编辑、新建和删除 |
+| `PreTrain.Pass(time)` / `PreTrain.Pass(second)` | √ | √ | √ | ✕ | 通过 2D/3D 标记编辑里程、通行时间或删除；在“信号”向导中新建。时间输入为 hh:mm:ss 或秒数，悬停 `passTime` 可查看格式提示 |
+| `Light.Ambient(...)`、`Light.Diffuse(...)`、`Light.Direction(...)`                                                                                                                          |   √   |    √     |    √     |     ✕      | 在“光照效果”表中查看和编辑参数，在“效果”向导中于里程 `0` 新建。RGB 范围 `[0, 1]`，Direction 位于里程 `0`；同类声明在根地图及 Include 中须唯一 |
+| `Fog.Interpolate(density, red, green, blue)` / `Fog.Interpolate(density)` / `Fog.Interpolate()` / `[旧式] Fog.Set(density, red, green, blue)`                                               |   √   |    √     |    √     |     ✕      | 支持 Interpolate 的 0/1/4 参数形式及旧式 Set；3D 预览指数雾及其过渡 |
+| `[兼容] Legacy.Fog(start, end, red, green, blue)`                                                                                                                                            |   √   |    √     |    √     |     ✕      | 在表格或 2D/3D 标记中编辑；3D 预览线性雾及其过渡，可与 Fog 混用 |
+| `DrawDistance.Change(value)`                                                                                                                                                                |   √   |    √     |    √     |     ✕      | 编辑里程与数值；可用于控制场景绘制距离 |
+| `CabIlluminance.Interpolate(value)` / `CabIlluminance.Interpolate()` / `[旧式] CabIlluminance.Set(value)`                                                                                     |   √   |    √     |    √     |     ✕      | 编辑里程与亮度；数值留空时写为 Interpolate()，表格与 3D 标牌显示前一有效值，无前值时留空 |
+| `Irregularity.Change(x, y, r, lx, ly, lr)`                                                                                                                                                  |   √   |    √     |    √     |     ✕      | 在表格和标记中查看数据；可编辑里程及全部 6 个参数 |
+| `Adhesion.Change(a)` / `Adhesion.Change(a, b, c)`                                                                                                                                           |   √   |    √     |    √     |     ✕      | 在表格和标记中查看数据；支持 1/3 参数形式 |
+| `Sound.Load(filePath)`                                                                                                                                                                      |   √   |    △     |    ✕     |     -      | 可更换列表路径，并在表格中编辑、新增、删除或调整音效行顺序；兼容列表版本 2.00+ |
+| `Sound[soundKey].Play()`                                                                                                                                                                    |   √   |    √     |    √     |     ✕      | 在表格和标记中查看音效事件；编辑里程与 key |
+| `Sound3D.Load(filePath)`                                                                                                                                                                    |   √   |    △     |    ✕     |     -      | 可更换列表路径，并在表格中编辑、新增、删除或调整 3D 音效行顺序；兼容列表版本 2.00+ |
+| `Sound3D[soundKey].Put(x, y)`                                                                                                                                                               |   √   |    √     |    √     |     △      | 编辑里程、key、X/Y；3D 标牌标示音源位置，操纵器调整 X/Y 和整米里程 |
+| `RollingNoise.Change(index)`                                                                                                                                                                |   √   |    √     |    √     |     ✕      | 在表格和标记中查看噪声事件；编辑里程与 index |
+| `FlangeNoise.Change(index)`                                                                                                                                                                 |   √   |    √     |    √     |     ✕      | 在表格和标记中查看噪声事件；编辑里程与 index |
+| `JointNoise.Play(index)`                                                                                                                                                                    |   √   |    √     |    √     |     ✕      | 在表格和标记中查看噪声事件；编辑里程与 index |
+| `Train.Add(trainKey, filePath, trackKey, direction)` / `Train[trainKey].Load(filePath, trackKey, direction)`                                                                                |   △   |    ✕     |    ✕     |     ✕      | 显示他列车定义，部分读取外部定义文件 |
+| `Train[trainKey].Enable(time)` / `Train[trainKey].Enable(second)`                                                                                                                           |   √   |    ✕     |    ✕     |     ✕      | 在他列车停止位置表上方显示启用时间 |
+| `Train[trainKey].Stop(decelerate, stopTime, accelerate, speed)`                                                                                                                             |   √   |    ✕     |    ✕     |     ✕      | 显示只读的他列车停止位置表、路径与地图标记 |
 
 ## 安装与启动
 
-当前仓库未提供独立安装程序或预构建发行包。请按照[开发者指南](dev_zhcn.md)构建应用，然后运行生成的可执行文件。
+请按照[开发者指南](dev_zhcn.md)构建应用，然后运行生成的可执行文件。
 
-构建完成后，运行 `build_release\komapedit.exe`。可执行文件保留在第 1 层，
-`maploader.dll`、`model_loader.dll` 及构建复制的 Assimp/运行时依赖 DLL
-统一从 `build_release\bin` 加载。
+Release 构建完成后，运行 `build_release\komapedit.exe`。程序从同级 `bin` 目录加载 `maploader.dll`、`model_loader.dll` 及其依赖。Debug 构建的对应目录为 `build`。
 
 程序启动时会按需新建 `settings` 目录，并在其中创建或读取：
 
@@ -121,20 +112,15 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 - `settings/settings.ini`：保存界面语言、字体/组件/车站标记大小、2D 线宽、主题色、编辑模式警告状态，以及打开地图时自动加载场景预览、雾效果、绘制距离、操纵器尺寸、相机速度和性能警告等 3D 画布设置
 - `settings/history.ini`：最近打开地图、背景图对齐参数，以及各地图的自定义消息显示偏好
 
-设置读取器只接受当前程序写出的精确节名、键名和值格式。旧别名、错误节中的
-键以及宽松值格式均被忽略并使用默认值。读取已有的不完整或旧格式文件时不会
-自动改写；用户显式保存设置后，程序会写出完整的当前规范格式。
+建议通过界面修改设置。程序按当前设置格式读取有效项，其余项使用默认值；保存时写入完整设置。
 
-随附程序要求 maploader API v13，并只通过 `kv_load_map_ex()` 加载地图；精确
-API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删除输出根目录中的
-旧 INI 或 DLL；发现这些文件时会立即中止，并要求使用干净的 `bin`/`settings`
-布局。
+可执行文件与 DLL 应使用同一构建版本。构建脚本若提示输出根目录中存在旧 INI 或 DLL，请按提示整理为 `bin`/`settings` 布局后重新构建。
 
 ## 使用方法
 
-本节按界面从上到下、从 2D 到 3D、最后到编辑流程的顺序介绍。只想查看地图时，不需要启用“编辑模式”；需要修改文件时，请先阅读第 10 节，并提前备份地图。
+本节介绍界面、预览和编辑操作。查看地图可直接使用各类视图；修改文件前，请阅读第 10 节并备份地图。
 
-### 1. 主界面中各组件的介绍
+### 1. 主界面
 
 主界面由以下部分组成：
 
@@ -145,26 +131,26 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 - **控制台窗口**：通常位于右下方，显示地图加载、模型加载、编辑和保存过程中的详细信息。
 - **底部状态栏**：显示当前操作状态以及错误、警告数量。
 
-窗口关闭后，可从 `地图信息列表`、`2D视图`、`3D视图` 或 `辅助信息` 菜单重新打开。窗口的显示状态和停靠布局会自动保存。设置或布局保存失败后会保持待保存状态，一秒后重试，窗口空闲或被遮挡时也会处理。
+窗口关闭后，可从 `地图信息列表`、`2D视图`、`3D视图` 或 `辅助信息` 菜单重新打开。窗口显示状态和停靠布局自动保存。
 
-### 2. 顶部菜单中的功能
+### 2. 顶部菜单
 
 #### 文件
 
 - `新建...`：打开“新建文件向导”。可新建地图、Scenario 或资源列表文件，详细说明见第 10 节。
 - `打开...`：选择 `.txt` 或 `.csv` 地图/Scenario 文件。也可使用工具栏中的“打开”。
-- `最近打开的地图`：重新打开最近使用的地图；“清除列表”只清除历史记录，不删除地图文件。
+- `最近打开的地图`：重新打开最近使用的地图，或清除历史记录。
 - `重新加载`：重新读取当前地图，并重新加载当前 3D 模型预览。快捷键为 `F5`。存在未保存更改时，程序会先要求确认。
-- `导出 CSV...`：选择一个目录，导出自轨道和各条他轨道的几何数据。输出文件名冲突（包括仅大小写不同）时，会在写入任何文件前拒绝导出，并在控制台指出冲突的轨道；文件写入失败也会报告。CSV 字段说明见后文附录。
+- `导出 CSV...`：选择目录，导出自轨道和各条他轨道的几何数据。文件名冲突时停止导出；冲突或写入错误可在控制台查看。CSV 字段说明见后文附录。
 - `退出`：关闭程序。存在未保存更改时，可选择保存、放弃或取消退出。
 
-打开 `BveTs Scenario 2.00` 格式的 Scenario 文件时，无论 Route 是否可用，Scenario 文档都会独立保留：
+打开 `BveTs Scenario 2.00` 格式的文件后，可查看 Scenario 内容并加载其中的地图：
 
-- `地图信息列表 -> 其它 -> Scenario 文件` 显示 Scenario 字段、原始 Route/Vehicle 路径和权重。启用编辑模式后可编辑已有行；右键 Route 或 Vehicle 路径可选择文件、在资源管理器中打开目录，或在当前项下新增候选、删除当前候选、上移/下移当前候选。新增项默认为空路径、隐式权重 `1`；每个已存在的 Route/Vehicle 字段至少保留一个候选，第一项不能上移、最后一项不能下移。Image 路径仍只提供选择文件和打开目录。
+- `地图信息列表 -> 其它 -> Scenario 文件` 显示 Scenario 字段、Route/Vehicle 路径和权重。启用编辑模式后可修改已有字段。右键路径可选择文件或打开目录；Route/Vehicle 还支持新增、删除和上下移动候选。新增候选默认为空路径、权重 `1`，每个已有的 Route/Vehicle 字段至少保留一个候选。
 - 只有一个有效 Route 时直接加载该地图；有多个候选时由用户选择。
-- Route 缺失、目标不存在或取消选择时，仍可查看 Scenario 文件，但不会加载地图；Route 目标存在但不是有效 BVE 地图时同样只保留 Scenario 预览。Vehicle 条目缺失或目标文件不存在时不会阻断有效 Route 地图的加载，Vehicle 数据仅用于预览。
-- Scenario 更改通过工具栏“保存”或 `Ctrl+Shift+S` 直接写入 Scenario 文件，不进入地图 Apply ledger。地图和 Scenario 同时有待保存内容时先提交地图；若 Scenario Route 路径已改变，会在控制台和状态栏警告并延后 Scenario 写入，下一次保存可单独写入。权重只用于校验，不用于自动选择 Route。
-- “最近打开的地图”、背景对齐历史、“重新加载”和“仅重新加载地图几何”均以 Scenario 文件路径为文档入口；重新加载会重新解析 Scenario，需要时再次显示候选选择框并刷新模型预览；仅重新加载地图几何时会尽量保留已有场景模型和相机。直接打开地图文件仍保持原有地图入口行为。
+- Route 缺失、无效或取消选择时，保留 Scenario 预览。地图加载取决于所选 Route；Vehicle 内容用于预览，候选权重用于校验。
+- Scenario 修改通过工具栏“保存”或 `Ctrl+Shift+S` 直接写入文件。地图和 Scenario 同时有修改时先保存地图；若 Route 路径也已改变，程序会提示再次保存 Scenario，并在重新加载后切换地图。
+- 最近文件、背景对齐历史和重新加载均以 Scenario 文件为入口。重新加载时会重新读取 Scenario、按需选择 Route 并刷新模型；“重新加载线形”会尽量保留场景模型和相机。
 
 #### 选项
 
@@ -192,7 +178,7 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 #### 辅助信息
 
 - 分组控制 2D/3D 中的车站、轨道几何、信号、音效和效果标记。
-- “轨道几何”中的“轨距设定点”“外轨超高中心设定点”“缓和曲线参数设定点”分别控制 2D 白色矩形 `CG`、`CC`、`CF` 标记及 3D 白色双行标牌。三个选项默认关闭，且不依赖“曲线半径”开关。
+- “轨道几何”中的“轨距设定点”“外轨超高中心设定点”“缓和曲线参数设定点”分别控制 2D 白色矩形 `CG`、`CC`、`CF` 标记及 3D 白色双行标牌。三个开关相互独立，默认关闭。
 - “闭塞标记”默认关闭；开启后，2D/3D 中会显示绿色 `S` 标记及信号索引参数。
 - “自轨道标记”和“平面图上显示当前位置”控制 3D 场景与 2D 平面图之间的辅助显示。
 - `其它 -> 自定义消息`、`文件结构图`、`文本预览`、`控制台窗口` 用于打开对应工具窗口。
@@ -204,21 +190,21 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 - `语言`：在简体中文、英语和日语之间切换。
 - `帮助`：打开在线文档、问题反馈页面或“关于”窗口。
 
-### 3. 工具栏中的功能
+### 3. 工具栏
 
 - **打开**：选择并打开地图或 Scenario 文件。
 - **重新加载**：重新读取地图，并重新加载当前单模型预览；效果与 `F5` 相同。
 - **重新加载线形**：重新读取地图几何，同时尽量保留已经加载的 3D 场景模型，适合只修改了线路代码的情况。
 - **编辑模式**：启用或关闭编辑功能。首次启用会显示风险提示。
-- **添加地图元素**：打开“新建地图元素向导”。只有编辑模式已启用且编辑元数据加载完成后才可使用。
-- **保存**：把已经“应用”到内存预览的更改写入源文件。快捷键为 `Ctrl+Shift+S`。资源列表中仍有未应用草稿时，保存会被阻止。
+- **添加地图元素**：启用编辑模式并完成编辑数据加载后，打开“新建地图元素向导”。
+- **保存**：把已应用的地图修改和 Scenario 修改写入源文件，快捷键为 `Ctrl+Shift+S`。保存前须先应用各资源列表中的草稿。
 - **撤销**：放弃全部未保存更改，并恢复到磁盘中的版本。程序会先要求确认。
 - **车站跳转**：从下拉列表选择车站，同时定位 2D 视图；3D 场景已启动时也会移动场景相机。
 - **跳转到里程(m)**：输入数字后点击“跳转”，或在输入框中按 `Enter`。3D 场景已启动时也会同步移动相机。
 
-当前实现的全局快捷键为 `F5`（重新加载）和 `Ctrl+Shift+S`（保存）。2D、3D 画布中的鼠标与键盘操作分别列在第 5、9 节。
+全局快捷键为 `F5`（重新加载）和 `Ctrl+Shift+S`（保存）。2D、3D 画布操作分别见第 5、9 节。
 
-### 4. 底部状态栏与控制台窗口中的功能
+### 4. 状态栏与控制台
 
 #### 底部状态栏
 
@@ -229,13 +215,13 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 
 控制台显示完整的加载、解析、模型和编辑日志。遇到地图无法打开、模型缺失或保存失败时，应先查看这里。
 
-应用、保存和删除会在状态栏显示总体执行用时。控制台中的英文 `edit timing:` 日志记录操作、待保存变更数量、3D 状态、各阶段毫秒用时及执行次数。总体用时包含必要的同步预览、Inspector 和 3D 更新，不计入选择源码位置的等待时间及后续异步模型加载。各阶段包含嵌套阶段，不能直接相加。完整重解析和源码写回安全检查始终保留，因此大型线路上的编辑仍可能超过一秒。
+应用、保存和删除的总用时显示在状态栏，分阶段耗时记录在控制台的 `edit timing:` 日志中。
 
 - **清除**：清空日志，同时把错误和警告计数归零。
 - **复制**：把全部日志复制到剪贴板，便于反馈问题。
-- 日志停留在底部时，新内容会自动滚动显示；手动向上滚动后不会强制跳回底部。
+- 日志停留在底部时自动跟随新内容；向上滚动可停留查看历史日志。
 
-### 5. 2D画布中的功能
+### 5. 2D 画布
 
 2D 视图上方可选择“移动”或“测量”模式，并可把网格设置为“固定”“可移动”或“无”。纵向分隔条可调整平面图与下方图表的高度；横向分隔条可调整纵断面图与曲线半径图的宽度。
 
@@ -260,26 +246,26 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 
 #### 标记、定位与编辑
 
-- 通过 `辅助信息` 菜单选择需要显示的标记，避免在大型地图上一次显示过多信息。
-- 开启“曲线半径”后，每个 `Curve.Interpolate` 端点都会在平面图中显示为改用曲线半径绿色的限速线形标记，标记右侧紧邻显示求值后的有符号半径；省略半径参数时显示其继承值。右键端点可打开“属性/编辑”或“删除”，未开启编辑模式时这些操作保持禁用。
+- 通过 `辅助信息` 菜单选择要显示的标记。
+- 开启“曲线半径”后，`Curve.Interpolate` 端点以绿色标记显示，旁边标注求值后的有符号半径；省略半径时显示继承值。
 - 右键标记可定位到对应表格；有 3D 对象的项目还可定位到 3D 场景。
-- 已启用的 `CG`/`CC`/`CF` 参数标记在非编辑模式下仍显示，但右键编辑与删除操作保持禁用。其它可编辑自轨道曲线/坡度变化点及他轨道变化点继续沿用现有编辑模式显示规则；右键可编辑标记可打开“属性/编辑”或删除。
-- 纵断面图和曲线半径图中，只有已经正确配对的曲线/坡度变化点才提供编辑菜单。
+- 启用编辑模式后，可右键受支持的标记进行“属性/编辑”或“删除”。自轨道曲线/坡度及他轨道的编辑控制点在此模式下显示；`Curve.Interpolate` 和 `CG`/`CC`/`CF` 标记按各自开关显示。
+- 纵断面图和曲线半径图中，已配对的曲线/坡度变化点提供编辑菜单。
 
 #### 背景图
 
 从 `2D视图 -> 背景图` 导入图片后，可选择显示、手动调整，或“按车站对齐”。按车站对齐时，分别选择两个车站，并在背景图上双击对应位置，程序会计算图片的位置、比例和旋转角度。
 
-### 6. 各表格中的功能
+### 6. 地图信息表格
 
 #### 通用操作
 
 - 在 `地图信息列表` 中打开所需表格。在提供定位菜单的里程单元格上右键，可定位到平面图或已启动的 3D 场景。
 - 右键源文件或资源文件路径，可打开其所在目录。悬停路径通常会显示原始参数和解析后的绝对路径。
 - 布景模型、信号现示、音效文件和 3D 音效文件表格提供部分/完全匹配查找、上一个/下一个结果以及“查找未使用项”。
-- 普通音效文件的未使用项搜索包括车站到达/出发音效引用，并考虑当前车站列表草稿中的修改、新增和删除。这些引用属于普通音效列表，不计入 3D 音效列表。
+- 普通音效的未使用项搜索包含车站到达/出发音效，并按当前车站列表草稿计算引用。
 - 在地图放置行中右键资源 key，可跳到对应的布景模型、信号现示或音效定义。
-- 非编辑模式只提供查看、查找、定位和预览。编辑模式下，右键可编辑地图元素的单元格会增加“属性/编辑”和“删除”；部分表格也支持双击打开“属性/编辑”。
+- 启用编辑模式后，右键可编辑元素的单元格可选择“属性/编辑”或“删除”；部分表格支持双击打开“属性/编辑”。
 
 #### 车站与布景
 
@@ -287,17 +273,16 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 - **地图布景**：显示 `Structure.Put` 和 `Structure.Put0`。可定位到平面图、3D 场景或对应模型定义。
 - **地图布景（PutBetween）**：显示 `Structure.PutBetween`，用于查看两条轨道之间的变形布景。
 - **布景模型**：显示 structureKey 和模型路径。右键 key 可预览模型或把该 key 填入已打开且类型匹配的新建元素向导。
-- **连续布景**：把相关的 `Repeater.Begin`/`Begin0`/`End` 合并为区间显示，可分别跳到起点、终点或变化点。存在多个 Begin 时，删除菜单会提供“全部删除”“删除对应变化点”“修剪至变化点”和“从变化点开始”。
-  每个 Begin 都从自己的起点建立 `begin + k * interval` 放置网格，并使用原始结构列表的第 `k % N` 项。End 和下一个同名 Begin 的边界不属于前段。同里程事件遵循包含 Include 展开的源码解析顺序：先 Begin 后 End 会结束放置，先 End 后 Begin 会重新开始。缺失的模型引用保留循环中的空位，不会使后续模型前移。零长度段仍可编辑，但不绘制实例。
+- **连续布景**：将同名 `Repeater.Begin`/`Begin0`/`End` 显示为区间，可跳到起点、终点或变化点。多段区间支持“全部删除”“删除对应变化点”“修剪至变化点”和“从变化点开始”。每个 Begin 从自己的起点按间隔循环放置模型，至 End 或下一个同名 Begin 之前结束；同里程事件按源码顺序执行。缺失模型保留循环空位，零长度段仅显示编辑信息。
 - **他列车**：显示他列车定义、停止位置和只读的 `Train.Enable` 时间。可逐条控制路径显示，并把停止位置定位到平面图。
 
 #### 轨道几何、信号与闭塞
 
-- **其他轨道**：控制每条他轨道的显示状态、显示范围和颜色。编辑模式下可右键 `Key` 重命名同名 `Track[...]` 语句；布景、信号和 Repeater 中对该轨道的引用不会自动改名。
+- **其他轨道**：控制各轨道的显示、范围和颜色。编辑模式下可右键 `Key` 重命名同名 `Track[...]` 语句；布景、信号和 Repeater 中的轨道引用须另行修改。
 - **轨道变位、粘着特性变化点、限速点**：显示相应变化位置，并可定位到 2D/3D。限速 Begin 和 End 可以独立存在；End 只编辑里程。
 - **信号现示**：显示信号现示定义和引用的布景 key，可反查布景模型。
 - **地图信号**：显示 `Signal.Put` 的位置和参数。“显示”勾选框控制该信号在平面图中的标记。
-- **闭塞**：分别显示 `Section.Begin`/`BeginNew` 和 `Section.SetSpeedLimit`/`Signal.SpeedLimit`，保留可变数量参数和显式 `null`。 表格每行最多显示 508 个参数，超长行会显示提示；属性/编辑仍保留完整参数。
+- **闭塞**：显示 `Section.Begin`/`BeginNew` 和 `Section.SetSpeedLimit`/`Signal.SpeedLimit`，支持可变数量参数和显式 `null`。每行最多显示 508 个参数，完整参数可在“属性/编辑”中查看。
 - **应答器**：显示并定位 `Beacon.Put`。
 - **变量**：按不区分大小写的变量名分组显示全部赋值。悬停可查看原表达式；该表只读。
 
@@ -306,45 +291,45 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 - **音效文件、3D音效文件**：显示音效 key、文件路径和缓冲区数量，并可打开文件所在目录或把 key 填入匹配的新建元素向导。
 - **地图音效、地图3D音效、走行音变化点、轮缘摩擦音效变化点、道岔音效播放点**：显示并定位播放点或变化点。
 - **背景变化点、驾驶台亮度变化点、雾效果变化点、旧式雾效果变化点、绘制距离变化点**：显示并定位对应效果。
-- **Scenario 文件**：只在打开 Scenario 文档时可用，显示全部官方字段及现有候选。编辑模式关闭时只读，启用后可编辑；Route/Vehicle 右键菜单支持新增、删除和候选换序并至少保留一个候选，Scenario“保存”会直接写入源文件。
+- **Scenario 文件**：显示已打开的 Scenario 字段及候选。编辑和保存方式见第 2 节。
 
 #### 资源列表的行内编辑
 
 车站定义、布景模型、信号现示、音效文件和 3D 音效文件使用统一的行内编辑方式：
 
 - 双击可编辑单元格开始输入，按 `Enter` 结束当前单元格输入；右键可选择文件、在上方/下方新增行、上移/下移整行、清空单元格或删除整行。
-- 列表仅有文件头时，表格会显示“新增行”按钮；此时新增行会追加到文件头之后，无需手工插入逗号占位行。
+- 空列表可通过“新增行”添加第一条记录。
 - “选择文件”会尽可能保存相对路径；无法生成相对路径时使用绝对路径。
-- Signal 主行与 glare 行在新增、移动和删除整行时作为一个整体。新增主行初始为 6 个字段且默认不带 glare，可再使用“新增眩光”。
-- 表格中的“应用”只把该表格草稿提交到内存预览。所有资源列表草稿都应用后，工具栏“保存”才可用。
+- 信号现示主行与眩光行作为整体移动或删除。新增主行默认为 6 个字段，可通过“新增眩光”添加眩光行。
+- 点击表格中的“应用”更新内存预览；各表格草稿全部应用后，点击工具栏“保存”写入文件。
 
-信号现示列表保留每条物理 CSV 行的实际宽度，包括尾部空字段。较短行超出实际宽度的单元格以斜线表示，不能编辑；实际存在的空白字段仍可编辑。表格最多显示 509 个结构键列，后续列隐藏时显示警告；隐藏字段仍完整保留在源数据和草稿中。
+信号现示列表按各 CSV 行的实际字段数显示，保留尾部空字段。斜线表示该行没有对应字段，已有空白字段可直接编辑。表格最多显示 509 个结构键列，超出部分保留在源数据和草稿中，并显示提示。
 
-对于同一现示包含多条连续眩光行的历史文件，普通值编辑和整体移动仍保留各条源行的结构，显式删除眩光会移除全部这些眩光行。这些眩光字段在表格中合并显示为一行；改变其合并宽度时，由于无法明确对应的物理源行，“应用”会拒绝该操作。最多只有一条眩光行的普通现示不受此限制，可使用下列列操作。
+同一现示的多条连续眩光行会合并显示，可修改值或整体移动；“删除眩光”会删除这些眩光行。此类现示须保持眩光字段总数，修改总数时“应用”会报错。通常每个现示只有一条眩光行，可直接使用以下列操作。
 
-- 右键实际 CSV 单元格，可“在最右侧新增单元格”、“删除最右侧空白格”或“删除最右侧一格”，仅改变当前物理行。主行与眩光行可以具有不同宽度。
-- “应用”旁的“对齐所有列”将全部主行和已有眩光行补齐到实际最大宽度；“在右侧新增列”和“删除最右侧列”分别对每行独立增减一格，不执行对齐；“删除全部右侧空白”分别裁去各行尾部空格。
-- 列操作始终保留首个 CSV 字段和至少一个结构键字段。结构字段可以全部为空，新插入行也采用相同规则；只有显式删除眩光行才会移除该行。眩光行首个 CSV 字段始终为空且不可编辑。
-- 删除非空末格需要确认，全局删除只统一确认一次，并使用当前正在输入的最新值。取消时保留草稿和行宽。
-- “最右侧”指实际最后一个字段，包括超过显示上限的部分；对齐也采用实际最大行宽。所有列修改沿用草稿、“应用”、“保存”和“撤销”的现有流程。
+- 右键 CSV 单元格，可在当前行最右侧新增一格、删除末尾空白格或删除最后一格。主行与眩光行可有不同字段数。
+- “对齐所有列”将各行补齐至最大字段数；“在右侧新增列”和“删除最右侧列”分别为各行增减一格；“删除全部右侧空白”裁去各行末尾空字段。
+- 各行至少保留首个 CSV 字段和一个可为空的结构键字段。眩光行的首字段固定为空，整行通过“删除眩光”移除。
+- 删除非空末格前会要求确认；批量删除统一确认一次。
+- 列操作包含显示上限之外的字段，修改后按“应用”→“保存”提交。
 
-每类资源列表在一张地图中只能载入一份。列表未指定时，表格中央会显示“新建或导入文件”；已有列表需要替换时，右键表格顶部的“文件路径”，选择“更换文件...”。替换前若该列表还有未应用或未保存的旧内容，程序会先确认，并只丢弃该列表的旧草稿。
+每张地图可载入各类资源列表各一份。尚未载入时，点击表格中央的“新建或导入文件”；替换时，右键顶部“文件路径”，选择“更换文件...”。若该列表有未应用或未保存的修改，程序会确认后丢弃该列表的修改。
 
-导入或更换资源列表时，程序会检查文件头和版本：Station List 使用现有的 0.04+ 兼容规则，Structure List 要求 1.00+，Signal Aspects List、Sound List 和 Sound3D 使用的 Sound List 要求 2.00+。资源列表继续支持 `#` 注释；为兼容已有路线，未放在 CSV 双引号内的 `//` 也会开始注释，双引号内的 `//` 保持为普通文本。
+导入或更换资源列表时会检查文件头和版本：Station List 支持 0.04+，Structure List 支持 1.00+，Signal Aspects List 和普通/3D 音效使用的 Sound List 支持 2.00+。注释可用 `#` 或 CSV 双引号外的 `//`；双引号内的 `//` 按文本处理。
 
-如果入口地图及其 Include 中重复载入同一种无 key 资源列表，或存在不区分大小写的重复 `Train[].Enable`，地图加载会被拒绝；原因会显示在控制台中。
+上述列表的唯一性检查涵盖入口地图及其 Include；`Train[].Enable` 的 key 也须唯一（忽略大小写）。重复定义会导致加载失败，详情见控制台。
 
-### 7. 文件结构图中的功能
+### 7. 文件结构图
 
-每个 Map 文件的 `distance` 独立从 `0` 开始；Include 返回时不改变父文件的当前里程，普通 `$变量` 则共享。要相对父地图放置子地图，可在 Include 前赋值 `$dis=distance;`，在子地图内使用 `$dis+偏移量;`。布景的坐标和旋转参数也可分别使用变量及表达式。
+每个 Map 文件的 `distance` 独立从 `0` 开始，Include 结束后恢复父文件里程，普通 `$变量` 则共享。要相对父地图放置子地图，可在 Include 前赋值 `$dis=distance;`，在子地图内使用 `$dis+偏移量;`。布景坐标和旋转参数也支持变量及表达式。
 
 从 `辅助信息 -> 其它 -> 文件结构图` 打开该窗口。入口地图位于最左侧，右侧按层级显示它所 Include 的子地图；悬停节点可查看 Include 参数和绝对路径。
 
 #### 查看文件
 
 - 右键有效节点，选择“预览文本”，可在只读文本预览窗口中查看源码和行号。
-- 选择“在文件资源管理器中打开”会打开目标文件所在目录。文件缺失时仍会尝试打开其目标目录；目录也不存在时会在控制台报告错误。
-- 缺失或无效的 Include 目标显示为红色节点，并禁用文本预览、导入子地图和新建子地图。
+- “在文件资源管理器中打开”可打开目标目录；目录不存在时在控制台报错。
+- 缺失或无效的 Include 目标显示为红色节点，其文本预览、导入和新建子地图操作禁用。
 
 #### 编辑 Include
 
@@ -353,11 +338,11 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 - **更换文件...**：选择新的 `.txt`/`.csv` 子地图，改写上级文件中的 Include 路径。优先使用相对路径，失败时使用绝对路径。
 - **解除引用**：删除上级文件中的 Include 语句。如果后续语句仍依赖该子地图提供的内容，操作会被阻止。
 - **导入子地图...**：选择已有 BVE 地图，并在当前节点代表的源码文件中暂存新的 Include。
-- **新建子地图...**：创建 UTF-8 无 BOM、CRLF、文件头为 `BveTs Map 2.02:utf-8` 的空白子地图，再暂存 Include；不会覆盖已有文件。
+- **新建子地图...**：在新文件路径创建 UTF-8 无 BOM、CRLF、文件头为 `BveTs Map 2.02:utf-8` 的空白子地图，并暂存 Include。
 
-新增 Include 时，程序优先放在首个本地距离语句之前、最后一个已有 Include 之后；没有合适的 Include 时放在首个距离语句之前，两者都没有时追加到文件末尾。以上更改都会立即刷新内存预览，但只有“保存”才写入父地图。
+新增 Include 放在首个本地距离语句之前的最后一个 Include 之后；没有此前 Include 时，放在首个距离语句之前；两者均无则追加到文件末尾。修改会立即更新预览，点击“保存”后写入父地图。
 
-### 8. 3D模型预览中的功能
+### 8. 3D 模型预览
 
 从 `3D视图 -> 布景模型预览` 打开窗口，再从“布景模型列表”右键某个 structureKey，选择“预览模型”。
 
@@ -367,11 +352,11 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 - **背景颜色**：选择任意 RGB 颜色，或使用白、黑、灰、蓝、绿快捷颜色。
 - 在画布中按住鼠标左键拖动可旋转模型；滚动鼠标滚轮可缩放。
 
-模型或纹理无法加载时，窗口会保持可用，具体警告或错误显示在控制台中。
+模型或纹理加载失败的详情可在控制台查看。
 
-### 9. 3D场景预览中的功能
+### 9. 3D 场景预览
 
-从 `3D视图 -> 3D场景预览` 打开窗口，然后点击“启动3D场景预览”。如果在 `选项 -> 3D画布设置` 中启用“打开地图时自动加载场景预览”，打开或重新加载地图时会自动启动；该选项默认关闭。
+从 `3D视图 -> 3D场景预览` 打开窗口，点击“启动3D场景预览”。也可在 `选项 -> 3D画布设置` 中开启“打开地图时自动加载场景预览”（默认关闭），随打开或重新加载地图自动启动。
 
 窗口顶部提供“启动3D场景预览”“重新加载（模型）”和“关闭”：
 
@@ -393,7 +378,7 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 | 按住 `Ctrl` | 加快上述键盘移动速度 |
 | `X` | 在当前里程恢复到自轨道中心上方的默认相机姿态 |
 
-相机速度可在“3D画布设置”中调整。工具栏的车站跳转和里程跳转也会移动场景相机；相机最多可后退到自轨道起点里程之前 100 m，低于该里程的请求会被钳制。若启用“平面图上显示当前位置”，2D 平面图会同步显示相机位置。
+相机速度可在“3D画布设置”中调整，也可通过工具栏跳转到车站或指定里程。相机最远可后退至自轨道起点前 100 m。开启“平面图上显示当前位置”后，2D 平面图同步显示相机位置。
 
 #### 选择模式
 
@@ -408,39 +393,39 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 
 #### 场景叠加信息与设置
 
-画布会显示相机横向偏移、高度和里程，以及当前曲线半径/超高、坡度、限速、闭塞信号速度和下一站信息。相机位于 `Curve.Interpolate` 区间内时，曲线信息会同时显示两个端点的半径、超高和各非零端点的曲线方向，并以三角箭头分隔；如果两端求值后的半径均为零，则改为显示本地化的“直线”标签。底部还显示场景块、实例、模型加载数量和帧率。
+画布显示相机位置、当前曲线半径/超高、坡度、限速、闭塞信号速度和下一站信息。`Curve.Interpolate` 区间显示两端的半径、超高和曲线方向；两端半径均为零时显示“直线”。底部显示场景块、实例、模型加载数量和帧率。
 
-显示的 FPS 是最近一个完整 `0.2` 秒活动窗口内 3D 场景画布渲染调用速率的平均值，并不测量交换链 Present 完成时间或显示器刷新率。间隔超过 `0.1` 秒时会丢弃未完成窗口并保留上次发布值，因此恢复移动时不会根据少量极短的提交间隔发布帧率。
+FPS 表示场景画布最近 `0.2` 秒活动窗口的平均渲染调用速率；空闲时保留上次统计值。
 
 `3D画布设置` 可即时切换雾效果、地图语句驱动的绘制距离和性能警告，并可调整普通绘制距离。相关标记的显示状态与 `辅助信息` 菜单同步。
 
-雾效果开关同时控制 `Fog.Interpolate`/`Fog.Set` 指数雾与 `Legacy.Fog` 线性雾。Legacy 的 start/end 是以米为单位的相机深度距离，RGB 使用 0–255 标度。零里程的 Legacy 语句立即生效；后续语句在前后均为线性雾时，从旧状态在接下来的 25 米内过渡到新状态。相邻节点的雾模式不同时，保持前一状态，抵达后一节点后立即切换；两类语句混用时也遵循此规则。没有雾语句的地图继续保持原有的无雾预览。
+雾效果支持 `Fog.Interpolate`/`Fog.Set` 指数雾和 `Legacy.Fog` 线性雾。Legacy 的 start/end 为相机深度距离（米），RGB 使用 0–255 标度；零里程设置立即生效，前后均为线性雾时，后续设置在 25 米内过渡。同类雾节点间渐变，异类节点间在后一节点切换。
 
-在编辑模式下，旧式雾列表及其平面图/3D 标牌提供“属性/编辑”和“删除”。“新建地图元素”的“效果”分类包含 `Legacy.Fog(start, end, red, green, blue)`，初值为里程 `0`、start `0`、end `600`、RGB `128/128/128`；从画布发起时预填所选里程。五个参数均须为有限数值。深度单位为米，RGB 使用 0–255 标度，但兼容性编辑保留负值、等值或反向深度区间以及标度之外的有限 RGB 值。Apply 更新预览，Save 写入所属源文件，Revert 丢弃待保存修改。
+编辑模式下，可从旧式雾列表或 2D/3D 标记编辑、删除 `Legacy.Fog`，也可在新建元素向导的“效果”分类中添加。
 
 #### 场景标牌
 
-标记可见性由 `辅助信息` 控制。开启“曲线半径”后，每个 `Curve.Interpolate` 插值点都会显示与其他曲线半径标牌同款的标牌，内容为求值后的半径、超高和曲线方向；求值半径为零时改为显示 `Intpl. 0`，不显示方向箭头。插值点标牌支持拾取、共享的蓝色高亮，以及与 2D 端点相同的“属性/编辑”和“删除”右键操作；可通过独立 `Curve.Interpolate` 模板新建。
+通过 `辅助信息` 控制标牌显示。开启“曲线半径”后，`Curve.Interpolate` 插值点显示半径、超高和曲线方向；半径为零时显示 `Intpl. 0`。标牌支持拾取、高亮，以及编辑模式下的右键编辑和删除。
 
-### 10. 编辑与新建地图元素/新建文件向导、更改的应用与保存
+### 10. 编辑、新建与保存
 
 #### 开始编辑前
 
-编辑功能仍属于测试功能。首次启用工具栏“编辑模式”时会显示风险提示；请先备份地图，或使用 Git 等版本控制工具保存可恢复的版本。勾选“不再显示”并确认后，该提示以后不再出现。
+首次启用工具栏“编辑模式”时会显示提示，可勾选“不再显示”并确认。
 
-关闭编辑模式、打开其它文档、重新加载或退出程序时，如果仍有未保存更改，程序会要求确认。不要把“应用”和“保存”当成同一个操作。
+关闭编辑模式、打开其它文档、重新加载或退出程序时，程序会提示处理未保存更改。
 
 #### 草稿、应用、保存与撤销
 
-编辑过程分为三层：
+地图与资源列表的编辑流程如下：
 
-1. **窗口草稿**：刚在“属性/编辑”、资源列表或向导中输入的内容。此时地图预览可能只显示局部实时效果，源文件没有变化。
-2. **应用到预览**：点击窗口中的“应用”后，程序验证并重新解析内存工作副本，随后刷新 2D、表格和 3D 预览。磁盘文件仍没有变化。
-3. **保存到磁盘**：点击工具栏“保存”或按 `Ctrl+Shift+S`，才把全部已应用更改写入相应的地图/Include/资源列表文件。
+1. **修改草稿**：在“属性/编辑”、资源列表或向导中输入内容；部分对象可实时预览。
+2. **应用到预览**：点击窗口中的“应用”，验证并重新解析内存工作副本，刷新 2D、表格和 3D 预览。
+3. **保存到磁盘**：点击工具栏“保存”或按 `Ctrl+Shift+S`，将全部已应用更改写入对应的地图、Include 或资源列表文件。
 
-工具栏“撤销”会丢弃全部未保存更改并恢复磁盘版本；“重新加载”也会重新读取磁盘文件，但在放弃未保存更改前会先确认。资源列表仍有未应用草稿时必须先在对应表格点击“应用”，否则不能保存。
+工具栏“撤销”丢弃全部未保存更改；“重新加载”从磁盘重新读取文件，并在丢弃更改前要求确认。资源列表和自定义消息中的草稿须先在对应表格“应用”，再统一保存。
 
-保存前，程序会重新解析所有受影响文件并检查目标结果、文件编码和磁盘并发修改。如果新文本不能用原文件编码表示，或文件已被其它程序修改，保存会被阻止，而不是静默改变编码或覆盖外部更改。
+保存前会重新解析并核对修改结果，保留原文件编码、BOM 和换行格式。新文本超出原编码范围，或文件已被其它程序修改时，程序会阻止保存并提示原因。
 
 #### 编辑或删除已有地图元素
 
@@ -449,53 +434,49 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 3. 点击“应用”刷新内存预览。
 4. 检查 2D、表格和 3D 结果；确认无误后使用工具栏“保存”。
 
-支持编辑的项目包括车站/布景/信号/应答器放置、连续布景、闭塞、限速、曲线与坡度、他轨道变化、轨道变位、地图音效与噪声、背景、粘着、驾驶台亮度、雾和绘制距离等。删除也先进入内存预览，保存后才从源文件中真正移除。
+支持编辑车站、布景、信号、应答器、连续布景、闭塞、限速、曲线与坡度、他轨道、轨道变位、音效、背景、粘着、驾驶台亮度、雾、光照参数、绘制距离和先行列车通过点等。右键“删除”会将删除操作应用到预览，保存时写入源文件。
 
-`Structure.Put`/`Put0` 和 `Repeater.Begin`/`Begin0` 的“属性/编辑”窗口提供“添加坐标偏移”或“去除坐标偏移”。去除非零偏移会丢弃六个偏移值，因此程序会先确认。短式 `Signal.Put` 在编辑 Z、旋转、倾斜或跨度前，也会要求确认是否转换为完整形式。
+`Structure.Put`/`Put0` 和 `Repeater.Begin`/`Begin0` 可通过“添加坐标偏移”或“去除坐标偏移”切换形式；清除非零偏移前需确认。短式 `Signal.Put` 在编辑 Z、旋转、倾斜或跨度前，需确认转换为完整形式。
 
 #### 在 3D 场景中实时调整
 
-打开“属性/编辑”后，受支持的对象会出现操纵器。拖动只修改当前窗口草稿，仍需点击“应用”，最后再“保存”。
+打开“属性/编辑”后，可拖动受支持对象的操纵器调整草稿，再按上述流程应用、保存。
 
 - `Structure.Put`、完整式 `Signal.Put` 和 `Repeater.Begin` 可使用 X/Y/Z 轴调整坐标。
-- `Sound3D[soundKey].Put(x, y)` 的 X/Y 轴以 0.001 m 修改相对位置，Z 轴以整米修改 distance。
-- `Structure.Put0` 和 `Repeater.Begin0` 只显示 Z 轴，以整米调整里程；在检查器中添加坐标偏移后会切换为完整坐标操纵器。
-- 带显式 End 的 Repeater 还会在结束位置显示 Z 轴，以整米调整 EndDistance。
+- `Sound3D[soundKey].Put(x, y)` 的 X/Y 轴以 0.001 m 调整相对位置，Z 轴以整米调整里程。
+- `Structure.Put0` 和 `Repeater.Begin0` 使用 Z 轴调整整米里程；添加坐标偏移后可使用完整坐标操纵器。
+- 带显式 End 的 Repeater 可在结束位置通过 Z 轴调整整米结束里程。
 - `Structure.PutBetween` 使用 Z 轴调整整米里程，并实时重新计算变形后的模型。
 
 #### 新建地图元素向导
 
-可从工具栏“添加地图元素”打开向导，也可在 3D 场景的“里程选择”模式中右键当前里程打开。先选择目标源文件，再选择模板并填写参数。所有已加载的非资源列表地图源文件（包括空白或无距离语句的文件）均可选择。对于带里程的元素，即使源文件没有距离锚点、只有一个锚点，或语句位于首锚点之前，也可以新建后继续移动。放置会复用兼容距离块，或在保留其他语句的前提下创建距离块。自定义消息使用下文的文件头插入规则。
+从工具栏“添加地图元素”打开向导，或在 3D“里程选择”模式中右键当前里程打开。选择目标源文件、模板并填写参数；已加载的地图源文件（包括空白或无距离语句的文件）均可作为目标。
 
-既有元素属于无歧义的末端源码区段时，可以越过该段的末里程：递增段扩展到更大里程，递减段扩展到更小里程，即使前面存在转折也可处理。新建元素优先使用现有无歧义距离块或括界，再考虑末端区段的 EOF 扩展。平台段、转折点及多个等值目标块仍需手动选择。已有空距离块与注释保持不变，最终当前里程允许改变。
+新建或移动元素时，程序会复用合适的距离块，或创建新的距离块，并保留其他语句与注释。源码末段的里程顺序明确时，可向末段以外延伸。位置或表达式存在歧义时，按提示在文本预览中选择高亮的插入位置，或填写明确的里程表达式；应用前会验证修改后的求值结果。
 
 向导按以下类别提供当前支持的元素：
 
 - **布景**：`Structure.Put`、`Put0`、`PutBetween`，以及 `Repeater.Begin`/`Begin0`/`End`。
 - **车站**：`Station.Put`。
-- **轨道几何**：曲线、坡度、轨道变位和粘着变化。
-- **其他轨道**：位置、X/Y 插值和超高相关的当前 `Track.*` 形式。
-- **信号**：`Signal.Put`、限速 Begin/End、Section、信号速度和 `Beacon.Put`。
+- **轨道几何**：曲线、坡度、轨距、曲线中心与插值函数、轨道变位和粘着变化。
+- **其他轨道**：位置、X/Y 插值和超高相关的 `Track.*` 语句。
+- **信号**：信号、限速、闭塞、信号速度、应答器和 `PreTrain.Pass` 先行列车通过点。
 - **音效**：地图音效、3D 音源、走行音、轮缘摩擦音和道岔音。
-- **效果**：背景、驾驶台亮度、雾和绘制距离。
-- **其它**：自定义消息，作为注释放在所选地图文件的文件头下方，不需要里程字段。
+- **效果**：背景、驾驶台亮度、雾、光照参数和绘制距离。
+- **其它**：自定义消息，作为注释放在地图文件头下方。
 
-“应用”会新建元素并刷新预览；“应用并编辑”会在成功后关闭向导，并直接打开新建主语句的“属性/编辑”窗口，自定义消息则打开“自定义消息”标签页。从 Repeater 检查器打开的变化点向导不提供“应用并编辑”。
+“应用”新建元素并刷新预览；“应用并编辑”还会关闭向导，打开新元素的“属性/编辑”窗口或“自定义消息”标签页。Repeater 的变化点向导使用“应用”。
 
-重要规则：
+各模板的填写要点：
 
-- Repeater 可一次添加 Begin、End 或两者；同时添加时 End 里程不能小于 Begin。同名有效区间内只能按规则插入变化点，不能创建相互重叠的普通区间。
-- Repeater“属性/编辑”中的“插入变化点”会复制当前草稿参数，并把起始/结束里程预填为当前起点，便于继续修改。
-- 曲线向导支持 `Curve.Begin(radius)`、`Curve.Change(radius)`、`Curve.End()`；坡度向导支持 `Gradient.Begin(gradient)`、`Gradient.End()`。可选的缓和曲线起点与对应语句会按正确源码顺序一起创建。旧式别名和 Gradient.Interpolate 不提供新建入口。
-
-- “轨道几何”分类中，独立 `Curve.Interpolate` 模板紧随 `Curve.*`。distance 必填；radius 与 cant 默认均包含且为 `0`。取消 cant 可新建仅含 radius 的形式；取消 radius 会同时禁用 cant，生成 `Curve.Interpolate()`。新元素复用相同的 2D/3D 标记、“属性/编辑”、删除、Apply/Revert 与全局 Save 生命周期。
-- 其他轨道模板只生成当前 `Track.*` 形式。可选尾参数必须从前到后连续启用，例如填写 `radiusV` 前必须包含 `radiusH`。新的规范 trackKey 会创建他轨道；数值 key 与带引号的字符串 key 保持区分。
-- 向导或检查器无法自动确定源码插入位置时，文本预览会高亮后端允许的边界。里程表达式有歧义时要求输入明确表达式；实参变量或 Include 环境冲突能够通过其他位置保持原求值结果时，则提供位置选择。提交后仍须通过完整语义验证。没有可行位置的操作会明确拒绝，不反复打开无法使用的对话框。失败输入仍可修改，取消不会丢失此前已应用的更改。
-- 仅在需要人工处理时，应用控制台才输出英文警告，使用 `ambiguous_Source_Section`、`evaluation_Environment_Requires_Boundary` 等分词原因码并附源码上下文；自动复用缓存选择时不输出该警告。Apply 更新预览，Save 写盘，Revert 丢弃待保存更改。
+- **Repeater**：可添加 Begin、End 或两者；成对添加时，结束里程须大于或等于起始里程。同名区间须避免重叠；区间内的变化可从“属性/编辑 → 插入变化点”添加，向导会预填当前参数和起点里程。
+- **曲线与坡度**：曲线模板提供 `Curve.Begin`、`Curve.Change`、`Curve.End`，坡度模板提供 `Gradient.Begin`、`Gradient.End`，可配套创建缓和段起点。
+- **曲线插值点**：`Curve.Interpolate` 的 distance 必填，radius 与 cant 默认均为 `0`。可取消 cant 生成单参数形式，或取消 radius 生成无参数形式。
+- **其他轨道**：可选尾参数须连续启用，例如填写 `radiusV` 前须包含 `radiusH`。新的 trackKey 会创建他轨道，数值键与带引号的字符串键分别处理。
 
 #### 自定义消息（Message from Creator）
 
-在“新建地图元素向导”中选择“其它 → 自定义消息”，选择已加载的地图源文件并填写单行消息。“应用”仅暂存到内存，“保存”才写入所选 Map 文件。文件头后保留一行空白（已有空白行时复用），新消息追加到此处连续消息块的末尾，原有内容保持不变：
+在新建地图元素向导中选择“其它 → 自定义消息”，选定地图源文件并填写单行消息。应用、保存后，消息以以下注释格式写在文件头空行之后；已有消息时追加到消息块末尾：
 
 ```plaintext
 BveTs Map 2.02
@@ -503,23 +484,27 @@ BveTs Map 2.02
 //--kme--message-from-creator:"content"
 ```
 
-这是普通 BVE `//` 注释中的 komapedit 元数据。内容按原文处理：保留首尾空格、内部引号和反斜杠，不解释转义序列。允许空消息，拒绝实际换行和 NUL。写入保留原编码、BOM 和换行；原编码无法表示的内容会阻止保存。
+消息使用普通 BVE `//` 注释保存，内容按原文处理，保留空格、引号和反斜杠。可填写空消息；内容须为单行且无 NUL 字符。
 
-直接打开地图或通过 Scenario 打开时，会展示主 Map 及已加载 Include 中的消息。重复 Include 中的同一物理消息只显示一次，不同行上的相同内容仍分别展示。多条消息提供前后翻页按钮。“确定”会把“下次不再显示”的选择按解析后的主 Map 路径保存到 `settings/history.ini`，不受最近文件数量限制。消息变化或全部删除后，该偏好仍保留。Reload、开启编辑模式和 Apply 不会重新弹窗。
+打开地图或 Scenario 时，会展示主地图及已加载 Include 中的消息，多条消息可翻页查看。重复引用同一文件时，同一条消息仅展示一次。勾选“下次不再显示”并确认后，程序会按主地图记住该选择。
 
-通过“辅助信息 → 其它 → 自定义消息”可随时查看源文件、行号与内容，即使已关闭自动提示。内容随列宽自动换行。开启编辑模式后，双击内容单元格进入编辑，按 Enter 或离开单元格将文字暂存到草稿，Esc 取消当前输入；右键内容单元格并选择“删除整行”可暂存删除操作。点击页内“应用”，再使用顶部工具栏的“保存”。未应用草稿（包括正在编辑的单元格输入）会阻止保存；工具栏的“撤销”会丢弃草稿和待保存的内存修改。标签页内不设置独立的内容编辑框、删除按钮、保存或撤销按钮。消息向导中的“应用并编辑”会打开此标签页。显示换行不会向保存的消息添加换行符。消息不具有里程或 2D/3D 标记。
+通过“辅助信息 → 其它 → 自定义消息”可随时查看源文件、行号与内容。开启编辑模式后，双击内容单元格编辑，按 Enter 或离开单元格暂存草稿，Esc 取消当前输入；右键“删除整行”暂存删除操作。完成后点击页内“应用”，再通过工具栏“保存”。
 
 #### 新建文件向导
 
-从 `文件 -> 新建...` 打开。可创建以下七种文件：`BveTs Map 2.02`、`BveTs Scenario 2.00` 场景文件、Structure List、Signal Aspects List、Sound List、3D Sound 使用的 Sound List，以及 Station List。
+从 `文件 -> 新建...` 打开，可创建 Map、Scenario、Structure List、Signal Aspects List、Sound List、Sound3D 使用的 Sound List 和 Station List。
 
 1. 选择文件类型，输入文件名，选择 `.txt` 或 `.csv`，再选择目录。
-2. 资源列表可先点击“导入文件”，把已有 `.txt`/`.csv` 的名称、目录和后缀填入表单；这些字段仍可修改。
-3. 场景文件模板提供与“Scenario 文件”标签页相同的 8 个官方字段输入框：`Title`、`Route`、`RouteTitle`、`Vehicle`、`VehicleTitle`、`Author`、`Image`、`Comment` 均可留空（留空字段整行省略）；`Route`、`Vehicle` 和 `Image` 为相对场景文件目录的单路径并提供“选择文件”，含权重、多候选或注释字符的值会被拒绝；多候选与权重的编辑在“Scenario 文件”标签页中进行。
-4. 如需让当前地图引用新文件，在“在以下文件中引用”中选择目标源文件。该操作要求编辑模式。所有已加载的非资源列表地图源文件都是候选；官方 BVE 不要求 `include` 或 `*.Load` 的目标含有距离语句，因此完全空白、无距离语句的地图也会出现在候选中。
-5. 点击“确定”创建或复用文件。地图与场景文件模板提供“确定并载入”，创建后按普通打开流程载入；场景文件载入后即可在“Scenario 文件”标签页中继续编辑。
+2. 资源列表可通过“导入文件”预填已有 `.txt`/`.csv` 的名称、目录和后缀，再按需修改。
+3. 创建 Scenario 时填写所需字段，留空字段会省略。`Route`、`Vehicle` 和 `Image` 可通过“选择文件”填入相对路径。
+4. 如需由当前地图引用文件，开启编辑模式，在“在以下文件中引用”选择已加载的地图源文件。
+5. 点击“确定”创建或复用文件；地图与场景文件还可选择“确定并载入”。
 
-所选后缀始终追加到输入的文件名。目标普通文件已经存在时，程序直接复用且不修改其内容；不存在时才写入内容：地图与资源列表仅含标准文件头，场景文件按官方键序写入填写的非空字段（UTF-8、CRLF）。引用只先应用到当前地图的内存预览：地图文件使用 `include`，资源列表使用相应的 `*.Load`；仍需工具栏“保存”才能写入引用。每种资源列表只能引用一份，已有引用时向导会禁用重复添加，并提示从对应表格顶部“文件路径”的右键菜单更换文件。
+所选后缀会追加到文件名。已有普通文件会原样复用；新文件使用 UTF-8 和 CRLF，地图与资源列表包含标准文件头，Scenario 按标准字段顺序写入内容。
+
+Scenario 模板提供 `Title`、`Route`、`RouteTitle`、`Vehicle`、`VehicleTitle`、`Author`、`Image`、`Comment` 八个字段。路径字段各接受单一路径，字段值须避开 `#`、`;` 等注释字符；多候选路径与权重可在载入后的“Scenario 文件”标签页编辑。
+
+向导立即创建文件，`include` 或相应 `*.Load` 引用则先应用到地图预览，再由工具栏“保存”写入。每种资源列表可引用一份；更换已引用的文件请使用对应表格顶部“文件路径”的右键菜单。
 
 ## 附录：CSV 数据格式
 
@@ -580,7 +565,7 @@ BveTs Map 2.02
 | center           | 轨道中心偏移                                |
 | gauge            | 轨距                                        |
 
-导出的数值使用固定 6 位小数。当前 CSV 导出仅包含轨道几何，不导出车站、布景、连续布景、信号、应答器、音效/噪声事件、轨道变位或粘着变化、背景变化点、驾驶台亮度变化点、雾、绘制距离变化或 3D 场景数据。
+CSV 导出轨道几何数据，数值固定保留 6 位小数。
 
 ## 版权、许可和第三方声明
 
