@@ -161,6 +161,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### User Interface and Utilities
 
+- [x] Add Hong Kong Traditional Chinese for all 605 localized UI keys, using Hong Kong wording and 行/欄/單元格 for table rows/columns/cells. Add `香港繁體` after `台湾繁體` under `中文`, with canonical `zh-HK` settings persistence. Preserve the original four dictionaries, unlocalized diagnostics/parameter labels, fonts, and editing/backend behavior. Debug build and all seven CTests passed, including five-language key, placeholder, lookup, and Hong Kong terminology checks. Menu interaction, language persistence across restarts, glyphs, layout, and wording await manual review; no headless or GUI automation was run.
 - [x] Add Message from Creator using ordinary `//--kme--message-from-creator:"content"` comments. Create literal single-line messages from the New Map Element Wizard's Other category below a selected Map header, display root/loaded-Include messages once per physical location with popup pagination, and retain root-Map suppression in `history.ini` independently of recent-file history. The Auxiliary Info -> Other -> Custom Messages tab shows source locations and supports editing/deletion with in-tab Apply and toolbar Save/Revert through the shared source-backed lifecycle. Add typed contracts and isolated Debug headless coverage.
 - [x] Add source-backed `PreTrain.Pass` distance/time editing and deferred deletion through the existing 2D/3D marker menus, plus a Signal-category New Map Element template. A single time field accepts unquoted `hh:mm:ss` or finite seconds and preserves the value type and untouched expressions. Reuse Apply/Save/Revert, stable edit IDs, semantic validation, and encoding-aware writeback without changing the public ABI. Add typed snapshot/edit coverage and memory-only `--debug-headless-pretrain-edit` validation.
 
@@ -356,6 +357,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 用户界面与辅助功能
 
+- [x] 为全部 605 个本地化 UI 键新增香港繁体中文，采用香港用语，表格 row/column/cell 分别使用「行／欄／單元格」。在 `中文` 子菜单的 `台湾繁體` 后加入 `香港繁體`，支持规范保存值 `zh-HK`。保留原有四套文案、未本地化的诊断正文和参数标签、字体以及编辑与后台行为。Debug 构建与全部七项 CTest 通过，涵盖五语键集、占位符、语言查找和香港关键术语检查。菜单操作、重启后的语言保持、缺字、排版和实际措辞留待人工确认；本次未运行 headless 或 GUI 自动化测试。
 - [x] 通过普通 `//--kme--message-from-creator:"content"` 注释实现 Message from Creator。在新建地图元素向导的“其它”分类中，将单行原文消息插入所选 Map 文件头下方；弹窗分页展示主地图和已加载 Include 中的消息，同一物理位置只显示一次，并在 `history.ini` 中按主 Map 持久保存抑制偏好，不受最近文件列表限制。“辅助信息 -> 其它 -> 自定义消息”标签页显示源码位置，支持编辑、删除及页内“应用”，保存／撤销使用顶部工具栏并沿用共享源码编辑流程。补充类型化契约与隔离夹具的 Debug headless 验证。
 - [x] 为 `PreTrain.Pass` 接入基于源码的里程／时间编辑与延迟删除，复用现有 2D／3D 标记菜单，并在新建地图元素向导的“信号”分类加入模板。单个时间框识别不带引号的 `hh:mm:ss` 或有限秒数，保留参数类型及未修改的表达式；沿用 Apply/Save/Revert、稳定 edit ID、语义验证和编码感知写回，不修改公共 ABI。补充类型化快照／编辑合同及仅操作内存的 `--debug-headless-pretrain-edit` 验证。
 

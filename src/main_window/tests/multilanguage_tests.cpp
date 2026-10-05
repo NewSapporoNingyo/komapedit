@@ -67,6 +67,7 @@ bool complete_translations(const Translation& translation) {
         {"en", Language::En, &translation.en},
         {"zh", Language::Zh, &translation.zh},
         {"zh-TW", Language::ZhTw, &translation.zh_tw},
+        {"zh-HK", Language::ZhHk, &translation.zh_hk},
         {"ja", Language::Ja, &translation.ja}
     };
     for (const auto& table : tables) {
@@ -98,6 +99,48 @@ bool complete_translations(const Translation& translation) {
 int main() {
     const Translation translation;
     bool ok = complete_translations(translation);
+    ok = expect_value(translation.zh_hk, "menu.file", "檔案") && ok;
+    ok = expect_value(translation.zh_hk, "menu.open", "開啟...") && ok;
+    ok = expect_value(translation.zh_hk, "menu.reload", "重新載入") && ok;
+    ok = expect_value(translation.zh_hk, "menu.ui_settings", "用戶界面設定...") && ok;
+    ok = expect_value(translation.zh_hk, "button.save", "儲存") && ok;
+    ok = expect_value(translation.zh_hk, "button.apply", "套用") && ok;
+    ok = expect_value(translation.zh_hk, "button.revert", "還原") && ok;
+    ok = expect_value(translation.zh_hk, "button.reset", "重設") && ok;
+    ok = expect_value(translation.zh_hk, "button.copy", "複製") && ok;
+    ok = expect_value(translation.zh_hk, "button.select_directory", "選擇資料夾") && ok;
+    ok = expect_value(translation.zh_hk, "column.field", "欄位") && ok;
+    ok = expect_value(translation.zh_hk, "label.source_section", "源碼區段") && ok;
+    ok = expect_value(translation.zh_hk, "label.font_size", "字體大小") && ok;
+    ok = expect_value(translation.zh_hk, "frame.console", "控制台") && ok;
+    ok = expect_value(translation.zh_hk, "dialog.element_properties", "屬性/編輯") && ok;
+    ok = expect_value(translation.zh_hk, "frame.scenario_file", "Scenario 檔案") && ok;
+    ok = expect_value(translation.zh_hk, "frame.scene_preview", "3D-場景預覽") && ok;
+    ok = expect_value(translation.zh_hk, "label.track_key", "trackKey") && ok;
+    ok = expect_value(translation.zh_hk, "button.add_row", "新增行") && ok;
+    ok = expect_value(translation.zh_hk, "context.station_list.insert_above", "在上方新增行") && ok;
+    ok = expect_value(translation.zh_hk, "context.station_list.move_up", "上移整行") && ok;
+    ok = expect_value(translation.zh_hk, "context.editable_list.delete_row", "刪除整行") && ok;
+    ok = expect_value(translation.zh_hk, "context.editable_list.clear_cell", "清除單元格") && ok;
+    ok = expect_value(translation.zh_hk, "button.signal_aspect.align_columns", "對齊所有欄") && ok;
+    ok = expect_value(translation.zh_hk, "button.signal_aspect.append_column", "在右側新增欄") && ok;
+    ok = expect_value(translation.zh_hk, "button.signal_aspect.remove_last_column", "刪除最右欄") && ok;
+    ok = expect_value(translation.zh_hk, "dialog.signal_columns_scope_all", "所有行") && ok;
+    ok = expect_value(translation.zh_hk, "dialog.signal_columns_scope_row", "目前行") && ok;
+    ok = expect_value(translation.zh_hk, "menu.map_info.signal_aspects", "信號顯示") && ok;
+    ok = expect_value(translation.zh_hk, "frame.signal_aspects", "信號顯示列表") && ok;
+    ok = expect_value(translation.zh_hk, "resource_list.name.signal", "信號顯示列表") && ok;
+    ok = expect_value(translation.zh_hk, "dialog.apply_list_before_save",
+        "儲存前請先套用所有列表表格中的更改。") && ok;
+    ok = expect_value(translation.zh_hk, "status.edit.applied_to_preview", "已套用至預覽") && ok;
+    ok = expect_value(translation.zh_hk, "dialog.revert_all_edits_message",
+        "要還原所有未儲存的更改嗎？這會將記憶體中的地圖還原至上次儲存的狀態，且無法重做。") && ok;
+    ok = expect_no_value_fragment(translation.zh_hk, "號誌") && ok;
+    ok = expect_no_value_fragment(translation.zh_hk, "主控台") && ok;
+    ok = expect_no_value_fragment(translation.zh_hk, "使用者") && ok;
+    ok = expect_no_value_fragment(translation.zh_hk, "軟體") && ok;
+    ok = expect_no_value_fragment(translation.zh_hk, "字型") && ok;
+    ok = expect_no_value_fragment(translation.zh_hk, "儲存格") && ok;
     ok = expect_value(translation.zh_tw, "menu.file", "檔案") && ok;
     ok = expect_value(translation.zh_tw, "menu.open", "開啟...") && ok;
     ok = expect_value(translation.zh_tw, "menu.reload", "重新載入") && ok;

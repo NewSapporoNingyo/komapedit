@@ -231,6 +231,7 @@ std::string language_to_string(Language lang) {
         case Language::En: return "en";
         case Language::Zh: return "zh";
         case Language::ZhTw: return "zh-TW";
+        case Language::ZhHk: return "zh-HK";
     }
     return "zh";
 }
@@ -241,6 +242,7 @@ std::optional<Language> language_from_string(const std::string& text) {
     if (value == "en") return Language::En;
     if (value == "zh") return Language::Zh;
     if (value == "zh-TW") return Language::ZhTw;
+    if (value == "zh-HK") return Language::ZhHk;
     return std::nullopt;
 }
 

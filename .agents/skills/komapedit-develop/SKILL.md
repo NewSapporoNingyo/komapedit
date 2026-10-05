@@ -35,7 +35,7 @@ Read every triggered skill before changing files.
    - parser → `KvMapSnapshot` → `MapModel` → table/2D/3D consumers;
    - source metadata → edit target → semantic validation → source patch → full reparse → GUI refresh.
 5. Preserve the public C ABI rules, source encodings, official BVE syntax established by the compliance matrix, stable edit identities, UI lifecycle, and cache invalidation contracts.
-6. Update Simplified Chinese, Traditional Chinese (Taiwan), English, and Japanese together when visible GUI text changes.
+6. Update Simplified Chinese, Traditional Chinese (Taiwan), Traditional Chinese (Hong Kong), English, and Japanese together when visible GUI text changes.
 7. Add focused regression coverage when the change has a deterministic contract. Do not invent a large new harness if an existing CTest or Debug headless entry point proves the path.
 
 ## Validate proportionately

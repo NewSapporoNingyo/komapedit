@@ -1,4 +1,4 @@
 interface:
   display_name: "Komapedit Multilingual UI"
-  short_description: "Keep UI text aligned across four languages"
+  short_description: "Keep UI text aligned across five languages"
   default_prompt: "Use $komapedit-trilingual-ui-menu-change to make this focused localized UI change."

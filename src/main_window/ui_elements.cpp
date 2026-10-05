@@ -990,6 +990,7 @@ void App::render_menu() {
         if (ImGui::BeginMenu("中文")) {
             if (ImGui::MenuItem("简体", nullptr, lang_ == Language::Zh)) set_language(Language::Zh);
             if (ImGui::MenuItem("台湾繁體", nullptr, lang_ == Language::ZhTw)) set_language(Language::ZhTw);
+            if (ImGui::MenuItem("香港繁體", nullptr, lang_ == Language::ZhHk)) set_language(Language::ZhHk);
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("English", nullptr, lang_ == Language::En)) set_language(Language::En);

@@ -78,7 +78,7 @@ You should read the following notes related to your current agent. If a note app
 ### UI, tables, 2D, and 3D behavior
 
 - Preserve the Dear ImGui docking/window model, shared menu concepts, cross-view navigation, current editing lifecycle, and table/plan/scene identity.
-- Update Simplified Chinese, Traditional Chinese (Taiwan), English, and Japanese together for visible UI text. Keep console diagnostics English by default.
+- Update Simplified Chinese, Traditional Chinese (Taiwan), Traditional Chinese (Hong Kong), English, and Japanese together for visible UI text. Keep console diagnostics English by default.
 - Store application preferences in `settings/settings.ini`, recent-map/per-map history in `settings/history.ini`, and Dear ImGui layout in `settings/imgui.ini`; do not invent overlapping sidecar files.
 - Accept only the exact current settings/history sections, keys, and value grammars emitted by the savers. Do not add configuration aliases, migrations, or load-time rewrites without an explicit task that changes this policy.
 - Cache table rows, marker layouts, and scene data outside per-frame loops. Attach stable edit/navigation metadata during hydration/cache construction rather than ambiguous per-frame lookups.
@@ -154,7 +154,7 @@ All project skills live under `.agents/skills/<name>/SKILL.md`.
 | `komapedit-table-feature-workflow` | Typed snapshot table features, caching/find, and table↔plan/scene navigation |
 | `komapedit-station-edit-workflow` | `Station.List`/`Station.Put` identity, drafts, source order, markers, and writeback |
 | `komapedit-ui-persistence` | `settings.ini`, `history.ini`, `imgui.ini`, canonical schemas, defaults, visibility, and current 2D/3D controls |
-| `komapedit-trilingual-ui-menu-change` | Focused EN/ZH/zh-TW/JA UI/menu/label/link changes |
+| `komapedit-trilingual-ui-menu-change` | Focused EN/ZH/zh-TW/zh-HK/JA UI/menu/label/link changes |
 | `komapedit-doc-sync-validation` | Final doc-only scope, parity, encoding, table, and link validation |
 
 ## Build and validation baseline

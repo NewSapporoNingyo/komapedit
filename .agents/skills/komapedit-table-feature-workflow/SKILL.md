@@ -40,4 +40,4 @@ Do not reintroduce `kv_get_ir_json()`, GUI-side source reparsing, a fallback dat
 
 ## Validate
 
-Build Debug, run `typed_snapshot_contract` for snapshot changes, `--debug-headless-table-find` for search semantics, and plan/scene headless modes for connected markers/navigation. When changing Apply-time hydration or invalidation, add `--debug-headless-edit-bench` to prove batched refresh behavior separately from performance timing. Update all four UI languages when visible text changes and document any manual table-layout checks still required.
+Build Debug, run `typed_snapshot_contract` for snapshot changes, `--debug-headless-table-find` for search semantics, and plan/scene headless modes for connected markers/navigation. When changing Apply-time hydration or invalidation, add `--debug-headless-edit-bench` to prove batched refresh behavior separately from performance timing. Update all five UI languages when visible text changes and document any manual table-layout checks still required.

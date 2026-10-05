@@ -126,7 +126,7 @@ Keep build directories, cloned `third_party` trees, generated settings/CSV/test 
 | 3D views | `include/canvas3D.h` and `src/canvas3d/canvas3D.cpp`: public preview interface and thin delegation; private `canvas3d_impl.h` state and focused `canvas3d_*.cpp` implementations, listed below; `scene_track_sampling.cpp/.h` and `scene_route_overlay.cpp/.h`: CPU sampling and pure route-information formatting |
 | Tables and navigation | Focused `src/table/datatable*.cpp` modules, `datatable_internal.h`, and `table_navigation.cpp`: shared cells/columns, a single cache hydration path, find, inline resource-list editing, route/effect/Scenario windows, Debug benchmarks, and row/plan/scene navigation |
 | Shared markers | `include/map_marker_visuals.h`, `map_marker_visuals.cpp`: the shared visual recipes for 2D/3D markers |
-| Localization | `include/multilanguage.h`: Simplified Chinese, Traditional Chinese (Taiwan), English, and Japanese UI text |
+| Localization | `include/multilanguage.h`: Simplified Chinese, Traditional Chinese (Taiwan), Traditional Chinese (Hong Kong), English, and Japanese UI text |
 
 Keep source ownership, linkage, markers, navigation, parsing, validation, and writeback within their component boundaries and shared implementations.
 
@@ -196,9 +196,9 @@ This section describes the main responsibilities of files in `include/` and `src
 
 #### `include/multilanguage.h`
 
-- `Language` selects Japanese, English, Simplified Chinese, or Traditional Chinese (Taiwan); the four `Translation` fields hold equivalent UI text. `Language::ZhTw` selects `zh_tw`. Translation constants are grouped by windows, menus, toolbars, tables, property editing, errors, and 2D/3D operations.
-- `tr()` and language-selection helpers return the active language field. Add all four translations in the same `Translation` initializer, with matching format placeholders. Use Taiwan terminology for Traditional Chinese, including 列 for rows and 欄 for columns.
-- The existing `[General] language` setting stores `ja`, `en`, `zh`, or `zh-TW`; Simplified Chinese remains the default. The `中文` submenu contains `简体` and `台湾繁體` and sits alongside the English and Japanese options.
+- `Language` selects Japanese, English, Simplified Chinese, Traditional Chinese (Taiwan), or Traditional Chinese (Hong Kong); the five `Translation` fields hold equivalent UI text. `Language::ZhTw` selects `zh_tw`, and `Language::ZhHk` selects `zh_hk`. Translation constants are grouped by windows, menus, toolbars, tables, property editing, errors, and 2D/3D operations.
+- `tr()` and language-selection helpers return the active language field. Add all five translations in the same `Translation` initializer, with matching format placeholders. Use Taiwan terminology for `zh_tw` (rows: 列; columns: 欄) and Hong Kong terminology for `zh_hk` (rows: 行; columns: 欄; cells: 單元格). Base Hong Kong translations on the Simplified Chinese text, consulting Japanese and English for terminology when needed.
+- The existing `[General] language` setting stores `ja`, `en`, `zh`, `zh-TW`, or `zh-HK`; Simplified Chinese remains the default. The `中文` submenu contains `简体`, `台湾繁體`, and `香港繁體` and sits alongside the English and Japanese options.
 - `multilanguage_contract` checks matching key sets, nonempty values, placeholder names and counts, language lookup, and critical terminology. Font loading retains the full Chinese glyph range and includes Microsoft JhengHei (`msjh.ttc`) after the existing CJK candidates and before Segoe UI.
 
 #### `include/resource.h`
@@ -652,8 +652,8 @@ Initial GUI handling and cache reuse share action selection, prioritizing blocki
 
 ### UI, tables, and rendering
 
-- Preserve Dear ImGui docking layout, menu, and tool concepts. Keep ordinary UI text synchronized in Simplified Chinese, Traditional Chinese (Taiwan), English, and Japanese, with stable ImGui IDs across language changes.
-- Use official English names or abbreviations for BVE parameter labels, such as `distance`, `trackKey`, `x`, and `ry`. Program diagnostics and headless output use English; the surrounding console UI supports all four languages.
+- Preserve Dear ImGui docking layout, menu, and tool concepts. Keep ordinary UI text synchronized in Simplified Chinese, Traditional Chinese (Taiwan), Traditional Chinese (Hong Kong), English, and Japanese, with stable ImGui IDs across language changes.
+- Use official English names or abbreviations for BVE parameter labels, such as `distance`, `trackKey`, `x`, and `ry`. Program diagnostics and headless output use English; the surrounding console UI supports all five languages.
 - Preserve 2D pan/zoom/rotation/fit, measurement, grid, station jumps, and background alignment, plus 3D camera transfer, picking/highlights, visibility, markers, route information, and linked gizmo behavior.
 - Cache tables by revision and preserve dynamic Section arguments and explicit `null`, variable order, and cross-view navigation. Repeater find uses ordered typed structure keys; before finding unused structures, commit the active Signal main/glare cell into its draft.
 - Keep Assimp inside `model_loader.dll`; loading errors follow diagnostic and cleanup paths. Model bounds are computed in double precision; nonfinite positions and radii outside the public float range are rejected. Failed dynamic scene refresh restores Repeater chunks and cache totals.
