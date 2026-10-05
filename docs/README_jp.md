@@ -4,7 +4,7 @@
 
 # komapedit
 
-komapedit は、BVE Trainsim のマップを表示・編集する Windows 向けの軽量ツールです。2D の路線図、3D シーンプレビュー、ソースファイルに基づくマップ編集に対応しています。
+komapedit は、BVE Trainsim のマップをプレビュー・編集する Windows 向けの軽量ツールです。2D の路線図、3D シーンプレビュー、ソースファイルに基づくマップ編集に対応しています。
 
 編集機能は実験段階です。使用前に路線ファイルをバックアップするか、バージョン管理を利用してください。対応する構文は[BVE マップ構文の対応状況](#bve-マップ構文の対応状況)、開発の進捗は [TODO.md](../TODO.md) を参照してください。
 
@@ -85,7 +85,7 @@ komapedit は、BVE Trainsim のマップを表示・編集する Windows 向け
 | `PreTrain.Pass(time)` / `PreTrain.Pass(second)` | √ | √ | √ | ✕ | 2D/3D マーカーから距離程・通過時刻を編集、または削除。ウィザードの「信号」で作成。時刻は hh:mm:ss または秒数で入力し、`passTime` にポインターを合わせると書式の説明を表示 |
 | `Light.Ambient(...)`、`Light.Diffuse(...)`、`Light.Direction(...)` | √ | √ | √ | ✕ | 「光源」でパラメーターを表示・編集。ウィザードの「効果」で距離程 `0` に作成。RGB は `[0, 1]`、Direction の距離程は `0`。各種類の文はルートマップと Include 全体で 1 つずつ指定可能 |
 | `Fog.Interpolate(density, red, green, blue)` / `Fog.Interpolate(density)` / `Fog.Interpolate()` / ［旧形式］`Fog.Set(density, red, green, blue)` | √ | √ | √ | ✕ | 引数 0・1・4 個の Interpolate と旧形式 Set に対応。指数関数による霧とその変化を 3D でプレビュー |
-| ［互換構文］`Legacy.Fog(start, end, red, green, blue)` | √ | √ | √ | ✕ | テーブルまたは 2D/3D マーカーから編集。線形の霧とその変化を 3D でプレビュー。Fog との混在にも対応 |
+| ［旧形式］`Legacy.Fog(start, end, red, green, blue)` | √ | √ | √ | ✕ | テーブルまたは 2D/3D マーカーから編集。線形の霧とその変化を 3D でプレビュー。Fog との混在にも対応 |
 | `DrawDistance.Change(value)` | √ | √ | √ | ✕ | 距離程と値を編集。シーンの描画距離に反映可能 |
 | `CabIlluminance.Interpolate(value)` / `CabIlluminance.Interpolate()` / ［旧形式］`CabIlluminance.Set(value)` | √ | √ | √ | ✕ | 距離程と明るさを編集。値を空欄にすると Interpolate() を出力。テーブルと 3D 標識には直前の有効値を表示し、有効値がない場合は空欄 |
 | `Irregularity.Change(x, y, r, lx, ly, lr)` | √ | √ | √ | ✕ | テーブルとマーカーで値を表示。距離程と全 6 パラメーターを編集 |
