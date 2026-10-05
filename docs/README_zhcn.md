@@ -104,9 +104,21 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 
 ## 安装与启动
 
-请按照[开发者指南](dev_zhcn.md)构建应用，然后运行生成的可执行文件。
+### 下载发行版（推荐）
 
-Release 构建完成后，运行 `build_release\komapedit.exe`。程序从同级 `bin` 目录加载 `maploader.dll`、`model_loader.dll` 及其依赖。Debug 构建的对应目录为 `build`。
+从 [GitHub Releases](https://github.com/NewSapporoNingyo/komapedit/releases) 下载可执行文件压缩包，完整解压后双击 `komapedit.exe` 运行程序。
+
+### 自行编译
+
+如果没有计算机软件开发基础，不建议尝试自行编译。
+
+按照[开发者指南](dev_zhcn.md)构建应用，然后运行 `build_release\komapedit.exe`（Release）或 `build\komapedit.exe`（Debug）。
+
+可执行文件与 DLL 应使用同一构建版本。构建脚本若提示输出根目录中存在旧 INI 或 DLL，请按提示整理为 `bin`/`settings` 布局后重新构建。
+
+### 启动与设置
+
+程序从 `komapedit.exe` 同级的 `bin` 目录加载 `maploader.dll`、`model_loader.dll` 及其依赖。
 
 程序启动时会按需新建 `settings` 目录，并在其中创建或读取：
 
@@ -115,8 +127,6 @@ Release 构建完成后，运行 `build_release\komapedit.exe`。程序从同级
 - `settings/history.ini`：最近打开地图、背景图对齐参数，以及各地图的自定义消息显示偏好
 
 建议通过界面修改设置。程序按当前设置格式读取有效项，其余项使用默认值；保存时写入完整设置。
-
-可执行文件与 DLL 应使用同一构建版本。构建脚本若提示输出根目录中存在旧 INI 或 DLL，请按提示整理为 `bin`/`settings` 布局后重新构建。
 
 ## 版权、许可和第三方声明
 

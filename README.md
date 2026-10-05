@@ -105,9 +105,21 @@ Ratings cover all current UI entry points. When a row lists multiple overloads o
 
 ## Installation and Startup
 
-Follow the [developer guide](docs/dev.md) to build the application, then run the generated executable.
+### Download a release (recommended)
 
-After a Release build, run `build_release\komapedit.exe`. The application loads `maploader.dll`, `model_loader.dll`, and their dependencies from the adjacent `bin` directory. Debug builds use the corresponding `build` directory.
+Download the archive containing the prebuilt executables from [GitHub Releases](https://github.com/NewSapporoNingyo/komapedit/releases). Extract the entire archive, then double-click `komapedit.exe` to run the application.
+
+### Build from source
+
+Building from source is not recommended if you have no background in software development.
+
+Follow the [developer guide](docs/dev.md) to build the application, then run `build_release\komapedit.exe` (Release) or `build\komapedit.exe` (Debug).
+
+Use the executable and DLLs from the same build. If a build script reports old INI or DLL files in the output root, follow its instructions to arrange them under `bin`/`settings`, then build again.
+
+### Startup and settings
+
+The application loads `maploader.dll`, `model_loader.dll`, and their dependencies from the `bin` directory next to `komapedit.exe`.
 
 On startup, the application creates the `settings` directory as needed and creates or reads:
 
@@ -116,8 +128,6 @@ On startup, the application creates the `settings` directory as needed and creat
 - `settings/history.ini`: Recent maps, background-image alignment parameters, and per-map Custom Message display preferences.
 
 Use the interface to change settings. The application reads valid entries in the current settings format and uses defaults for other entries; saving writes a complete settings file.
-
-Use the executable and DLLs from the same build. If a build script reports old INI or DLL files in the output root, follow its instructions to arrange them under `bin`/`settings`, then build again.
 
 ## License and Third-Party Notices
 
