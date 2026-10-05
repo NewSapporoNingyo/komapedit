@@ -4,7 +4,7 @@
 
 # komapedit
 
-komapedit is a lightweight Windows viewer and editor for BVE Trainsim map files, with 2D route views, 3D scene previews, and source-backed map editing.
+komapedit is a lightweight viewer and editor for BVE Trainsim map files, with 2D route views, 3D scene previews, and source-backed map editing.
 
 Editing is experimental. Back up route files or keep them under version control before use. See [Current BVE Map Syntax Support](#current-bve-map-syntax-support) for supported statements and [TODO.md](TODO.md) for development progress.
 
