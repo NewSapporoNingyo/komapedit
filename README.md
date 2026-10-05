@@ -11,7 +11,8 @@ Editing is experimental. Back up route files or keep them under version control 
 ## Documentation
 
 Select a language:
-  [简体中文](docs/README_zhcn.md)
+　　[简体中文](docs/README_zhcn.md)
+　　[繁體中文](docs/README_zhtr.md)
 
 ---
 - [User manual](docs/user-manual.md)
