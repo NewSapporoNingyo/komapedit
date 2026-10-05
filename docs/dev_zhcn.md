@@ -92,6 +92,8 @@ ctest --test-dir build --output-on-failure
 
 `build\bin\typed_snapshot_tests.exe patch-bench 7` 对 100、1,000、10,000 项确定性更新执行完整 dry-run，测量 `plan.patch_sources` 阶段。每种规模预热一次，再输出各次样本及 median/p95；重复次数默认 7，范围 5–50。此基准通过命令显式运行。
 
+`build\bin\typed_snapshot_tests.exe distance-plan-bench 4000 middle` 测量含 1,000、2,000 或 4,000 个距离锚点的合成 Map 中的一次插入，目标可选 `middle` 或 `eof`。每个进程预热一次，再进行五次 dry-run，报告 `plan.prepare` 和总耗时的 median/p95、进程工作集峰值字节数，并检查内存 Apply/Reset 与磁盘字节保持性。
+
 运行时输出布局如下：
 
 - Debug 使用 `build\`，Release 使用 `build_release\`。
@@ -369,7 +371,7 @@ ctest --test-dir build --output-on-failure
 - `gui_kme.cpp` 管理 `App` 构造、析构与日志回调；`kme.h` 声明 EXE 内共享状态和跨翻译单元接口。
 - `win32_dx11_bootstrap.cpp` 拥有 D3D11 设备/渲染目标、`WndProc()`、窗口消息循环和 `main()`。
 - `gui_common_utils.cpp` 集中字体、主题/日志颜色、编码转换、数值格式、路径及里程跳转控件帮助函数；`background_image.cpp` 拥有 WIC 解码、背景纹理重建与 history 背景持久化。
-- `map_snapshot_hydration.cpp` 从 typed snapshot 构建 `MapModel`、行元数据、Station edit id、限速缓存与过渡关联；`map_load_pipeline.cpp` 处理 Map/Scenario 探测、Scenario 快照/草稿基线与 Route 候选、异步地图加载、入口历史、结果应用、元数据合并、加载计时和几何再生成。
+- `map_snapshot_hydration.cpp` 从 typed snapshot 构建 `MapModel`、行元数据、Station edit id、限速缓存与过渡关联，并为加载和保存共用 Scenario 快照复制；`map_load_pipeline.cpp` 处理 Map/Scenario 探测、Scenario 草稿基线与 Route 候选、异步地图加载、入口历史、结果应用、元数据合并、加载计时和几何再生成。
 - `edit_ledger.cpp` 处理 typed 批次/报告、账本同步、本地预览、删除、保存/撤销/关闭；`distance_resolution_workflow.cpp` 处理距离消歧请求与继续应用。
 - `edit_benchmark.cpp` 承载独立的 Debug 编辑性能入口：真实输入只做内存 Apply/Delete/Revert 与字节保护，Save 仅在保持相对依赖布局的排他临时普通文件副本中运行，同时检查刷新合并、回滚和阶段计时契约。
 - `element_inspector_data.cpp` 管理 Inspector 打开、定位、字段/场景编辑数据与 Apply；`element_inspector_render.cpp` 只渲染 Inspector 字段、可选插入参数和可变 Repeater/Section UI。
@@ -808,7 +810,7 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 | `--debug-headless-pretrain-edit` | 含既有 `PreTrain.Pass` 的地图 | `headless_pretrain.cpp` 验证时间/秒数多轮 Apply、里程、非法输入、删除、向导、插入后编辑/取消、Revert，以及 2D 身份/标签和 3D 标记数据 |
 | `--debug-headless-legacy-fog-edit` | 旧式雾行数量不限的地图 | `legacy_fog_edit_validation.cpp` 验证身份、非法输入、多轮 Apply、删除、向导和 Revert；WARP 场景验证雾刷新，另检查表格/平面缓存和完整重建安排 |
 | `--debug-headless-curve-parameter-edit` | 同时含 SetGauge、SetCenter、SetFunction 的地图 | CG/CC/CF 身份、白色标牌、独立可见性、Inspector 里程/参数、`SetFunction(2)` 拒绝、删除/新建、Revert 和源字节 |
-| `--debug-headless-station-put-margin-edit` | 里程 0 有可编辑 `Station.Put` | 零值/错误符号容差拒绝，向导默认 `margin1=-5`、`margin2=5`，合法插入与 Revert |
+| `--debug-headless-station-put-margin-edit` | 有可编辑 `Station.Put` 的地图 | 选择已有可编辑放置并报告其里程；检查零值/错误符号容差拒绝，向导默认 `margin1=-5`、`margin2=5`，合法插入与 Revert |
 | `--debug-headless-sparse-new-element` | 目标源有零/一条数值距离语句，或锚点非递减且末值小于 866 | 正式 `DrawDistance.Change(500)` 向导；稀疏源用里程 25，单调尾部用 866，检查块复用/前插/尾插、原文、新行身份和值，Reset 后核对哈希 |
 | `--debug-headless-auto-insert-diagnostics` | `testmap\auto_insert_failures` 夹具目录 | 按物理文件、行、类型、里程及身份选择目标，验证自动成功、人工恢复、硬拒绝、每个候选的实际 Apply、二次 Apply、重试终止和 Reset；成功条件为 `failed_cases=0`、`result=PASS` |
 

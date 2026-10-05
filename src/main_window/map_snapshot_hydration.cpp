@@ -568,6 +568,46 @@ void annotate_own_track_transition_links(MapModel& model) {
     }
 }
 
+ScenarioPreview hydrate_scenario_snapshot(const KvScenarioSnapshot& snapshot) {
+    if (snapshot.version != KV_SCENARIO_SNAPSHOT_VERSION ||
+        snapshot.structure_size < sizeof(KvScenarioSnapshot)) {
+        throw std::runtime_error("scenario snapshot version or size is invalid");
+    }
+    const auto string = [&](KvStringRef reference) {
+        if (reference.offset > snapshot.string_size ||
+            reference.length > snapshot.string_size - reference.offset ||
+            (reference.length != 0 && !snapshot.string_data)) {
+            throw std::runtime_error("scenario snapshot contains an invalid string reference");
+        }
+        return std::string(snapshot.string_data ? snapshot.string_data + reference.offset : "",
+                           static_cast<size_t>(reference.length));
+    };
+    const auto paths = [&](const KvScenarioPathWeightRow* rows, uint64_t count) {
+        if (count > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+            (count != 0 && !rows)) {
+            throw std::runtime_error("scenario snapshot contains an invalid path row array");
+        }
+        std::vector<ScenarioPreviewPath> result;
+        result.reserve(static_cast<size_t>(count));
+        for (uint64_t i = 0; i < count; ++i) {
+            result.push_back({string(rows[i].path), rows[i].weight, rows[i].has_explicit_weight != 0});
+        }
+        return result;
+    };
+    ScenarioPreview preview;
+    preview.source_hash = string(snapshot.source_hash);
+    preview.present_fields = snapshot.present_fields;
+    preview.title = string(snapshot.title);
+    preview.routes = paths(snapshot.routes, snapshot.route_count);
+    preview.route_title = string(snapshot.route_title);
+    preview.vehicles = paths(snapshot.vehicles, snapshot.vehicle_count);
+    preview.vehicle_title = string(snapshot.vehicle_title);
+    preview.author = string(snapshot.author);
+    preview.image = string(snapshot.image);
+    preview.comment = string(snapshot.comment);
+    return preview;
+}
+
 std::vector<TableRow> hydrate_creator_message_rows(const KvMapSnapshot& snapshot) {
     if (snapshot.creator_message_count != 0 && !snapshot.creator_messages) {
         throw std::runtime_error("creator message snapshot has no row storage");

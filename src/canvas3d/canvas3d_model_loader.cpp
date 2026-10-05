@@ -183,21 +183,17 @@ bool Canvas3D::Impl::load_texture(const std::string& path,
             return fail();
         }
         if (width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
-            height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
-            width > std::numeric_limits<UINT>::max() / 4) {
+            height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
             error = "texture dimensions exceed the Direct3D 11 limit: " + path;
             return fail();
         }
+        constexpr std::uint64_t maximum_bytes =
+            std::uint64_t{D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION} *
+            D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION * 4;
+        static_assert(maximum_bytes <= std::numeric_limits<UINT>::max() &&
+                      maximum_bytes <= std::numeric_limits<size_t>::max());
         const UINT row_stride = width * 4;
-        if (height > std::numeric_limits<size_t>::max() / row_stride) {
-            error = "texture byte size overflows the host address space: " + path;
-            return fail();
-        }
         const size_t pixel_bytes = static_cast<size_t>(row_stride) * height;
-        if (pixel_bytes > std::numeric_limits<UINT>::max()) {
-            error = "texture byte size exceeds the WIC copy limit: " + path;
-            return fail();
-        }
 #ifndef NDEBUG
         int remaining =
             debug_texture_allocation_throw_countdown.load(std::memory_order_relaxed);
@@ -451,8 +447,13 @@ void Canvas3D::Impl::start_scene_model_worker(std::vector<SceneModelLoadRequest>
         scene_worker = std::thread(
             [this, request_groups = std::move(request_groups),
              requested_worker_count]() mutable noexcept {
-                auto safe_log = [this](std::string message) noexcept {
+                auto safe_log = [this](std::initializer_list<std::string_view> fragments) noexcept {
                     try {
+#ifndef NDEBUG
+                        if (debug_scene_log_failure.exchange(false)) throw std::bad_alloc();
+#endif
+                        std::string message;
+                        for (std::string_view fragment : fragments) message.append(fragment);
                         push_scene_load_log(std::move(message));
                     } catch (...) {
                     }
@@ -466,7 +467,7 @@ void Canvas3D::Impl::start_scene_model_worker(std::vector<SceneModelLoadRequest>
                 };
                 auto queue_group_failure =
                     [this, &safe_log](const SceneModelRequestGroup& group,
-                                     const std::string& error) noexcept {
+                                     std::string_view error) noexcept {
                         try {
                             std::vector<CpuModelData> outputs;
                             outputs.reserve(group.second.size());
@@ -474,27 +475,27 @@ void Canvas3D::Impl::start_scene_model_worker(std::vector<SceneModelLoadRequest>
                                 CpuModelData failed;
                                 failed.path = group.first;
                                 failed.scene_key = request.key;
-                                failed.error = error;
+                                failed.error.assign(error);
                                 outputs.push_back(std::move(failed));
                             }
                             queue_scene_model_uploads(std::move(outputs));
                         } catch (const std::exception& failure_error) {
-                            safe_log(
-                                "[warn]canvas3D.cpp: failed to queue scene model failure: " +
-                                std::string(failure_error.what()));
+                            safe_log({
+                                "[warn]canvas3D.cpp: failed to queue scene model failure: ",
+                                failure_error.what()});
                         } catch (...) {
-                            safe_log(
+                            safe_log({
                                 "[warn]canvas3D.cpp: failed to queue scene model failure: "
-                                "unknown worker error");
+                                "unknown worker error"});
                         }
                     };
 
                 try {
                     std::string loader_error;
                     if (!scene_loader.prepare(loader_error)) {
-                        safe_log(
-                            "[warn]canvas3D.cpp: scene model loader initialization failed: " +
-                            loader_error);
+                        safe_log({
+                            "[warn]canvas3D.cpp: scene model loader initialization failed: ",
+                            loader_error});
                         if (!scene_cancel.load()) {
                             for (const SceneModelRequestGroup& group : request_groups) {
                                 queue_group_failure(group, loader_error);
@@ -530,16 +531,15 @@ void Canvas3D::Impl::start_scene_model_worker(std::vector<SceneModelLoadRequest>
                                     data_guard.mark_loaded();
                                     source_cpu = copy_cpu_model(path, data);
                                     if (!source_cpu.ok) {
-                                        safe_log(
-                                            "[warn]canvas3D.cpp: failed to read scene model " +
-                                            progress + ": " + path + ": " +
-                                            source_cpu.error);
+                                        safe_log({
+                                            "[warn]canvas3D.cpp: failed to read scene model ",
+                                            progress, ": ", path, ": ", source_cpu.error});
                                     }
                                 } else {
                                     source_cpu.error = error;
-                                    safe_log(
-                                        "[warn]canvas3D.cpp: failed to read scene model " +
-                                        progress + ": " + path + ": " + error);
+                                    safe_log({
+                                        "[warn]canvas3D.cpp: failed to read scene model ",
+                                        progress, ": ", path, ": ", error});
                                 }
                                 if (scene_cancel.load()) return;
 
@@ -570,10 +570,10 @@ void Canvas3D::Impl::start_scene_model_worker(std::vector<SceneModelLoadRequest>
                                         CpuModelData derived = derive_put_between_model(
                                             source_cpu, *put_between_source, request);
                                         if (!derived.ok) {
-                                            safe_log(
+                                            safe_log({
                                                 "[warn]canvas3D.cpp: failed to deform "
-                                                "PutBetween model: " + path + ": " +
-                                                derived.error);
+                                                "PutBetween model: ", path, ": ",
+                                                derived.error});
                                         }
                                         derived_models.push_back(std::move(derived));
                                         if (scene_cancel.load()) return;
@@ -588,15 +588,14 @@ void Canvas3D::Impl::start_scene_model_worker(std::vector<SceneModelLoadRequest>
                                 }
                                 queue_scene_model_uploads(std::move(outputs));
                             } catch (const std::exception& error) {
-                                const std::string detail = error.what();
-                                safe_log(
-                                    "[warn]canvas3D.cpp: scene model worker failed: " +
-                                    path + ": " + detail);
-                                queue_group_failure(group, detail);
+                                safe_log({
+                                    "[warn]canvas3D.cpp: scene model worker failed: ",
+                                    path, ": ", error.what()});
+                                queue_group_failure(group, error.what());
                             } catch (...) {
-                                safe_log(
-                                    "[warn]canvas3D.cpp: scene model worker failed: " +
-                                    path + ": unknown worker error");
+                                safe_log({
+                                    "[warn]canvas3D.cpp: scene model worker failed: ",
+                                    path, ": unknown worker error"});
                                 queue_group_failure(group, "unknown worker error");
                             }
                         }
@@ -605,32 +604,44 @@ void Canvas3D::Impl::start_scene_model_worker(std::vector<SceneModelLoadRequest>
                     std::vector<std::thread> helpers;
                     helpers.reserve(
                         requested_worker_count > 0 ? requested_worker_count - 1 : 0);
+                    struct JoinHelpers {
+                        std::vector<std::thread>& threads;
+                        ~JoinHelpers() {
+                            for (std::thread& thread : threads) {
+                                if (thread.joinable()) thread.join();
+                            }
+                        }
+                    } join_helpers{helpers};
                     for (size_t worker = 1; worker < requested_worker_count; ++worker) {
                         try {
+#ifndef NDEBUG
+                            if (worker == debug_helper_start_failure_at.load()) {
+                                throw std::runtime_error("debug injected helper thread start failure");
+                            }
+#endif
                             helpers.emplace_back(process_groups);
                         } catch (const std::exception& error) {
-                            safe_log(
-                                "[warn]canvas3D.cpp: scene model worker count reduced: " +
-                                std::string(error.what()));
+                            safe_log({
+                                "[warn]canvas3D.cpp: scene model worker count reduced: ",
+                                error.what()});
                             break;
                         }
                     }
                     scene_model_worker_count_value.store(helpers.size() + 1);
                     process_groups();
-                    for (std::thread& helper : helpers) helper.join();
                 } catch (const std::exception& error) {
-                    safe_log(
-                        "[warn]canvas3D.cpp: scene model worker failed: " +
-                        std::string(error.what()));
+                    safe_log({
+                        "[warn]canvas3D.cpp: scene model worker failed: ",
+                        error.what()});
                     if (!scene_cancel.load()) {
                         for (const SceneModelRequestGroup& group : request_groups) {
                             queue_group_failure(group, error.what());
                         }
                     }
                 } catch (...) {
-                    safe_log(
+                    safe_log({
                         "[warn]canvas3D.cpp: scene model worker failed: "
-                        "unknown worker error");
+                        "unknown worker error"});
                     if (!scene_cancel.load()) {
                         for (const SceneModelRequestGroup& group : request_groups) {
                             queue_group_failure(group, "unknown worker error");

@@ -821,9 +821,9 @@ int App::run_debug_headless_station_put_margin_edit(
 
         std::string target_edit_id;
         for (const TableRow& row : app.model_.station_list_rows) {
-            if (!row.edit_id.empty() &&
-                std::abs(table_cell_number(row, "_distance") - 0.0) < 1e-9) {
+            if (!row.edit_id.empty()) {
                 target_edit_id = row.edit_id;
+                *out << "target_station_distance=" << table_cell(row, "_distance") << "\n";
                 break;
             }
         }
@@ -3791,13 +3791,13 @@ int App::run_debug_headless_auto_insert_diagnostics(
                             [](const DistanceResolutionBoundary& boundary) {
                                 return boundary.recommended;
                             });
-                        const std::string boundary_token = recommended !=
+                        const std::string cached_boundary_token = recommended !=
                                 request.allowed_boundaries.end()
                             ? recommended->token
                             : request.allowed_boundaries.front().token;
-                        check("cached_reuse.boundary_available", !boundary_token.empty());
+                        check("cached_reuse.boundary_available", !cached_boundary_token.empty());
                         DistanceResolutionChoice choice;
-                        choice.boundary_token = boundary_token;
+                        choice.boundary_token = cached_boundary_token;
                         app.distance_resolution_choices_[request.resolution_key] = choice;
                         app.logs_.clear();
                         app.distance_resolution_workflow_ =
@@ -5761,7 +5761,7 @@ int App::run_debug_headless_fresh_resource_list_workflow(
                 structure_edit.rows.back().values = {"stOther", "stOther.x"};
                 app.apply_editable_list_drafts(structure_edit, k_structure_model_edit_spec);
                 require_signal("signal_second_structure_applied",
-                    !app.has_editable_list_drafts(structure_edit, k_structure_model_edit_spec) &&
+                    !app.has_editable_list_drafts(structure_edit) &&
                     app.model_.structure_models.size() == 2);
             };
             add_second_structure();
@@ -5809,25 +5809,25 @@ int App::run_debug_headless_fresh_resource_list_workflow(
                 if (!compact) signal_draft(key).values[10] = "stNew";
                 app.apply_editable_list_drafts(signal_edit, signal_spec);
                 require_signal("signal_fixture_initial_apply",
-                    !app.has_editable_list_drafts(signal_edit, signal_spec) &&
+                    !app.has_editable_list_drafts(signal_edit) &&
                     signal_value(key, "_signalMainStructureKeyCount") == count &&
                     signal_value(key, "_signalGlareStructureKeyCount") == count);
                 signal_draft(key).values[1] = "stOther";
                 app.apply_editable_list_drafts(signal_edit, signal_spec);
                 require_signal("signal_pending_insert_main_reapply",
-                    !app.has_editable_list_drafts(signal_edit, signal_spec) &&
+                    !app.has_editable_list_drafts(signal_edit) &&
                     signal_value(key, "structureKey1") == "stOther");
                 const size_t glare_begin = 1 + signal_draft(key).primary_structure_field_count;
                 signal_draft(key).values[glare_begin] = "stOther";
                 app.apply_editable_list_drafts(signal_edit, signal_spec);
                 require_signal("signal_pending_insert_glare_reapply",
-                    !app.has_editable_list_drafts(signal_edit, signal_spec) &&
+                    !app.has_editable_list_drafts(signal_edit) &&
                     signal_value(key, "structureKey" + std::to_string(glare_begin)) == "stOther");
                 require_signal("signal_pending_insert_delete_glare_draft",
                     app.delete_editable_list_secondary_row(signal_edit, signal_spec, signal_visible_row(key)));
                 app.apply_editable_list_drafts(signal_edit, signal_spec);
                 require_signal("signal_pending_insert_delete_glare_apply",
-                    !app.has_editable_list_drafts(signal_edit, signal_spec) &&
+                    !app.has_editable_list_drafts(signal_edit) &&
                     signal_value(key, "_signalGlareStructureKeyCount") == "0");
                 require_signal("signal_pending_insert_readd_glare_draft",
                     app.add_editable_list_secondary_row(signal_edit, signal_spec, signal_visible_row(key)));
@@ -5835,7 +5835,7 @@ int App::run_debug_headless_fresh_resource_list_workflow(
                 if (!compact) signal_draft(key).values[10] = "stNew";
                 app.apply_editable_list_drafts(signal_edit, signal_spec);
                 require_signal("signal_pending_insert_readd_glare_apply",
-                    !app.has_editable_list_drafts(signal_edit, signal_spec) &&
+                    !app.has_editable_list_drafts(signal_edit) &&
                     signal_value(key, "_signalMainStructureKeyCount") == count &&
                     signal_value(key, "_signalGlareStructureKeyCount") == count &&
                     read_file_bytes(signals_path) == signal_baseline);

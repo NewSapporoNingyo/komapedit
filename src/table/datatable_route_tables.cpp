@@ -865,7 +865,7 @@ void App::render_variables_window() {
                 }
                 ImGui::TableSetColumnIndex(2);
                 render_file_path_cell_with_context(
-                    display_name_from_path(row.file_path), row.file_path,
+                    row.file_name, row.file_path,
                     tr("menu.open_in_explorer"), row.file_path);
             }
             ImGui::PopID();

@@ -773,7 +773,7 @@ struct Canvas3D::Impl {
 
     void handle_scene_input(bool hovered, bool block_left_drag);
 
-    std::string current_background_path() const;
+    const std::string& current_background_path() const;
 
     void draw_background_model(const canvas3d_detail::Mat4& view_proj, const canvas3d_detail::SceneFogSample* fog);
 
@@ -1038,6 +1038,8 @@ struct Canvas3D::Impl {
     SceneFpsCounter scene_fps_counter;
 #ifndef NDEBUG
     std::atomic<int> debug_copy_cpu_model_throw_countdown{0};
+    std::atomic<bool> debug_scene_log_failure{false};
+    std::atomic<size_t> debug_helper_start_failure_at{0};
     std::atomic<int> debug_texture_allocation_throw_countdown{0};
     std::atomic<int> debug_scene_index_buffer_failure_countdown{0};
 #endif

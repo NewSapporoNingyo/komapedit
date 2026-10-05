@@ -271,7 +271,7 @@ void App::render_source_file_context_menu(const char* popup_id,
     ImGui::BeginDisabled(!include_edit_available || parent_file_path.empty() ||
                          include_path.empty());
     if (ImGui::MenuItem(tr("menu.change_include_file").c_str())) {
-        request_include_file_change(include_edit_id, parent_file_path, file_path);
+        request_include_file_change(include_edit_id, file_path);
     }
     ImGui::EndDisabled();
     ImGui::BeginDisabled(!include_edit_available);

@@ -9,6 +9,8 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#define PSAPI_VERSION 2
+#include <psapi.h>
 #endif
 
 #include <algorithm>
@@ -9712,6 +9714,11 @@ void distance_placement_lifecycle_contract() {
         {"decreasing insert EOF", "BveTs Map 2.02:utf-8\n200;\n100;\n", "50", true},
         {"insert earlier bracket before EOF", "BveTs Map 2.02:utf-8\n0;\n200;\n100;\n", "50", true},
         {"insert terminal increasing EOF", "BveTs Map 2.02:utf-8\n100;\n0;\n100;\n200;\n", "300", true},
+        {"increasing plateau insert", "BveTs Map 2.02:utf-8\n0;\n100;\n100;\n200;\n", "50", true},
+        {"decreasing plateau insert", "BveTs Map 2.02:utf-8\n200;\n100;\n100;\n0;\n", "50", true},
+        {"turning plateau insert", "BveTs Map 2.02:utf-8\n0;\n100;\n100;\n50;\n0;\n", "25", true},
+        {"adjacent distinct distances", "BveTs Map 2.02:utf-8\n0;\n1;\n1.0000000000000002;\n2;\n", "1", true},
+        {"signed zero plateau", "BveTs Map 2.02:utf-8\n0;\n-0;\n100;\n", "50", true},
     };
     const auto read = [](const std::filesystem::path& path) {
         std::ifstream input(path, std::ios::binary);
@@ -10415,6 +10422,72 @@ void section_sparse_bounds_contract() {
     }
 }
 
+void repeater_section_field_rejection_contract() {
+    TempFixture fixture;
+    const std::string before = "BveTs Map 2.02:utf-8\n0;\n"
+        "Structure.Load('structures.csv');\n"
+        "Repeater['rail'].Begin0(0,0,0,25,'pole');\n"
+        "Section.Begin(0,1);\n100;\nRepeater['rail'].End();\n";
+    {
+        std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+        map << before;
+    }
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                    KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot snapshot{};
+    if (!handle.value || !kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+            &snapshot, sizeof(snapshot)) || !snapshot.repeater_count || !snapshot.section_begin_count) {
+        check(false, "Repeater/Section field rejection fixture loads");
+        return;
+    }
+    const std::string hash = map_string(snapshot,
+        snapshot.source_files[snapshot.repeaters[0].metadata.source_file_index].source_hash);
+    const std::string repeater = map_string(snapshot, snapshot.repeaters[0].metadata.edit_id);
+    const std::string section = map_string(snapshot, snapshot.section_begins[0].metadata.edit_id);
+    const auto reject = [&](const std::string& id,
+                            std::vector<std::pair<std::string, std::string>> fields,
+                            const char* expected) {
+        MultiFieldUpdateBatch update("invalid-fields", id, hash, std::move(fields));
+        KvEditReportSnapshot report{};
+        check(kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+                  !report.ok && edit_report_has_error_containing(report, expected),
+              "Repeater/Section invalid fields are rejected by dry run");
+        check(kv_edit_apply_to_memory_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+                  !report.ok && edit_report_has_error_containing(report, expected),
+              "Repeater/Section invalid fields are rejected by Apply");
+        const char* source = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+        check(source && before == source, "Repeater/Section invalid fields preserve working text");
+        kv_free_string(source);
+        std::ifstream disk(fixture.map_path, std::ios::binary);
+        check(std::string(std::istreambuf_iterator<char>(disk), {}) == before,
+              "Repeater/Section invalid fields preserve disk bytes");
+    };
+    reject(repeater, {{"span", "1"}, {"unknown", "2"}}, "unsupported Repeater edit field");
+    reject(repeater, {{"structureKeys.0", "'pole'"}}, "require structureKeys.count");
+    reject(repeater, {{"structureKeys.count", "2"}, {"structureKeys.0", "'pole'"}},
+           "missing Repeater structure key field");
+    reject(repeater, {{"structureKeys.count", "1"}, {"structureKeys.0", "'pole'"},
+                      {"structureKeys.2", "'pole'"}}, "out of range");
+    reject(section, {{"values.0", "2"}, {"unknown", "2"}}, "unsupported Section edit field");
+    reject(section, {{"values.count", "3"}, {"values.0", "0"}, {"values.1", "1"}},
+           "missing Section values field");
+    for (const char* method : {"Begin", "BeginNew", "SetSpeedLimit", "Signal.SpeedLimit"}) {
+        const bool begin = std::string_view(method) == "Begin" || std::string_view(method) == "BeginNew";
+        SimpleInsertBatch insert(fixture.path_utf8(), "section-method-insert",
+            {{"rowKind", begin ? "section.begin" : "section.speedLimit"},
+             {"method", method}, {"distance", "50"}, {"values.count", "2"},
+             {"values.0", "0"}, {"values.1", "1"}});
+        KvEditReportSnapshot report{};
+        check(kv_edit_dry_run_typed(handle.value, &insert.batch, &report, sizeof(report)) &&
+                  report.ok && report.full_reparse_ok && report.non_target_changed_count == 0,
+              "Section insertion accepts its explicit method and validates typed values");
+        check(kv_edit_apply_to_memory_typed(handle.value, &insert.batch, &report, sizeof(report)) &&
+                  report.ok && report.full_reparse_ok,
+              "Section insertion with explicit method applies atomically");
+        check(kv_edit_reset_memory(handle.value), "Section method insertion resets");
+    }
+}
+
 void finite_distance_contract() {
     kv_set_log_callback(diagnostic_log_callback);
     for (const bool included : {false, true}) {
@@ -10527,6 +10600,80 @@ void patch_sources_preview_contract() {
         check(kv_get_edit_target_typed(handle.value, utf8_view(id), &target, sizeof(target)) != 0,
               "growing and shrinking replacements retain every stable identity");
     }
+}
+
+int distance_planning_benchmark(size_t count, bool eof) {
+    TempFixture fixture;
+    std::ostringstream source;
+    source << "BveTs Map 2.02:utf-8\n# preserved source\n";
+    for (size_t index = 0; index < count; ++index) source << index * 10 << ";\n";
+    source << "DrawDistance.Change(600);\n# preserved tail\n";
+    {
+        std::ofstream output(fixture.map_path, std::ios::binary | std::ios::trunc);
+        output << source.str();
+    }
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "distance planning benchmark loads");
+    if (!handle.value) return 1;
+    const std::string target = std::to_string(eof ? count * 10 + 5 : count * 5 + 5);
+    SimpleInsertBatch insert(fixture.path_utf8(), "distance-plan-insert",
+        {{"rowKind", "drawDistance.change"}, {"distance", target}, {"value", "500"}});
+    std::vector<double> planning_samples, total_samples;
+    kv_set_log_callback(diagnostic_log_callback);
+    for (size_t iteration = 0; iteration < 6; ++iteration) {
+        {
+            std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+            diagnostic_logs.clear();
+        }
+        KvEditReportSnapshot report{};
+        const auto start = std::chrono::steady_clock::now();
+        const bool ok = kv_edit_dry_run_typed(handle.value, &insert.batch, &report, sizeof(report)) &&
+            report.ok && report.full_reparse_ok && report.insert_count == 1 &&
+            report.non_target_changed_count == 0 && report.resolution_request_count == 0;
+        const double elapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+        check(ok, "large distance insertion validates without changing other semantics");
+        double planning_ms = -1.0;
+        {
+            std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+            const std::string key = " plan.prepare_ms=";
+            for (const std::string& log : diagnostic_logs) {
+                if (log.find("dll.dry_run outcome=success") == std::string::npos) continue;
+                const auto begin = log.find(key);
+                if (begin != std::string::npos) planning_ms = std::stod(log.substr(begin + key.size()));
+            }
+        }
+        check(planning_ms >= 0, "distance planning stage timing exists");
+        if (iteration) {
+            planning_samples.push_back(planning_ms);
+            total_samples.push_back(elapsed);
+        }
+    }
+    kv_set_log_callback(nullptr);
+    KvEditReportSnapshot applied{};
+    check(kv_edit_apply_to_memory_typed(handle.value, &insert.batch, &applied, sizeof(applied)) &&
+              applied.ok && applied.full_reparse_ok,
+          "large distance insertion applies to working copy");
+    KvMapSnapshot snapshot{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot)) &&
+              snapshot.draw_distance_count == 2,
+          "large distance insertion creates exactly one row");
+    check(kv_edit_reset_memory(handle.value) != 0, "large distance insertion resets");
+    std::ifstream original(fixture.map_path, std::ios::binary);
+    check(std::string(std::istreambuf_iterator<char>(original), {}) == source.str(),
+          "large distance insertion preserves disk bytes");
+    std::sort(planning_samples.begin(), planning_samples.end());
+    std::sort(total_samples.begin(), total_samples.end());
+    PROCESS_MEMORY_COUNTERS memory{};
+    memory.cb = sizeof(memory);
+    const bool memory_available = GetProcessMemoryInfo(GetCurrentProcess(), &memory, sizeof(memory)) != 0;
+    std::cout << "DISTANCE_PLAN_RESULT anchors=" << count << " target=" << (eof ? "eof" : "middle")
+              << " samples=5 planning_median_ms=" << planning_samples[2]
+              << " planning_p95_ms=" << planning_samples.back()
+              << " total_median_ms=" << total_samples[2] << " total_p95_ms=" << total_samples.back()
+              << " memory_available=" << memory_available << " peak_working_set=" << memory.PeakWorkingSetSize
+              << " result=" << (failures ? "FAIL" : "PASS") << '\n';
+    return failures == 0 ? 0 : 1;
 }
 
 int patch_sources_benchmark(size_t repetitions) {
@@ -11132,6 +11279,7 @@ int edit_contract() {
     pretrain_edit_contract();
     untouched_object_key_contract();
     section_sparse_bounds_contract();
+    repeater_section_field_rejection_contract();
     patch_sources_preview_contract();
     distance_resolution_reason_contract();
     distance_placement_lifecycle_contract();
@@ -12531,6 +12679,22 @@ void light_contract() {
               "station margin2=-1.5 emits warning");
         check(diagnostics_contain("map.txt:4:") && diagnostics_contain("map.txt:6:"),
               "station margin warnings report file and line locations");
+        check(write_station_map(station_margin_fixture.map_path,
+                  "BveTs Map 2.02:utf-8\n0;\n"
+                  "Station.Load('stations.csv');\n"
+                  "Station['STA'].Put(1, '-2.5', 2.5);\n"
+                  "Station['STA'].Put(1, -2.5, 'invalid');\n"
+                  "Station['STA'].Put(1, null, null);\n"),
+              "station string margin fixture write");
+        clear_diagnostics();
+        MapHandle typed_margins(kv_load_map_ex(
+            station_margin_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        KvMapSnapshot typed_margin_snapshot{};
+        check(typed_margins.value && kv_get_map_snapshot(typed_margins.value,
+                  KV_MAP_SNAPSHOT_VERSION, &typed_margin_snapshot, sizeof(typed_margin_snapshot)) &&
+                  typed_margin_snapshot.station_put_count == 1 &&
+                  diagnostics_contain("Parameter content error"),
+              "central Station parameter rules reject strings and preserve null margins");
     }
 
     kv_set_log_callback(nullptr);
@@ -12988,8 +13152,8 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "usage: typed_snapshot_tests "
-                     "<snapshot|geometry|edit|diagnostics|signal-glare|slop|patch-bench> "
-                     "[fixture-root|map-path] [--commit]\n";
+                     "<snapshot|geometry|edit|diagnostics|signal-glare|slop|patch-bench|distance-plan-bench> "
+                     "[fixture-root|map-path|1000|2000|4000] [--commit|middle|eof]\n";
         return 2;
     }
     const std::string mode = argv[1];
@@ -13006,6 +13170,7 @@ int main(int argc, char** argv) {
     if (mode == "slop") {
         untouched_object_key_contract();
         section_sparse_bounds_contract();
+        repeater_section_field_rejection_contract();
         patch_sources_preview_contract();
         finite_distance_contract();
         return failures == 0 ? 0 : 1;
@@ -13020,6 +13185,13 @@ int main(int argc, char** argv) {
             if (repetitions < 5 || repetitions > 50) return 2;
         }
         return patch_sources_benchmark(repetitions);
+    }
+    if (mode == "distance-plan-bench" && argc == 4) {
+        const std::string count = argv[2];
+        const std::string target = argv[3];
+        if ((count != "1000" && count != "2000" && count != "4000") ||
+            (target != "middle" && target != "eof")) return 2;
+        return distance_planning_benchmark(static_cast<size_t>(std::stoul(count)), target == "eof");
     }
     if (mode == "diagnostics" && argc == 3) {
         return diagnostics_contract(std::filesystem::path(argv[2])) == 0 ? 0 : 1;

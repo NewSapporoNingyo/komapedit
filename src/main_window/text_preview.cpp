@@ -205,8 +205,9 @@ bool App::load_text_preview_content(TextPreviewState& preview) {
                 const char* error = kv_get_last_error();
                 throw std::runtime_error(error ? error : "unable to read map working copy");
             }
-            text = current_text;
-            kv_free_string(current_text);
+            const std::unique_ptr<const char, decltype(&kv_free_string)> source_owner(
+                current_text, &kv_free_string);
+            text = source_owner.get();
         } else {
             const std::string bytes = kme::maploader::read_binary_file(
                 kme::maploader::path_from_utf8(preview.file_path));

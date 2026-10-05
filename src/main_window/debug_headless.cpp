@@ -2470,7 +2470,81 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
                   "signal_glare_active_cell_committed_before_structure_search");
         }
 
+        {
+            const auto draft = [](const char* id, const char* file, bool inserted) {
+                EditableListDraftRow row;
+                row.inserted = inserted;
+                if (inserted) row.local_draft_id = id;
+                else row.target_edit_id = id;
+                row.payload_edit_id = row.target_edit_id;
+                row.target_source_file = file;
+                row.payload_source_file = file;
+                row.target_expected_source_hash = "fixture-hash";
+                row.values = {id, "model.csv"};
+                row.original_values = row.values;
+                return row;
+            };
+            std::vector<EditableListDraftRow> rows = {
+                draft("new-a1", "A.csv", true), draft("new-a2", "A.csv", true),
+                draft("deleted-a", "A.csv", false), draft("new-b", "B.csv", true),
+                draft("lowercase-a", "a.csv", true), draft("existing-b", "B.csv", false),
+                draft("existing-a", "A.csv", false), draft("tail-a", "A.csv", true)};
+            rows[2].deleted = true;
+            std::map<std::string, MapElementPendingChange> pending;
+            std::string error;
+            const auto rebuild = [&]() {
+                return build_editable_list_pending_changes(
+                    k_structure_model_edit_spec, rows, {}, pending, error);
+            };
+            check(rebuild() && pending.at("new-a1").insert_before_edit_id == "existing-a" &&
+                      pending.at("new-a2").insert_before_edit_id == "existing-a" &&
+                      pending.at("new-b").insert_before_edit_id == "existing-b" &&
+                      pending.at("tail-a").insert_before_edit_id.empty() &&
+                      pending.at("lowercase-a").insert_before_edit_id.empty() &&
+                      pending.at("new-a1").source_insert_order == 1 &&
+                      pending.at("new-a2").source_insert_order == 2,
+                  "list_insert_anchors_exact_file_deleted_rows_and_order");
+            std::swap(rows[0], rows[1]);
+            check(rebuild() && pending.at("new-a2").source_insert_order == 1 &&
+                      pending.at("new-a1").source_insert_order == 2,
+                  "list_insert_order_after_draft_move");
+            rows[6].deleted = true;
+            rows[1].deleted = true;
+            check(rebuild() && pending.at("new-a2").insert_before_edit_id.empty() &&
+                      pending.find("new-a1") == pending.end(),
+                  "list_insert_anchors_after_existing_and_draft_delete");
+        }
+        add_cache_fixture_row(app.model_.repeaters, "orphan", 1, {
+            {"repeaterKey", "rail"}, {"method", "End"}, {"distance", "0"}, {"order", "1"}});
+        add_cache_fixture_row(app.model_.repeaters, "begin-zero", 2, {
+            {"repeaterKey", "rail"}, {"method", "Begin0"}, {"distance", "10.00"}, {"order", "2"}});
+        add_cache_fixture_row(app.model_.repeaters, "begin-change", 3, {
+            {"repeaterKey", "rail"}, {"method", "Begin"}, {"distance", "10"}, {"order", "3"},
+            {"filePath", "C:\\fixtures\\child.map"}});
+        add_cache_fixture_row(app.model_.repeaters, "end-include", 4, {
+            {"repeaterKey", "rail"}, {"method", "End"}, {"distance", "20.0"}, {"order", "4"},
+            {"filePath", cache_source_path.c_str()}});
+        add_cache_fixture_row(app.model_.repeaters, "begin-open", 5, {
+            {"repeaterKey", "open"}, {"method", "Begin0"}, {"distance", "30"}, {"order", "5"}});
+        set_repeater_structure_keys(app.model_.repeaters[1], {"comma,key", "with space"});
+        app.invalidate_table_cache();
         app.ensure_table_cache();
+        const auto& repeater_rows = app.table_cache_.repeater_rows;
+        check(repeater_rows.size() == 3 && repeater_rows[0].edit_id == "begin-zero" &&
+                  repeater_rows[0].cells[1] == "10.00~Changed to #2" &&
+                  repeater_rows[0].repeater_chain_begin_index == 0 &&
+                  repeater_rows[0].repeater_chain_begin_count == 2 &&
+                  repeater_rows[0].structure_keys == std::vector<std::string>{"comma,key", "with space"} &&
+                  repeater_rows[1].cells[1] == "10~20.0" &&
+                  repeater_rows[1].tooltip_text == "Begin:C:\\fixtures\\child.map, End:" + cache_source_path &&
+                  repeater_rows[2].cells[1] == "30~NO END",
+              "typed_repeater_cache_orphan_begin0_same_distance_include_and_open");
+        app.model_.repeaters[2].cells["filePath"].clear();
+        app.invalidate_table_cache();
+        app.ensure_table_cache();
+        check(app.table_cache_.repeater_rows[1].open_path == cache_source_path &&
+                  app.table_cache_.repeater_rows[1].tooltip_text == cache_source_path,
+              "typed_repeater_cache_empty_begin_path_uses_end_path");
         auto cached_row_matches = [&](const std::vector<CachedTableRow>& rows,
                                       const std::vector<std::string>& expected_cells,
                                       const char* edit_id,
@@ -5493,9 +5567,14 @@ bool inject_report_resolutions(
     for (const EditResolution& request : report.resolution_requests) {
         const std::string& key = request.resolution_key;
         const std::string& reason = request.reason;
-        const std::string boundary = recommended_boundary_token(request);
+        std::string boundary = recommended_boundary_token(request);
+        // Manual fixture selection can use an allowed boundary after the
+        // recommended candidate was removed by environment validation.
+        if (boundary.empty() && !request.allowed_boundaries.empty()) {
+            boundary = request.allowed_boundaries.front().token;
+        }
         if (key.empty() || boundary.empty()) {
-            error = "resolution request has no recommended parser boundary: " + reason;
+            error = "resolution request has no allowed parser boundary: " + reason;
             return false;
         }
         for (const std::string& edit_id : request.affected_edit_ids) {

@@ -385,6 +385,8 @@ std::string App::choose_folder_dialog(const char* title_key) {
         CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog,
         reinterpret_cast<void**>(&dialog));
     if (FAILED(hr) || !dialog) return {};
+    const auto release_com = [](auto* object) { object->Release(); };
+    const std::unique_ptr<IFileOpenDialog, decltype(release_com)> dialog_owner(dialog, release_com);
 
     FILEOPENDIALOGOPTIONS options = {};
     hr = dialog->GetOptions(&options);
@@ -398,14 +400,13 @@ std::string App::choose_folder_dialog(const char* title_key) {
 
     IShellItem* item = nullptr;
     if (SUCCEEDED(hr)) hr = dialog->GetResult(&item);
+    const std::unique_ptr<IShellItem, decltype(release_com)> item_owner(item, release_com);
     PWSTR path = nullptr;
     if (SUCCEEDED(hr) && item) hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+    const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> path_owner(path, &CoTaskMemFree);
 
     std::string selected;
     if (SUCCEEDED(hr) && path) selected = wide_to_utf8(path);
-    if (path) CoTaskMemFree(path);
-    if (item) item->Release();
-    dialog->Release();
     return selected;
 }
 

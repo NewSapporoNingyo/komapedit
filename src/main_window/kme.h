@@ -513,6 +513,7 @@ struct CachedVariableRow {
     std::string value;
     std::string expression;
     std::string file_path;
+    std::string file_name;
 };
 
 struct CreatorMessageTableLayout {
@@ -1382,7 +1383,6 @@ struct MapElementInspectorState {
 #ifndef NDEBUG
     std::uint64_t model_row_cache_scans = 0;
 #endif
-    std::string title;
     std::string source_file;
     std::string source_file_name;
     std::string expected_source_hash;
@@ -1525,7 +1525,6 @@ struct MapElementDeleteRequest {
 // file picker's initial directory.
 struct IncludeFileChangeRequest {
     std::string edit_id;
-    std::string parent_file_path;
     std::string node_absolute_path;
 };
 
@@ -1615,6 +1614,9 @@ struct ScenarioPreview {
     std::string image;
     std::string comment;
 };
+
+struct KvScenarioSnapshot;
+ScenarioPreview hydrate_scenario_snapshot(const KvScenarioSnapshot& snapshot);
 
 bool map_element_inspector_field_forced_read_only(
     std::string_view row_kind, std::string_view field_key) noexcept;
@@ -1873,8 +1875,6 @@ struct HistoryState {
 
 struct CreatorMessageDraft {
     std::string edit_id;
-    std::string source_file;
-    std::string expected_source_hash;
     std::string original_content;
     std::string content;
     bool deleted = false;
@@ -2638,7 +2638,6 @@ private:
                                 RepeaterDeleteMode repeater_mode = RepeaterDeleteMode::EntireChain);
     void process_pending_element_delete();
     void request_include_file_change(const std::string& edit_id,
-                                     const std::string& parent_file_path,
                                      const std::string& node_absolute_path);
     void process_pending_include_file_change();
     void request_resource_list_file_change(ResourceListKind kind);
@@ -2680,8 +2679,7 @@ private:
     void sync_lighting_edit_state();
     bool has_unsaved_edit_state() const;
     bool has_unapplied_editable_list_drafts() const;
-    bool has_editable_list_drafts(const EditableListEditState& edit,
-                                  const EditableListSpec& spec) const;
+    bool has_editable_list_drafts(const EditableListEditState& edit) const;
     bool initialize_editable_list_draft_rows(EditableListEditState& edit,
                                              const EditableListSpec& spec);
     void commit_editable_list_active_edit(EditableListEditState& edit,

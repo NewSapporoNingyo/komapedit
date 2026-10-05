@@ -192,7 +192,9 @@ LoadedText load_header_text(const std::filesystem::path& path,
                             const std::string& head_str,
                             double min_version,
                             const SourceTextOverrides* overrides = nullptr,
-                            bool collect_source_metadata = true);
+                            bool collect_source_metadata = true,
+                            std::string* full_text = nullptr,
+                            bool* utf8_bom = nullptr);
 std::filesystem::path join_path(const std::filesystem::path& root, const std::string& file);
 
 /* Shared source-backed transaction primitive used by map and Scenario
@@ -1391,13 +1393,13 @@ inline RepeaterStructureKeyEdit parse_repeater_structure_key_edit(
     return result;
 }
 
-inline void validate_repeater_edit_fields(const MapEditChange& change) {
+inline RepeaterStructureKeyEdit validate_repeater_edit_fields(const MapEditChange& change) {
     for (const auto& entry : change.field_changes) {
         if (!is_repeater_edit_field(entry.first)) {
             throw std::runtime_error("unsupported Repeater edit field: " + entry.first);
         }
     }
-    (void)parse_repeater_structure_key_edit(change);
+    return parse_repeater_structure_key_edit(change);
 }
 
 // Section.Begin / Section.BeginNew / Section.SetSpeedLimit / Signal.SpeedLimit
@@ -1525,13 +1527,13 @@ inline SectionValuesEdit parse_section_values_edit(const MapEditChange& change) 
     return result;
 }
 
-inline void validate_section_edit_fields(const MapEditChange& change) {
+inline SectionValuesEdit validate_section_edit_fields(const MapEditChange& change) {
     for (const auto& entry : change.field_changes) {
         if (!is_section_edit_field(entry.first)) {
             throw std::runtime_error("unsupported Section edit field: " + entry.first);
         }
     }
-    (void)parse_section_values_edit(change);
+    return parse_section_values_edit(change);
 }
 
 struct SemanticElementSnapshot {
@@ -1549,7 +1551,8 @@ struct SemanticMapSnapshot {
 };
 
 SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx);
-void validate_insert_change(const MapEditChange& change);
+void validate_insert_change(const MapEditChange& change,
+                            RepeaterStructureKeyEdit* repeater_keys = nullptr);
 std::string build_insert_statement(const MapEditChange& change,
                                    std::string_view inserted_newline = "\n");
 std::string insert_method_or_default(const MapEditChange& change,

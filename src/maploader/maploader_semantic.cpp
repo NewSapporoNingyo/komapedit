@@ -548,10 +548,10 @@ void write_speed_limit(SemanticWriter& out, const KvMapSnapshot& snapshot,
 
 void write_section_row(SemanticWriter& out, const KvMapSnapshot& snapshot,
                        const KvSectionRow& row, const char* values_name,
-                       const MapEditChange* change = nullptr) {
+                       const MapEditChange* change = nullptr, bool inserted = false) {
     field(out, "distance", changed_number(change, "distance", row.distance));
     const SectionValuesEdit values = change
-        ? parse_section_values_edit(*change)
+        ? (inserted ? parse_section_values_edit(*change) : validate_section_edit_fields(*change))
         : SectionValuesEdit{};
     if (!values.changed) {
         value_span(out, snapshot, values_name, row.values);
@@ -736,7 +736,8 @@ void write_signal_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
 void write_repeater(SemanticWriter& out, const KvMapSnapshot& snapshot,
                     const KvRepeaterRow& row,
                     const MapEditChange* change = nullptr) {
-    if (change) validate_repeater_edit_fields(*change);
+    const RepeaterStructureKeyEdit structure_keys = change
+        ? validate_repeater_edit_fields(*change) : RepeaterStructureKeyEdit{};
     const std::string source_method = ascii_lower(text(snapshot, row.method));
     const std::string effective_method = ascii_lower(
         changed_string(snapshot, change, "method", row.method));
@@ -771,9 +772,6 @@ void write_repeater(SemanticWriter& out, const KvMapSnapshot& snapshot,
         field(out, "filePath", text(snapshot, row.file_path));
         return;
     }
-    const RepeaterStructureKeyEdit structure_keys = change
-        ? parse_repeater_structure_key_edit(*change)
-        : RepeaterStructureKeyEdit{};
     field(out, "distance", changed_number(change, "distance", row.distance));
     field(out, "method", changed_string(snapshot, change, "method", row.method));
     changed_value(out, snapshot, change, "repeaterKey", row.repeater_key);
@@ -846,7 +844,7 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "speed"};
     } else if (target.row_kind == "section.begin" ||
                target.row_kind == "section.speedLimit") {
-        validate_section_edit_fields(change);
+        // The typed writer validates and decodes these fields together.
         return;
     } else if (target.row_kind == "curve") {
         allowed = {"distance", "radius", "cant"};
@@ -896,7 +894,7 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
                    "x", "y", "z", "rx", "ry", "rz", "tilt", "span"};
     }
     if (target.row_kind == "repeater") {
-        validate_repeater_edit_fields(change);
+        // The typed writer validates and decodes these fields together.
         return;
     }
     for (const auto& input : change.field_changes) {
@@ -1904,7 +1902,7 @@ std::string expected_insert_semantic(MapContext& ctx,
         path_row(row);
         write_section_row(out, fake.snapshot, row,
                           row_kind == "section.begin" ? "signalIndices" : "speeds",
-                          &change);
+                          &change, true);
     } else {
         throw std::runtime_error("unsupported semantic insert target: " + row_kind);
     }

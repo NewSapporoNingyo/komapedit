@@ -86,21 +86,17 @@ bool checked_rgba_image_layout(UINT width,
         return false;
     }
     if (width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
-        height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
-        width > std::numeric_limits<UINT>::max() / 4) {
+        height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
         error = "image dimensions exceed the Direct3D 11 limit";
         return false;
     }
+    constexpr std::uint64_t maximum_bytes =
+        std::uint64_t{D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION} *
+        D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION * 4;
+    static_assert(maximum_bytes <= std::numeric_limits<UINT>::max() &&
+                  maximum_bytes <= std::numeric_limits<size_t>::max());
     row_stride = width * 4;
-    if (height > std::numeric_limits<size_t>::max() / row_stride) {
-        error = "image byte size overflows the host address space";
-        return false;
-    }
     pixel_bytes = static_cast<size_t>(row_stride) * height;
-    if (pixel_bytes > std::numeric_limits<UINT>::max()) {
-        error = "image byte size exceeds the WIC copy limit";
-        return false;
-    }
     return true;
 }
 

@@ -696,17 +696,18 @@ bool Canvas3D::Impl::compute_scene_instance_screen_bounds(const double world[16]
     return true;
 }
 
-std::string Canvas3D::Impl::current_background_path() const {
-    std::string path;
-    for (const Canvas3DBackgroundChange& bg : scene_data.backgrounds) {
-        if (bg.distance > scene_camera_distance) break;
-        path = bg.model_path;
-    }
-    return path;
+const std::string& Canvas3D::Impl::current_background_path() const {
+    static const std::string empty;
+    const auto next = std::upper_bound(
+        scene_data.backgrounds.begin(), scene_data.backgrounds.end(), scene_camera_distance,
+        [](double distance, const Canvas3DBackgroundChange& background) {
+            return distance < background.distance;
+        });
+    return next == scene_data.backgrounds.begin() ? empty : std::prev(next)->model_path;
 }
 
 void Canvas3D::Impl::draw_background_model(const Mat4& view_proj, const SceneFogSample* fog) {
-    std::string path = current_background_path();
+    const std::string& path = current_background_path();
     if (path.empty()) return;
     auto it = scene_models.find(path);
     if (it == scene_models.end() || it->second.state != SceneModelGpu::State::Ready) return;

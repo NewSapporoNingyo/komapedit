@@ -231,12 +231,6 @@ std::optional<double> App::nearest_plan_measure_distance(
         if (auto center = cell_for_point(mouse_x, mouse_y)) {
             for (long long offset_y = -1; offset_y <= 1; ++offset_y) {
                 for (long long offset_x = -1; offset_x <= 1; ++offset_x) {
-                    if ((offset_x < 0 && center->x == std::numeric_limits<long long>::lowest()) ||
-                        (offset_x > 0 && center->x == std::numeric_limits<long long>::max()) ||
-                        (offset_y < 0 && center->y == std::numeric_limits<long long>::lowest()) ||
-                        (offset_y > 0 && center->y == std::numeric_limits<long long>::max())) {
-                        continue;
-                    }
                     const MeasureHitTestCell cell{center->x + offset_x, center->y + offset_y};
                     const auto found = measure_hit_test_cache_.cells.find(cell);
                     if (found == measure_hit_test_cache_.cells.end()) continue;

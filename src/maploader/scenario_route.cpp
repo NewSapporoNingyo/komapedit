@@ -191,28 +191,9 @@ struct ScenarioSourceText {
 };
 
 ScenarioSourceText load_scenario_source_text(const std::filesystem::path& path) {
-    // load_header_text performs the canonical header/version/encoding checks
-    // and computes the baseline hash. Decode the complete source again so
-    // source ranges can be patched without touching comments or unknown rows.
     ScenarioSourceText source;
-    source.loaded = load_header_text(path, "BveTs Scenario", 2.00, nullptr, true);
-    const std::string bytes = read_binary_file(path);
-    source.utf8_bom = has_utf8_bom(bytes);
-    if (source.loaded.encoding == "utf-16le") {
-        source.text = decode_utf16(bytes, true);
-    } else if (source.loaded.encoding == "utf-16be") {
-        source.text = decode_utf16(bytes, false);
-    } else if (source.utf8_bom) {
-        source.text = decode_codepage(bytes.substr(3), 65001, true);
-    } else if (source.loaded.encoding == "cp932") {
-        source.text = decode_codepage(bytes, 932, false);
-    } else {
-        source.text = decode_codepage(bytes, 65001, true);
-    }
-    const TextLineSpan first_line = text_line_span(source.text, 0);
-    source.loaded.body_offset = first_line.has_terminator() ? first_line.next_begin : source.text.size();
-    source.loaded.body = source.loaded.body_offset < source.text.size()
-        ? source.text.substr(source.loaded.body_offset) : std::string();
+    source.loaded = load_header_text(path, "BveTs Scenario", 2.00, nullptr, true,
+                                     &source.text, &source.utf8_bom);
     return source;
 }
 

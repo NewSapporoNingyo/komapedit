@@ -195,6 +195,8 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
         scene_worker_running.store(false);
         scene_model_worker_limit = 1;
         debug_copy_cpu_model_throw_countdown.store(0);
+        debug_scene_log_failure.store(false);
+        debug_helper_start_failure_at.store(0);
         debug_texture_allocation_throw_countdown.store(0);
         debug_scene_index_buffer_failure_countdown.store(0);
         g_debug_put_between_derive_throw_countdown.store(0);
@@ -208,6 +210,18 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
 
     try {
         result.model_bounds = model_bounds_contract();
+        CpuModelData radius_overflow;
+        const float maximum_coordinate = std::numeric_limits<float>::max();
+        GpuVertex positive_corner{}, negative_corner{};
+        positive_corner.px = positive_corner.py = positive_corner.pz = maximum_coordinate;
+        negative_corner.px = negative_corner.py = negative_corner.pz = -maximum_coordinate;
+        radius_overflow.vertices = {positive_corner, negative_corner};
+        result.model_bounds = !update_cpu_model_bounds(radius_overflow) && result.model_bounds;
+        positive_corner.px = positive_corner.py = positive_corner.pz = 1.0f;
+        negative_corner.px = negative_corner.py = negative_corner.pz = -1.0f;
+        radius_overflow.vertices = {positive_corner, negative_corner};
+        result.model_bounds = update_cpu_model_bounds(radius_overflow) &&
+            std::abs(radius_overflow.radius - std::sqrt(3.0f)) < 1e-6f && result.model_bounds;
         result.repeater_cache = debug_check_repeater_cache() && repeater_hydration_contract(valid_model_path);
         const auto number_text = [](double value) {
             char text[64]{};
@@ -396,6 +410,7 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
         reset_scene_worker_state();
         ModelLoaderClient::debug_reset_counts();
         debug_copy_cpu_model_throw_countdown.store(1);
+        debug_scene_log_failure.store(true);
         scene_models.try_emplace("copy-failure");
         SceneModelLoadRequest copy_failure;
         copy_failure.key = "copy-failure";
@@ -404,9 +419,34 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
         if (scene_worker.joinable()) scene_worker.join();
         const std::vector<CpuModelData> failure_outputs = pending_uploads();
         result.copy_exception = !scene_worker_running.load() &&
+            !debug_scene_log_failure.load() &&
             failure_outputs.size() == 1 && !failure_outputs[0].ok &&
             failure_outputs[0].error.find("debug injected CPU model copy failure") !=
                 std::string::npos;
+        record_release_counts();
+
+        reset_scene_worker_state();
+        ModelLoaderClient::debug_reset_counts();
+        scene_model_worker_limit = 3;
+        debug_helper_start_failure_at.store(2);
+        debug_scene_log_failure.store(true);
+        std::vector<SceneModelLoadRequest> helper_requests;
+        for (size_t index = 0; index < 3; ++index) {
+            SceneModelLoadRequest request;
+            request.key = "helper-failure-" + std::to_string(index);
+            request.source_path = valid_model_path + ".missing-" + std::to_string(index);
+            scene_models.try_emplace(request.key);
+            helper_requests.push_back(std::move(request));
+        }
+        start_scene_model_worker(helper_requests);
+        if (scene_worker.joinable()) scene_worker.join();
+        const auto helper_outputs = pending_uploads();
+        result.copy_exception = result.copy_exception && !scene_worker_running.load() &&
+            !debug_scene_log_failure.load() && scene_model_worker_count_value.load() == 2 &&
+            helper_outputs.size() == helper_requests.size() &&
+            std::all_of(helper_outputs.begin(), helper_outputs.end(), [](const CpuModelData& output) {
+                return !output.ok && !output.error.empty();
+            });
         record_release_counts();
 
         reset_scene_worker_state();

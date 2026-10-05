@@ -150,7 +150,6 @@ void App::render_editable_list_table(
     const std::vector<std::string>* cached_column_headers,
     const std::vector<float>* cached_column_widths,
     const std::vector<EditableListDisplayRow>* cached_display_rows) {
-    const bool is_station = std::string_view(spec.row_kind) == "station.list";
     const bool is_structure = std::string_view(spec.row_kind) == "structure.model";
     const bool is_signal_aspect =
         std::string_view(spec.row_kind) == "signal.aspect";
@@ -209,15 +208,12 @@ void App::render_editable_list_table(
         ImGui::Button(tr("button.add_row").c_str())) {
         insert_editable_list_row(edit, spec, -1, false);
     }
-    const ImVec2 table_size = is_station
-        ? ImVec2(0.0f, scroll_x_table_height_for_rows(row_count))
-        : ImVec2(0.0f, 0.0f);
     if (!ImGui::BeginTable(
             table_id, column_count,
             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                 ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                (is_station ? ImGuiTableFlags_None : ImGuiTableFlags_ScrollY),
-            table_size)) {
+                ImGuiTableFlags_ScrollY,
+            ImVec2(0.0f, 0.0f))) {
         return;
     }
 
@@ -814,7 +810,7 @@ void App::render_station_list_window() {
     ImGui::TextUnformatted(tr("frame.station_definitions").c_str());
     ImGui::SameLine();
     ImGui::BeginDisabled(!edit_actions_available() ||
-        !has_editable_list_drafts(station_definition_edit_, k_station_definition_edit_spec));
+        !has_editable_list_drafts(station_definition_edit_));
     if (ImGui::Button(tr("button.apply").c_str())) {
         apply_editable_list_drafts(station_definition_edit_, k_station_definition_edit_spec);
     }
@@ -1079,7 +1075,7 @@ void App::render_structure_models_window() {
     ImGui::BeginDisabled(
         !edit_actions_available() ||
         !has_editable_list_drafts(
-            structure_model_edit_, k_structure_model_edit_spec));
+            structure_model_edit_));
     if (ImGui::Button(tr("button.apply").c_str())) {
         apply_editable_list_drafts(
             structure_model_edit_, k_structure_model_edit_spec);
@@ -1144,7 +1140,7 @@ void App::render_sound_list_window() {
     render_sound_file_find_panel(false);
     ImGui::BeginDisabled(
         !edit_actions_available() ||
-        !has_editable_list_drafts(sound_list_edit_, k_sound_list_edit_spec));
+        !has_editable_list_drafts(sound_list_edit_));
     if (ImGui::Button(tr("button.apply").c_str())) {
         apply_editable_list_drafts(sound_list_edit_, k_sound_list_edit_spec);
     }
@@ -1191,7 +1187,7 @@ void App::render_sound_3d_list_window() {
     ImGui::BeginDisabled(
         !edit_actions_available() ||
         !has_editable_list_drafts(
-            sound_3d_list_edit_, k_sound_3d_list_edit_spec));
+            sound_3d_list_edit_));
     if (ImGui::Button(tr("button.apply").c_str())) {
         apply_editable_list_drafts(
             sound_3d_list_edit_, k_sound_3d_list_edit_spec);
@@ -1260,7 +1256,7 @@ void App::render_signal_aspects_window() {
     ImGui::BeginDisabled(
         !edit_actions_available() ||
         !has_editable_list_drafts(
-            signal_aspect_edit_, k_signal_aspect_edit_spec));
+            signal_aspect_edit_));
     if (ImGui::Button(tr("button.apply").c_str())) {
         apply_editable_list_drafts(
             signal_aspect_edit_, k_signal_aspect_edit_spec);

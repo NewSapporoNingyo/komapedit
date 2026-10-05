@@ -64,9 +64,6 @@ bool App::set_creator_message_draft(const std::string& edit_id,
     } else if (!existing->second.deleted && existing->second.content == existing->second.original_content) {
         existing->second.original_content = table_cell(row, "content");
     }
-    existing->second.source_file = metadata->source.file_path;
-    existing->second.expected_source_hash = expected_source_hash_for_edit_target(
-        model_, pending_edit_changes_, edit_id, metadata->expected_source_hash, metadata->source.file_path);
     existing->second.content = std::move(content);
     existing->second.deleted = deleted;
     table_cache_.creator_message_layout.valid = false;

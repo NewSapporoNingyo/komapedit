@@ -11,6 +11,7 @@
 
 namespace canvas3d_detail {
 
+bool update_cpu_model_bounds(CpuModelData& model);
 PutBetweenSourceTemplate prepare_put_between_source(const CpuModelData& source);
 CpuModelData derive_put_between_model(const CpuModelData& source,
                                       const PutBetweenSourceTemplate& source_template,

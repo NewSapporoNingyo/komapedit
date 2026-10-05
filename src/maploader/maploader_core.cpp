@@ -249,13 +249,17 @@ LoadedText load_header_text(const std::filesystem::path& path,
                             const std::string& head_str,
                             double min_version,
                             const SourceTextOverrides* overrides,
-                            bool collect_source_metadata) {
+                            bool collect_source_metadata,
+                            std::string* full_text,
+                            bool* utf8_bom) {
     std::string normalized_path = normalized_source_path(path);
     std::string normalized_key = normalized_source_key(normalized_path);
     if (overrides) {
         auto override_it = overrides->find(normalized_key);
         if (override_it != overrides->end()) {
             const SourceTextOverride& source = override_it->second;
+            if (full_text) *full_text = source.text;
+            if (utf8_bom) *utf8_bom = source.utf8_bom;
             return make_loaded_header_text(path, source.text, source.encoding, source.newline,
                                            collect_source_metadata ? source.current_hash : std::string{},
                                            source.byte_length,
@@ -307,6 +311,8 @@ LoadedText load_header_text(const std::filesystem::path& path,
     std::string newline = detect_newline(text);
     std::string source_hash;
     if (collect_source_metadata) source_hash = hex64(stable_hash64(bytes));
+    if (full_text) *full_text = text;
+    if (utf8_bom) *utf8_bom = has_utf8_bom(bytes);
     return make_loaded_header_text(path, std::move(text), std::move(encoding), std::move(newline),
                                    std::move(source_hash), bytes.size(),
                                    head_str, min_version,

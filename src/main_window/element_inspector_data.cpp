@@ -148,11 +148,10 @@ void App::process_pending_element_delete() {
 }
 
 void App::request_include_file_change(const std::string& edit_id,
-                                      const std::string& parent_file_path,
                                       const std::string& node_absolute_path) {
     if (!edit_actions_available() || edit_id.empty()) return;
     pending_include_file_change_request_ = IncludeFileChangeRequest{
-        edit_id, parent_file_path, node_absolute_path};
+        edit_id, node_absolute_path};
 }
 
 void App::request_include_file_insert(const std::string& target_file_path,
@@ -167,7 +166,7 @@ void App::process_pending_include_file_change() {
     IncludeFileChangeRequest request =
         std::move(*pending_include_file_change_request_);
     pending_include_file_change_request_.reset();
-    if (!edit_actions_available() || !has_model_) return;
+    if (!edit_actions_available()) return;
 
     const EditStatementInfo* statement = nullptr;
     for (const EditStatementInfo& item : model_.edit_statements) {
@@ -318,7 +317,7 @@ bool new_file_name_is_safe(const std::string& file_name) {
 bool App::stage_new_file_reference(NewFileKind kind,
                                    const std::string& target_file_path,
                                    const std::string& selected_file) {
-    if (!edit_actions_available() || !has_model_) {
+    if (!edit_actions_available()) {
         set_program_status("status.new_file.reference_requires_edit");
         return false;
     }
@@ -416,7 +415,7 @@ void App::process_pending_new_file_create() {
     const std::filesystem::path path = directory / file_name;
 
     if (!request.target_file_path.empty()) {
-        if (!edit_actions_available() || !has_model_) {
+        if (!edit_actions_available()) {
             set_program_status("status.new_file.reference_requires_edit");
             return;
         }
@@ -508,7 +507,7 @@ void App::process_pending_include_file_insert() {
     IncludeFileInsertRequest request =
         std::move(*pending_include_file_insert_request_);
     pending_include_file_insert_request_.reset();
-    if (!edit_actions_available() || !has_model_) return;
+    if (!edit_actions_available()) return;
 
     if (!find_model_source_file(model_, request.target_file_path)) {
         KME_ADD_LOG("[warn]Include insert target is not part of the loaded map: " +
@@ -587,7 +586,7 @@ bool resource_list_content_change_is_for_source(
 } // namespace
 
 void App::request_resource_list_file_change(ResourceListKind kind) {
-    if (!edit_actions_available() || !has_model_ ||
+    if (!edit_actions_available() ||
         kind == ResourceListKind::Count) {
         return;
     }
@@ -605,7 +604,7 @@ void App::process_pending_resource_list_file_change() {
     ResourceListFileChangeRequest request =
         std::move(*pending_resource_list_file_change_request_);
     pending_resource_list_file_change_request_.reset();
-    if (!edit_actions_available() || !has_model_) return;
+    if (!edit_actions_available()) return;
 
     if (request.selected_source_path.empty()) {
         const std::string initial_directory = list_asset_picker_initial_directory(
@@ -684,7 +683,7 @@ void App::process_pending_resource_list_file_change() {
         return;
     }
     const bool discards_drafts = target_edit && target_spec &&
-        has_editable_list_drafts(*target_edit, *target_spec);
+        has_editable_list_drafts(*target_edit);
     if (!request.confirmed_discard &&
         (discards_drafts || discards_applied_content)) {
         resource_list_file_change_confirmation_ = std::move(request);
@@ -1306,7 +1305,6 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     next.row_kind = request.row_kind;
     next.model_row_index = model_row_index;
     next.model_row_source_revision = plan_data_source_revision_;
-    next.title = tr("dialog.element_properties");
     if (request.inspector_session) next.session = *request.inspector_session;
     next.source_file = source.file_path;
     next.source_file_name = display_name_from_path(next.source_file);
@@ -1926,12 +1924,10 @@ void App::sync_scene_placement_edit_from_inspector() {
         clear_scene_placement_edit_target();
         return;
     }
-    const bool show_gizmo = !coordinate_offset_target ||
-        inspector_.coordinate_offsets_enabled || target.placement_distance_gizmo;
     if (repeater_target) {
-        scene_preview_canvas_->set_scene_repeater_edit_target(target, show_gizmo);
+        scene_preview_canvas_->set_scene_repeater_edit_target(target, true);
     } else {
-        scene_preview_canvas_->set_scene_placement_edit_target(target, show_gizmo);
+        scene_preview_canvas_->set_scene_placement_edit_target(target, true);
     }
 }
 

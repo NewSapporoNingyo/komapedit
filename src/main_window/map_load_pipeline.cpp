@@ -73,60 +73,6 @@
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-namespace {
-
-bool scenario_snapshot_ref_valid(const KvScenarioSnapshot& snapshot,
-                                 KvStringRef reference) {
-    return reference.offset <= snapshot.string_size &&
-        reference.length <= snapshot.string_size - reference.offset &&
-        (reference.length == 0 || snapshot.string_data != nullptr);
-}
-
-std::string scenario_snapshot_string(const KvScenarioSnapshot& snapshot,
-                                     KvStringRef reference) {
-    if (!scenario_snapshot_ref_valid(snapshot, reference)) {
-        throw std::runtime_error("scenario snapshot contains an invalid string reference");
-    }
-    return std::string(snapshot.string_data ? snapshot.string_data + reference.offset : "",
-                       static_cast<size_t>(reference.length));
-}
-
-ScenarioPreview copy_scenario_snapshot(const KvScenarioSnapshot& snapshot) {
-    if (snapshot.version != KV_SCENARIO_SNAPSHOT_VERSION ||
-        snapshot.structure_size < sizeof(KvScenarioSnapshot)) {
-        throw std::runtime_error("scenario snapshot version or size is invalid");
-    }
-    const auto copy_paths = [&](const KvScenarioPathWeightRow* rows, uint64_t count) {
-        if (count > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
-            (count != 0 && !rows)) {
-            throw std::runtime_error("scenario snapshot contains an invalid path row array");
-        }
-        std::vector<ScenarioPreviewPath> paths;
-        paths.reserve(static_cast<size_t>(count));
-        for (uint64_t i = 0; i < count; ++i) {
-            paths.push_back(ScenarioPreviewPath{scenario_snapshot_string(snapshot, rows[i].path),
-                                                rows[i].weight,
-                                                rows[i].has_explicit_weight != 0});
-        }
-        return paths;
-    };
-
-    ScenarioPreview preview;
-    preview.source_hash = scenario_snapshot_string(snapshot, snapshot.source_hash);
-    preview.present_fields = snapshot.present_fields;
-    preview.title = scenario_snapshot_string(snapshot, snapshot.title);
-    preview.routes = copy_paths(snapshot.routes, snapshot.route_count);
-    preview.route_title = scenario_snapshot_string(snapshot, snapshot.route_title);
-    preview.vehicles = copy_paths(snapshot.vehicles, snapshot.vehicle_count);
-    preview.vehicle_title = scenario_snapshot_string(snapshot, snapshot.vehicle_title);
-    preview.author = scenario_snapshot_string(snapshot, snapshot.author);
-    preview.image = scenario_snapshot_string(snapshot, snapshot.image);
-    preview.comment = scenario_snapshot_string(snapshot, snapshot.comment);
-    return preview;
-}
-
-} // namespace
-
 void App::stop_loader() {
     if (load_state_.worker.joinable()) load_state_.worker.join();
 }
@@ -299,8 +245,10 @@ void App::perform_open_document(PendingDocumentOpen request) {
                     (error && *error ? error : "maploader failed"));
         return;
     }
+    std::unique_ptr<const KvScenarioSnapshot, decltype(&kv_free_scenario_snapshot)> snapshot_owner(
+        snapshot, &kv_free_scenario_snapshot);
     try {
-        scenario_preview_ = copy_scenario_snapshot(*snapshot);
+        scenario_preview_ = hydrate_scenario_snapshot(*snapshot);
         scenario_preview_baseline_ = scenario_preview_;
         scenario_source_path_ = request.path;
         scenario_loaded_route_signature_.clear();
@@ -312,13 +260,12 @@ void App::perform_open_document(PendingDocumentOpen request) {
         scenario_route_warning_persistent_ = false;
         if (request.record_history) touch_recent_map(request.path);
     } catch (const std::exception& e) {
-        kv_free_scenario_snapshot(snapshot);
         set_program_status("status.map_load_failed");
         KME_ADD_LOG(LogSeverity::Error,
                 std::string("Failed to read scenario preview: ") + e.what());
         return;
     }
-    kv_free_scenario_snapshot(snapshot);
+    snapshot_owner.reset();
 
     uint64_t candidate_count = 0;
     const KvScenarioRouteCandidate* candidates =
@@ -490,11 +437,6 @@ void App::apply_load_result(LoadResult result) {
     // inspector request or pending ledger whose stable editIds belong to the
     // replaced handle, including an ordinary same-file Reload with no changes.
     clear_pending_edit_state();
-    // A successful disk load starts a new edit batch even when it reloads the
-    // same file with no pending ledger.
-    distance_resolution_choices_.clear();
-    distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
-    text_preview_.placement = TextPreviewPlacementState{};
     edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
     invalidate_table_cache();
     has_model_ = true;
@@ -778,8 +720,10 @@ void App::regenerate_geometry() {
         KME_ADD_LOG(std::string("[ERROR]") + (err ? err : "geometry failed"));
         return;
     }
-    std::map<std::string, OtherTrack> old_other;
-    for (const auto& t : model_.other_tracks) old_other[t.key] = t;
+    std::map<std::string, MapViewRestoreState::OtherTrackSettings> old_other;
+    for (const auto& t : model_.other_tracks) {
+        old_other[t.key] = {t.visible, t.color, t.range_min, t.range_max};
+    }
     try {
         LoadModelOptions options;
         options.full_edit_registry = edit_registry_loaded_;

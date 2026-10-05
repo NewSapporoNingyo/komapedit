@@ -1176,14 +1176,6 @@ void App::open_repeater_end_wizard_from_inspector() {
         find_inspector_field(wizard.form, "repeaterKey");
     MapElementEditFieldState* end_distance_field =
         find_inspector_field(wizard.form, "endDistance");
-    if (!key_field || !end_distance_field) {
-        KME_ADD_LOG("[error]Repeater End wizard fields are unavailable");
-        wizard.open = false;
-        wizard.return_inspector_request.reset();
-        wizard.close_after_successful_apply = false;
-        wizard.apply_then_open_created_element = false;
-        return;
-    }
     key_field->original_value = repeater_key;
     set_edit_field_buffer(*key_field, repeater_key);
     end_distance_field->original_value.clear();
@@ -1205,7 +1197,7 @@ void App::open_repeater_change_point_wizard_from_inspector() {
         find_inspector_field(wizard.form, "distance");
     MapElementEditFieldState* end_distance =
         find_inspector_field(wizard.form, "endDistance");
-    if (!source_distance || !begin_distance || !end_distance) {
+    if (!source_distance) {
         KME_ADD_LOG("[error]Repeater change-point wizard distance field is unavailable");
         wizard.open = false;
         wizard.return_inspector_request.reset();
@@ -1323,7 +1315,6 @@ void App::rebuild_new_element_wizard_form() {
     MapElementInspectorState form;
     form.open = true;
     form.row_kind = std::string(tpl.row_kind);
-    form.title = tr("dialog.new_element_wizard");
     form.source_file = wizard.target_file_path;
     form.source_file_name = display_name_from_path(form.source_file);
     for (const NewElementFieldSpec& spec : tpl.fields) {
@@ -1959,12 +1950,12 @@ void App::render_new_element_wizard() {
                 tr("chk.new_element_add_start").c_str(),
                 &wizard.own_track_add_start);
             ImGui::EndDisabled();
-            if (start_changed && wizard.own_track_add_start &&
-                wizard.own_track_add_end) {
-                wizard.own_track_start_add_transition =
-                    wizard.own_track_end_add_transition;
+            if (start_changed) {
+                if (wizard.own_track_add_start && wizard.own_track_add_end) {
+                    wizard.own_track_start_add_transition = wizard.own_track_end_add_transition;
+                }
+                update_own_track_wizard_field_enablement(wizard);
             }
-            update_own_track_wizard_field_enablement(wizard);
 
             render_field("transitionStart");
             ImGui::SameLine();
@@ -1981,9 +1972,9 @@ void App::render_new_element_wizard() {
                 if (wizard.own_track_add_end) {
                     wizard.own_track_end_add_transition = start_transition;
                 }
+                update_own_track_wizard_field_enablement(wizard);
             }
             ImGui::EndDisabled();
-            update_own_track_wizard_field_enablement(wizard);
 
             render_field("distance");
             if (curve) {
@@ -2007,9 +1998,9 @@ void App::render_new_element_wizard() {
                             wizard.own_track_end_add_transition = false;
                         }
                     }
+                    update_own_track_wizard_field_enablement(wizard);
                 }
                 ImGui::EndDisabled();
-                update_own_track_wizard_field_enablement(wizard);
             } else {
                 render_field("gradient");
             }
@@ -2021,12 +2012,12 @@ void App::render_new_element_wizard() {
                 tr("chk.new_element_add_end").c_str(),
                 &wizard.own_track_add_end);
             ImGui::EndDisabled();
-            if (end_changed && wizard.own_track_add_end &&
-                wizard.own_track_add_start) {
-                wizard.own_track_end_add_transition =
-                    wizard.own_track_start_add_transition;
+            if (end_changed) {
+                if (wizard.own_track_add_end && wizard.own_track_add_start) {
+                    wizard.own_track_end_add_transition = wizard.own_track_start_add_transition;
+                }
+                update_own_track_wizard_field_enablement(wizard);
             }
-            update_own_track_wizard_field_enablement(wizard);
 
             render_field("endTransitionStart");
             ImGui::SameLine();
@@ -2043,9 +2034,9 @@ void App::render_new_element_wizard() {
                     wizard.own_track_start_add_transition = end_transition;
                     if (curve) wizard.own_track_curve_add_cant = end_transition;
                 }
+                update_own_track_wizard_field_enablement(wizard);
             }
             ImGui::EndDisabled();
-            update_own_track_wizard_field_enablement(wizard);
             render_field("endDistance");
         } else {
             if (tpl.row_kind == "creator.message") {

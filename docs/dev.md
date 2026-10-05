@@ -92,6 +92,8 @@ Test executables and headless implementations are compiled only in Debug: `build
 
 `build\bin\typed_snapshot_tests.exe patch-bench 7` performs full dry runs for 100, 1,000, and 10,000 deterministic updates and measures `plan.patch_sources`. Each size receives one warmup, followed by all samples and median/p95 results. Repetitions default to 7, with a range of 5–50. Run this benchmark explicitly.
 
+`build\bin\typed_snapshot_tests.exe distance-plan-bench 4000 middle` measures a single insertion in a synthetic Map with 1,000, 2,000, or 4,000 distance anchors. Use `middle` or `eof` for the target. Each process performs one warmup and five measured dry runs, reports `plan.prepare` and total median/p95 plus peak working-set bytes, and checks memory Apply/Reset and unchanged disk bytes.
+
 Runtime output layout:
 
 - Debug uses `build\`; Release uses `build_release\`.
@@ -369,7 +371,7 @@ This section describes the main responsibilities of files in `include/` and `src
 - `gui_kme.cpp` manages `App` construction, destruction, and log callbacks; `kme.h` declares shared EXE state and cross-translation-unit interfaces.
 - `win32_dx11_bootstrap.cpp` owns the D3D11 device and render targets, `WndProc()`, the window message loop, and `main()`.
 - `gui_common_utils.cpp` centralizes fonts, theme/log colors, encoding conversion, numeric formatting, paths, and distance-jump controls; `background_image.cpp` owns WIC decoding, background texture rebuilding, and background persistence in history.
-- `map_snapshot_hydration.cpp` builds `MapModel`, row metadata, Station edit IDs, speed-limit caches, and transition links from typed snapshots; `map_load_pipeline.cpp` handles Map/Scenario detection, Scenario snapshots and draft baselines, Route candidates, asynchronous map loading, entry history, result application, metadata merging, load timing, and geometry regeneration.
+- `map_snapshot_hydration.cpp` builds `MapModel`, row metadata, Station edit IDs, speed-limit caches, and transition links from typed snapshots, and copies Scenario snapshots for both loading and saving; `map_load_pipeline.cpp` handles Map/Scenario detection, Scenario draft baselines, Route candidates, asynchronous map loading, entry history, result application, metadata merging, load timing, and geometry regeneration.
 - `edit_ledger.cpp` handles typed batches and reports, ledger synchronization, local previews, deletion, Save, Revert, and closing; `distance_resolution_workflow.cpp` handles distance-resolution requests and resuming Apply.
 - `edit_benchmark.cpp` provides the separate Debug edit benchmark: real inputs are used for in-memory Apply/Delete/Revert with byte protection; Save runs on regular-file copies in an exclusive temporary directory that preserves relative dependencies. It also checks refresh coalescing, rollback, and stage-timing contracts.
 - `element_inspector_data.cpp` manages opening and locating the Inspector, field and scene edit data, and Apply; `element_inspector_render.cpp` renders Inspector fields, optional insertion parameters, and variable-length Repeater/Section controls.
@@ -808,7 +810,7 @@ The following commands require explicit input paths, validate production workflo
 | `--debug-headless-pretrain-edit` | A map with an existing `PreTrain.Pass` | `headless_pretrain.cpp` checks repeated time/seconds Apply, distance, invalid input, deletion, wizard creation, edit/cancel after insertion, Revert, 2D identity/labels, and 3D marker data |
 | `--debug-headless-legacy-fog-edit` | A map with any number of legacy fog rows | `legacy_fog_edit_validation.cpp` checks identity, invalid input, repeated Apply, deletion, wizard creation, and Revert; a WARP scene checks fog refresh, with additional checks for table/plan caches and full-rebuild scheduling |
 | `--debug-headless-curve-parameter-edit` | A map containing SetGauge, SetCenter, and SetFunction | CG/CC/CF identity, white signs, independent visibility, Inspector distance/parameters, rejection of `SetFunction(2)`, deletion/creation, Revert, and source bytes |
-| `--debug-headless-station-put-margin-edit` | An editable `Station.Put` at distance 0 | Rejection of zero/wrong-sign margins, wizard defaults `margin1=-5` and `margin2=5`, valid insertion, and Revert |
+| `--debug-headless-station-put-margin-edit` | A map with an editable `Station.Put` | Selects an existing editable placement and reports its distance; checks rejection of zero/wrong-sign margins, wizard defaults `margin1=-5` and `margin2=5`, valid insertion, and Revert |
 | `--debug-headless-sparse-new-element` | Target source with zero/one numeric distance statement, or nondecreasing anchors ending below 866 | Production `DrawDistance.Change(500)` wizard at distance 25 for sparse sources or 866 for monotonic tails; checks block reuse, insertion before/after, original text, new-row identity/values, and hashes after Reset |
 | `--debug-headless-auto-insert-diagnostics` | `testmap\auto_insert_failures` fixture directory | Selects targets by physical file, line, type, distance, and identity; checks automatic success, manual recovery, hard rejection, actual Apply of every candidate, second Apply, retry termination, and Reset. Success requires `failed_cases=0` and `result=PASS` |
 

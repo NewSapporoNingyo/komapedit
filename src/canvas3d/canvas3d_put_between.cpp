@@ -45,7 +45,7 @@ std::atomic<size_t> g_debug_put_between_prepare_count{0};
 
 namespace canvas3d_detail {
 
-static bool update_cpu_model_bounds(CpuModelData& model) {
+bool update_cpu_model_bounds(CpuModelData& model) {
     if (model.vertices.empty()) return false;
 
     DVec3 bounds_min{
@@ -76,7 +76,8 @@ static bool update_cpu_model_bounds(CpuModelData& model) {
         };
         radius_squared = std::max(radius_squared, dot(offset, offset));
     }
-    if (!std::isfinite(radius_squared)) return false;
+    const double radius = std::sqrt(radius_squared);
+    if (!std::isfinite(radius) || radius > std::numeric_limits<float>::max()) return false;
 
     model.bounds_min = {
         static_cast<float>(bounds_min.x),
@@ -93,7 +94,7 @@ static bool update_cpu_model_bounds(CpuModelData& model) {
         static_cast<float>(center.y),
         static_cast<float>(center.z)
     };
-    model.radius = std::max(static_cast<float>(std::sqrt(radius_squared)), 0.001f);
+    model.radius = std::max(static_cast<float>(radius), 0.001f);
     return true;
 }
 
@@ -282,10 +283,10 @@ void Canvas3D::Impl::start_scene_put_between_preview_worker() {
     }
     try {
         scene_put_between_preview_worker = std::thread([this]() noexcept {
-            auto report_error = [this](const std::string& error) noexcept {
+            auto report_error = [this](std::string_view error) noexcept {
                 try {
                     push_scene_load_log(
-                        "[warn]canvas3D.cpp: PutBetween preview worker failed: " + error);
+                        "[warn]canvas3D.cpp: PutBetween preview worker failed: " + std::string(error));
                 } catch (...) {
                 }
             };

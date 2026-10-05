@@ -142,48 +142,6 @@ std::string format_repeater_file_path_tooltip(const std::string& begin_path, con
     return begin_path.empty() ? end_path : begin_path;
 }
 
-std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
-    std::vector<TableRow> merged_rows;
-    const repeater_linkage::Linkage linkage =
-        repeater_linkage::pair_linkage(table_repeater_events(data));
-    merged_rows.reserve(linkage.segments.size());
-    for (const repeater_linkage::Segment& segment : linkage.segments) {
-        if (segment.begin_source_index >= data.size()) continue;
-        const TableRow& begin = data[segment.begin_source_index];
-        TableRow row = begin;
-        const std::string& begin_distance = table_cell(begin, "distance");
-        const std::string& begin_file_path = table_cell(begin, "filePath");
-        row.cells["rowNumber"] = std::to_string(segment.display_index);
-        row.cells["_repeaterChainBeginIndex"] = std::to_string(segment.chain_begin_index);
-        row.cells["_repeaterChainBeginCount"] = std::to_string(segment.chain_begin_count);
-        row.cells["_openFilePath"] = begin_file_path;
-        row.cells["_repeaterBoundaryKind"] =
-            segment.boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd ? "end" :
-            segment.boundary_kind == repeater_linkage::BoundaryKind::NextBegin ? "change" : "open";
-        if (segment.boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd &&
-            segment.boundary_source_index && *segment.boundary_source_index < data.size()) {
-            const TableRow& end = data[*segment.boundary_source_index];
-            const std::string& end_file_path = table_cell(end, "filePath");
-            row.cells["_endEditId"] = end.edit_id;
-            row.cells["_endDistance"] = table_cell(end, "distance");
-            row.cells["distance"] = format_distance_range(begin_distance, table_cell(end, "distance"));
-            row.cells["filePath"] = format_repeater_file_path(begin_file_path, end_file_path);
-            row.cells["_openFilePath"] = begin_file_path.empty() ? end_file_path : begin_file_path;
-            row.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(begin_file_path, end_file_path);
-        } else if (segment.boundary_kind == repeater_linkage::BoundaryKind::NextBegin) {
-            row.cells["distance"] = format_changed_distance(
-                begin_distance, static_cast<int>(segment.next_begin_display_index.value_or(0)));
-            row.cells["filePath"] = format_repeater_file_path(begin_file_path);
-            row.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(begin_file_path);
-        } else {
-            row.cells["distance"] = format_distance_range(begin_distance, "NO END");
-            row.cells["filePath"] = format_repeater_file_path(begin_file_path);
-            row.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(begin_file_path);
-        }
-        merged_rows.push_back(std::move(row));
-    }
-    return merged_rows;
-}
 } // namespace
 
 void App::ensure_table_cache() {
@@ -394,6 +352,7 @@ void App::ensure_table_cache() {
             cached.value = table_cell(*row, "value");
             cached.expression = table_cell(*row, "expression");
             cached.file_path = table_cell(*row, "filePath");
+            cached.file_name = display_name_from_path(cached.file_path);
             cache.variable_rows.push_back(std::move(cached));
         }
     }
@@ -445,23 +404,39 @@ void App::ensure_table_cache() {
 
     cache.repeater_interval_width = 0.0f;
     expand_width_for_text(cache.repeater_interval_width, k_repeater_columns[k_repeater_interval_column].header);
-    std::vector<TableRow> repeater_rows = merged_repeater_rows(model_.repeaters);
-    cache.repeater_rows.reserve(repeater_rows.size());
-    for (const auto& row : repeater_rows) {
+    const repeater_linkage::Linkage repeater_links =
+        repeater_linkage::pair_linkage(table_repeater_events(model_.repeaters));
+    cache.repeater_rows.reserve(repeater_links.segments.size());
+    for (const auto& segment : repeater_links.segments) {
+        const TableRow& row = model_.repeaters[segment.begin_source_index];
         CachedRepeaterRow cached;
         copy_table_row_metadata(row, cached);
         cached.structure_keys = repeater_structure_keys(row);
         cached.cells.resize(IM_ARRAYSIZE(k_repeater_columns));
         cached.invalid_track_key = is_invalid_track_key_row(row);
-        cached.repeater_chain_begin_index = static_cast<size_t>(std::max(
-            0.0, table_cell_number(row, "_repeaterChainBeginIndex")));
-        cached.repeater_chain_begin_count = std::max<size_t>(1, static_cast<size_t>(std::max(
-            0.0, table_cell_number(row, "_repeaterChainBeginCount"))));
-        cached.open_path = table_cell(row, "_openFilePath");
-        cached.tooltip_text = table_cell(row, "_filePathTooltip");
-        if (cached.tooltip_text.empty()) cached.tooltip_text = cached.open_path;
+        cached.repeater_chain_begin_index = segment.chain_begin_index;
+        cached.repeater_chain_begin_count = segment.chain_begin_count;
+        const std::string& begin_distance = table_cell(row, "distance");
+        const std::string& begin_path = table_cell(row, "filePath");
+        cached.open_path = begin_path;
         for (int i = 0; i < IM_ARRAYSIZE(k_repeater_columns); ++i) {
             cached.cells[i] = table_cell(row, k_repeater_columns[i].key);
+        }
+        cached.cells[0] = std::to_string(segment.display_index);
+        if (segment.boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd) {
+            const TableRow& end = model_.repeaters[*segment.boundary_source_index];
+            const std::string& end_path = table_cell(end, "filePath");
+            cached.cells[k_repeater_distance_column] = format_distance_range(begin_distance, table_cell(end, "distance"));
+            cached.cells[k_repeater_file_path_column] = format_repeater_file_path(begin_path, end_path);
+            cached.open_path = begin_path.empty() ? end_path : begin_path;
+            cached.tooltip_text = format_repeater_file_path_tooltip(begin_path, end_path);
+        } else {
+            cached.cells[k_repeater_distance_column] =
+                segment.boundary_kind == repeater_linkage::BoundaryKind::NextBegin
+                    ? format_changed_distance(begin_distance, static_cast<int>(*segment.next_begin_display_index))
+                    : format_distance_range(begin_distance, "NO END");
+            cached.cells[k_repeater_file_path_column] = format_repeater_file_path(begin_path);
+            cached.tooltip_text = format_repeater_file_path_tooltip(begin_path);
         }
         expand_width_for_text(cache.repeater_distance_width, cached.cells[k_repeater_distance_column]);
         expand_width_for_text(cache.repeater_file_path_width, cached.cells[k_repeater_file_path_column]);

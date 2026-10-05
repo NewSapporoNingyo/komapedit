@@ -15,6 +15,7 @@
 #include "numeric_safety.h"
 #include "repeater_linkage.h"
 #include "scene_route_overlay.h"
+#include "scene_track_sampling.h"
 #include "maploader.h"
 #include "imgui.h"
 #include <algorithm>
@@ -343,7 +344,9 @@ void sort_canvas3d_scene_markers(std::vector<Canvas3DSceneMarker>& markers) {
                      });
 }
 
-void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model) {
+void populate_canvas3d_scene_markers(
+    Canvas3DScene& scene, const MapModel& model,
+    const scene_track_sampling::PlacementTrackLookup& placement_tracks) {
     kme::timing::GuiTiming::Stage edit_timing("scene.marker_recipes");
     scene.markers.clear();
     const Canvas3DTrackPath* own_track = scene_own_track_path(scene);
@@ -523,7 +526,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         const std::string track_key = table_cell(row, "trackKey");
         const std::string normalized_key = normalize_track_lookup_key(track_key);
         const Canvas3DTrackPath* path =
-            scene_other_track_path_for_key(scene, normalized_key);
+            placement_tracks.find_other(scene, normalized_key);
         if (!path || path->points.empty()) continue;
         const double distance = table_cell_number(row, "distance");
         if (!std::isfinite(distance) ||
@@ -702,6 +705,12 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
     sort_canvas3d_scene_markers(scene.markers);
 }
 
+void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model) {
+    scene_track_sampling::PlacementTrackLookup placement_tracks;
+    placement_tracks.rebuild(scene);
+    populate_canvas3d_scene_markers(scene, model, placement_tracks);
+}
+
 void populate_canvas3d_scene_fog(Canvas3DScene& scene, const MapModel& model) {
     std::vector<SceneFogEvent> events;
     events.reserve(model.fogs.size() + model.legacy_fogs.size());
@@ -764,7 +773,8 @@ void populate_canvas3d_scene_draw_distances(Canvas3DScene& scene, const MapModel
 }
 bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
                                              const MapModel& model,
-                                             int station_index) {
+                                             int station_index,
+                                             const scene_track_sampling::PlacementTrackLookup& placement_tracks) {
     const Canvas3DTrackPath* own_path = scene_own_track_path(scene);
     if (!own_path || own_path->points.empty()) return false;
 
@@ -776,7 +786,7 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
     scene.max_distance = own_path->points.back().distance;
 
     auto sample_placement_track = [&](const std::string& key, double distance) -> std::optional<Canvas3DTrackPoint> {
-        const Canvas3DTrackPath* path = scene_placement_track_path_for_key(scene, key);
+        const Canvas3DTrackPath* path = placement_tracks.find(scene, key);
         return path ? scene_sample_track_path_points(*path, distance) : std::nullopt;
     };
     auto scene_object = [](Canvas3DSceneObjectKind kind, size_t source_row,
@@ -980,6 +990,14 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
     return true;
 }
 
+bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
+                                             const MapModel& model,
+                                             int station_index) {
+    scene_track_sampling::PlacementTrackLookup placement_tracks;
+    placement_tracks.rebuild(scene);
+    return populate_canvas3d_scene_dynamic_content(scene, model, station_index, placement_tracks);
+}
+
 } // namespace canvas3d_detail
 
 Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOptions& options) {
@@ -1097,10 +1115,12 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         }
     }
     populate_canvas3d_scene_route_info(scene, model);
-    populate_canvas3d_scene_markers(scene, model);
+    scene_track_sampling::PlacementTrackLookup placement_tracks;
+    placement_tracks.rebuild(scene);
+    populate_canvas3d_scene_markers(scene, model, placement_tracks);
     populate_canvas3d_scene_fog(scene, model);
     populate_canvas3d_scene_draw_distances(scene, model);
-    if (!populate_canvas3d_scene_dynamic_content(scene, model, options.station_index)) {
+    if (!populate_canvas3d_scene_dynamic_content(scene, model, options.station_index, placement_tracks)) {
         result.log_messages.push_back("[warn]canvas3D.cpp: 3D scene preview dynamic content could not be built");
     }
     return result;

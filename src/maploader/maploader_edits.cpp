@@ -1637,8 +1637,7 @@ std::string build_section_statement(const MapEditChange& change,
                                     const ParsedStatement& statement,
                                     const std::string& method) {
     if (!has_non_distance_field_change(change)) return statement.raw_text;
-    validate_section_edit_fields(change);
-    const SectionValuesEdit values = parse_section_values_edit(change);
+    const SectionValuesEdit values = validate_section_edit_fields(change);
     if (!values.changed) {
         throw std::runtime_error(
             "Section statement change requires at least one parameter field");
@@ -1931,7 +1930,7 @@ void append_repeater_structure_keys(std::ostringstream& out,
 std::string build_repeater_statement(const MapEditChange& change,
                                      const ParsedStatement& statement,
                                      const RepeaterEvent& row) {
-    validate_repeater_edit_fields(change);
+    const RepeaterStructureKeyEdit edited_keys = validate_repeater_edit_fields(change);
     if (!has_non_distance_field_change(change)) return statement.raw_text;
     const std::string key = object_key_field_as_bve_arg(
         change, "repeaterKey", row.repeater_key, statement);
@@ -1940,7 +1939,6 @@ std::string build_repeater_statement(const MapEditChange& change,
         has_field_change(change, "repeaterKey")) {
         return replace_raw_object_key_argument(statement, key);
     }
-    const RepeaterStructureKeyEdit edited_keys = parse_repeater_structure_key_edit(change);
     const std::string source_method = ascii_lower(row.method);
     const std::vector<std::string> raw_args = parse_bve_argument_fields(statement.raw_arguments);
 
@@ -3162,7 +3160,8 @@ void validate_light_insert_distance(const MapEditChange& change) {
     }
 }
 
-void validate_insert_change(const MapEditChange& change) {
+void validate_insert_change(const MapEditChange& change,
+                            RepeaterStructureKeyEdit* repeater_keys) {
     if (change.row_kind.empty()) {
         throw std::runtime_error("insert edit is missing its row kind");
     }
@@ -3207,7 +3206,8 @@ void validate_insert_change(const MapEditChange& change) {
                                      "x", "y", "z", "rx", "ry", "rz", "tilt", "span"});
         validate_insert_method(change, "Put", {"Put", "Put0"});
     } else if (row_kind == "repeater") {
-        validate_repeater_edit_fields(change);
+        RepeaterStructureKeyEdit structure_keys = validate_repeater_edit_fields(change);
+        if (repeater_keys) *repeater_keys = structure_keys;
         validate_insert_method(change, "Begin", {"Begin", "Begin0", "End"});
         const std::string method = insert_method_or_default(change, "Begin");
         if (method == "End") {
@@ -3219,8 +3219,6 @@ void validate_insert_change(const MapEditChange& change) {
             }
             return;
         }
-        const RepeaterStructureKeyEdit structure_keys =
-            parse_repeater_structure_key_edit(change);
         if (!structure_keys.changed || structure_keys.values.empty()) {
             throw std::runtime_error("Repeater insert requires at least one structure key");
         }
@@ -3412,7 +3410,8 @@ std::string build_resource_list_content_insert_statement(
 // with the same BVE quoting/number normalization the update builders use.
 std::string build_insert_statement(const MapEditChange& change,
                                    std::string_view inserted_newline) {
-    validate_insert_change(change);
+    RepeaterStructureKeyEdit structure_keys;
+    validate_insert_change(change, &structure_keys);
     const std::string& row_kind = change.row_kind;
     if (row_kind == "creator.message") {
         return std::string(k_creator_message_prefix) +
@@ -3437,8 +3436,6 @@ std::string build_insert_statement(const MapEditChange& change,
             return "Repeater[" + key + "].End();";
         }
         const std::string track_key = insert_required_track_key(change, "trackKey");
-        const RepeaterStructureKeyEdit structure_keys =
-            parse_repeater_structure_key_edit(change);
         std::ostringstream out;
         out << "Repeater[" << key << "]." << method << "(" << track_key;
         if (method == "Begin0") {
@@ -3706,23 +3703,54 @@ bool same_statement_context(const MapContext& ctx,
 
 struct DistanceSectionAnalysis {
     SourceSpan context_source;
-    std::vector<size_t> anchors;
+    const std::vector<size_t>* anchor_indices = nullptr;
     size_t origin_position = k_no_source_ref;
     size_t first_position = 0;
     size_t last_position = 0;
     std::string direction = "ambiguous";
     bool resolved = false;
     bool includes_initial_block = false;
+
+    const std::vector<size_t>& anchors() const {
+        static const std::vector<size_t> empty;
+        return anchor_indices ? *anchor_indices : empty;
+    }
 };
 
 struct DistancePlanningIndex {
     using PhysicalKey = std::tuple<std::string, size_t, size_t, size_t>;
 
-    std::map<std::string, std::vector<size_t>> anchors_by_context;
+    struct ContextAnchors {
+        std::vector<size_t> indices;
+        std::vector<size_t> increasing_first, increasing_last;
+        std::vector<size_t> decreasing_first, decreasing_last;
+
+        void build_runs(const MapContext& ctx) {
+            const size_t count = indices.size();
+            increasing_first.resize(count);
+            increasing_last.resize(count);
+            decreasing_first.resize(count);
+            decreasing_last.resize(count);
+            for (size_t pos = 0; pos < count; ++pos) {
+                const double current = ctx.parsed_statements[indices[pos]].distance_value;
+                const double previous = pos ?
+                    ctx.parsed_statements[indices[pos - 1]].distance_value : current;
+                increasing_first[pos] = pos && previous <= current ? increasing_first[pos - 1] : pos;
+                decreasing_first[pos] = pos && previous >= current ? decreasing_first[pos - 1] : pos;
+            }
+            for (size_t pos = count; pos-- > 0;) {
+                const double current = ctx.parsed_statements[indices[pos]].distance_value;
+                const double next = pos + 1 < count ?
+                    ctx.parsed_statements[indices[pos + 1]].distance_value : current;
+                increasing_last[pos] = pos + 1 < count && current <= next ? increasing_last[pos + 1] : pos;
+                decreasing_last[pos] = pos + 1 < count && current >= next ? decreasing_last[pos + 1] : pos;
+            }
+        }
+    };
+
+    std::map<std::string, ContextAnchors> anchors_by_context;
     std::map<std::string, std::vector<size_t>> statements_by_context;
     std::map<PhysicalKey, std::vector<size_t>> statements_by_physical_source;
-    std::unordered_map<size_t, DistanceSectionAnalysis> sections_by_statement;
-    std::unordered_map<size_t, DistanceSectionAnalysis> sections_by_anchor;
 
     explicit DistancePlanningIndex(const MapContext& ctx) {
         MapTiming::Stage timing("plan.distance_index");
@@ -3731,17 +3759,19 @@ struct DistancePlanningIndex {
             std::string context_key = key_for_context(ctx, statement.source);
             statements_by_context[context_key].push_back(i);
             if (is_distance_statement(statement)) {
-                anchors_by_context[context_key].push_back(i);
+                anchors_by_context[context_key].indices.push_back(i);
             }
             statements_by_physical_source[physical_key(statement)].push_back(i);
         }
         for (auto& entry : anchors_by_context) {
-            std::stable_sort(entry.second.begin(), entry.second.end(), [&](size_t lhs, size_t rhs) {
+            auto& anchors = entry.second.indices;
+            std::stable_sort(anchors.begin(), anchors.end(), [&](size_t lhs, size_t rhs) {
                 const SourceSpan& a = ctx.parsed_statements[lhs].source;
                 const SourceSpan& b = ctx.parsed_statements[rhs].source;
                 if (a.byte_start != b.byte_start) return a.byte_start < b.byte_start;
                 return source_start_less(a, b);
             });
+            entry.second.build_runs(ctx);
         }
         for (auto& entry : statements_by_context) {
             std::stable_sort(entry.second.begin(), entry.second.end(), [&](size_t lhs, size_t rhs) {
@@ -3769,7 +3799,7 @@ struct DistancePlanningIndex {
                                            const SourceSpan& source) const {
         static const std::vector<size_t> empty;
         auto it = anchors_by_context.find(key_for_context(ctx, source));
-        return it == anchors_by_context.end() ? empty : it->second;
+        return it == anchors_by_context.end() ? empty : it->second.indices;
     }
 
     const std::vector<size_t>& physical_counterparts(
@@ -3791,89 +3821,53 @@ DistanceSectionAnalysis analyze_distance_section(const MapContext& ctx,
                                                  size_t statement_index,
                                                  DistancePlanningIndex& index,
                                                  bool origin_is_anchor = false) {
-    auto& sections = origin_is_anchor ? index.sections_by_anchor : index.sections_by_statement;
-    auto cached = sections.find(statement_index);
-    if (cached != sections.end()) return cached->second;
     DistanceSectionAnalysis result;
     if (statement_index >= ctx.parsed_statements.size()) return result;
     const ParsedStatement& origin = ctx.parsed_statements[statement_index];
     result.context_source = origin.source;
-    result.anchors = index.anchors_for(ctx, origin.source);
-    if (result.anchors.empty()) {
+    const auto context = index.anchors_by_context.find(
+        DistancePlanningIndex::key_for_context(ctx, origin.source));
+    if (context == index.anchors_by_context.end()) {
         result.includes_initial_block = true;
         result.resolved = true;
         result.direction = "increasing";
-        sections.emplace(statement_index, result);
         return result;
     }
-
-    for (size_t pos = 0; pos < result.anchors.size(); ++pos) {
-        const SourceSpan& source = ctx.parsed_statements[result.anchors[pos]].source;
-        if (source.byte_start < origin.source.byte_start ||
-            (origin_is_anchor && source.byte_start == origin.source.byte_start)) result.origin_position = pos;
-        else break;
+    const auto& runs = context->second;
+    const auto& anchors = runs.indices;
+    result.anchor_indices = &anchors;
+    const auto after_origin = origin_is_anchor
+        ? std::upper_bound(anchors.begin(), anchors.end(), origin.source.byte_start,
+            [&](size_t byte_start, size_t anchor) {
+                return byte_start < ctx.parsed_statements[anchor].source.byte_start;
+            })
+        : std::lower_bound(anchors.begin(), anchors.end(), origin.source.byte_start,
+            [&](size_t anchor, size_t byte_start) {
+                return ctx.parsed_statements[anchor].source.byte_start < byte_start;
+            });
+    if (after_origin != anchors.begin()) {
+        result.origin_position = static_cast<size_t>(after_origin - anchors.begin() - 1);
     }
     if (result.origin_position == k_no_source_ref) {
         result.includes_initial_block = true;
         result.origin_position = 0;
     }
-    if (result.anchors.size() == 1) {
+    if (anchors.size() == 1) {
         result.resolved = true;
         result.direction = "increasing";
-        sections.emplace(statement_index, result);
         return result;
     }
-
-    size_t plateau_first = result.origin_position;
-    size_t plateau_last = result.origin_position;
-    const double center = ctx.parsed_statements[result.anchors[result.origin_position]].distance_value;
-    while (plateau_first > 0 &&
-           exact_distance_value(ctx.parsed_statements[result.anchors[plateau_first - 1]].distance_value,
-                                center)) {
-        --plateau_first;
-    }
-    while (plateau_last + 1 < result.anchors.size() &&
-           exact_distance_value(ctx.parsed_statements[result.anchors[plateau_last + 1]].distance_value,
-                                center)) {
-        ++plateau_last;
-    }
-
-    size_t inc_first = plateau_first;
-    size_t inc_last = plateau_last;
-    while (inc_first > 0) {
-        double previous = ctx.parsed_statements[result.anchors[inc_first - 1]].distance_value;
-        double current = ctx.parsed_statements[result.anchors[inc_first]].distance_value;
-        if (!(previous <= current)) break;
-        --inc_first;
-    }
-    while (inc_last + 1 < result.anchors.size()) {
-        double current = ctx.parsed_statements[result.anchors[inc_last]].distance_value;
-        double next = ctx.parsed_statements[result.anchors[inc_last + 1]].distance_value;
-        if (!(current <= next)) break;
-        ++inc_last;
-    }
-
-    size_t dec_first = plateau_first;
-    size_t dec_last = plateau_last;
-    while (dec_first > 0) {
-        double previous = ctx.parsed_statements[result.anchors[dec_first - 1]].distance_value;
-        double current = ctx.parsed_statements[result.anchors[dec_first]].distance_value;
-        if (!(previous >= current)) break;
-        --dec_first;
-    }
-    while (dec_last + 1 < result.anchors.size()) {
-        double current = ctx.parsed_statements[result.anchors[dec_last]].distance_value;
-        double next = ctx.parsed_statements[result.anchors[dec_last + 1]].distance_value;
-        if (!(current >= next)) break;
-        ++dec_last;
-    }
+    const size_t inc_first = runs.increasing_first[result.origin_position];
+    const size_t inc_last = runs.increasing_last[result.origin_position];
+    const size_t dec_first = runs.decreasing_first[result.origin_position];
+    const size_t dec_last = runs.decreasing_last[result.origin_position];
 
     const bool inc_distinct =
-        ctx.parsed_statements[result.anchors[inc_first]].distance_value <
-        ctx.parsed_statements[result.anchors[inc_last]].distance_value;
+        ctx.parsed_statements[result.anchors()[inc_first]].distance_value <
+        ctx.parsed_statements[result.anchors()[inc_last]].distance_value;
     const bool dec_distinct =
-        ctx.parsed_statements[result.anchors[dec_first]].distance_value >
-        ctx.parsed_statements[result.anchors[dec_last]].distance_value;
+        ctx.parsed_statements[result.anchors()[dec_first]].distance_value >
+        ctx.parsed_statements[result.anchors()[dec_last]].distance_value;
     if (inc_distinct == dec_distinct) {
         // A turn or a flat plateau is ambiguous, but it is still local to the
         // monotonic runs touching the origin. Do not widen the manual choice
@@ -3882,9 +3876,8 @@ DistanceSectionAnalysis analyze_distance_section(const MapContext& ctx,
         result.last_position = std::max(inc_last, dec_last);
         if (result.first_position == result.last_position) {
             if (result.first_position > 0) --result.first_position;
-            if (result.last_position + 1 < result.anchors.size()) ++result.last_position;
+            if (result.last_position + 1 < result.anchors().size()) ++result.last_position;
         }
-        sections.emplace(statement_index, result);
         return result;
     }
     result.resolved = true;
@@ -3898,11 +3891,10 @@ DistanceSectionAnalysis analyze_distance_section(const MapContext& ctx,
         result.direction = "decreasing";
     }
     if (result.includes_initial_block && result.direction == "decreasing" &&
-        ctx.parsed_statements[result.anchors.front()].distance_value > 0.0) {
+        ctx.parsed_statements[result.anchors().front()].distance_value > 0.0) {
         result.resolved = false;
         result.direction = "ambiguous";
     }
-    sections.emplace(statement_index, result);
     return result;
 }
 
@@ -3942,12 +3934,12 @@ DistanceBoundaryPlan boundary_after_anchor(const MapContext& ctx,
                                            const DistanceSectionAnalysis& section,
                                            size_t before_position) {
     DistanceBoundaryPlan boundary;
-    if (before_position >= section.anchors.size() ||
-        before_position + 1 >= section.anchors.size()) {
+    if (before_position >= section.anchors().size() ||
+        before_position + 1 >= section.anchors().size()) {
         return boundary;
     }
-    const ParsedStatement& before = ctx.parsed_statements[section.anchors[before_position]];
-    const ParsedStatement& after = ctx.parsed_statements[section.anchors[before_position + 1]];
+    const ParsedStatement& before = ctx.parsed_statements[section.anchors()[before_position]];
+    const ParsedStatement& after = ctx.parsed_statements[section.anchors()[before_position + 1]];
     boundary.before_anchor_position = before_position;
     boundary.after_anchor_position = before_position + 1;
     const auto after_range = source_range_in_text(patch, after.source);
@@ -3978,11 +3970,11 @@ DistanceBoundaryPlan terminal_boundary_for_last_anchor(
     size_t before_position,
     const DistancePlanningIndex& index) {
     DistanceBoundaryPlan boundary;
-    if (before_position >= section.anchors.size() ||
-        before_position + 1 != section.anchors.size()) {
+    if (before_position >= section.anchors().size() ||
+        before_position + 1 != section.anchors().size()) {
         return boundary;
     }
-    const ParsedStatement& before = ctx.parsed_statements[section.anchors[before_position]];
+    const ParsedStatement& before = ctx.parsed_statements[section.anchors()[before_position]];
     boundary.before_anchor_position = before_position;
     boundary.terminal_context_boundary = true;
     boundary.variable_environment = before.variable_environment;
@@ -4033,7 +4025,7 @@ DistanceBoundaryPlan source_edge_boundary(
     DistanceBoundaryPlan boundary;
     boundary.file_boundary = true;
     boundary.terminal_context_boundary = true;
-    if (!eof && section.anchors.empty()) return {};
+    if (!eof && section.anchors().empty()) return {};
     const auto key = std::make_pair(
         ctx.source_files[section.context_source.source_file_index].source_key,
         source_context_identity(ctx, section.context_source));
@@ -4048,7 +4040,7 @@ DistanceBoundaryPlan source_edge_boundary(
         boundary.column = utf8_column_count(
             patch.text, patch.line_starts.back(), patch.text.size()) + 1;
     } else {
-        const auto& first = ctx.parsed_statements[section.anchors.front()];
+        const auto& first = ctx.parsed_statements[section.anchors().front()];
         boundary.insert_offset = source_range_in_text(patch, first.source).first;
         boundary.variable_environment = first.variable_environment;
         boundary.current_expression = "0";
@@ -4075,19 +4067,19 @@ std::vector<DistanceBoundaryPlan> distance_boundary_plans(
     const MapContext& ctx, const SourcePatch& patch,
     const DistanceSectionAnalysis& section) {
     std::vector<DistanceBoundaryPlan> result;
-    if (section.includes_initial_block || section.anchors.size() == 1) {
+    if (section.includes_initial_block || section.anchors().size() == 1) {
         auto first = source_edge_boundary(ctx, patch, section, false);
         if (first.valid()) result.push_back(std::move(first));
     }
-    if (!section.anchors.empty()) {
+    if (!section.anchors().empty()) {
         for (size_t pos = section.first_position;
-             pos <= section.last_position && pos + 1 < section.anchors.size(); ++pos) {
+             pos <= section.last_position && pos + 1 < section.anchors().size(); ++pos) {
             auto boundary = boundary_after_anchor(ctx, patch, section, pos);
             if (boundary.valid()) result.push_back(std::move(boundary));
         }
     }
-    if (section.resolved && (section.anchors.empty() ||
-        section.last_position + 1 == section.anchors.size())) {
+    if (section.resolved && (section.anchors().empty() ||
+        section.last_position + 1 == section.anchors().size())) {
         auto eof = source_edge_boundary(ctx, patch, section, true);
         if (eof.valid()) result.push_back(std::move(eof));
     }
@@ -4355,14 +4347,14 @@ std::string first_multivalued_variable(const MapContext& ctx,
                                        const DistanceSectionAnalysis& section,
                                        const DistancePlanningIndex& distance_index,
                                        const std::set<std::string>& variables) {
-    if (section.anchors.empty()) return {};
+    if (section.anchors().empty()) return {};
     const ParsedStatement& first_anchor = ctx.parsed_statements[
-        section.anchors[std::min(section.first_position, section.anchors.size() - 1)]];
+        section.anchors()[std::min(section.first_position, section.anchors().size() - 1)]];
     const size_t begin_offset = first_anchor.source.byte_start;
     size_t end_offset = std::numeric_limits<size_t>::max();
-    if (section.last_position + 1 < section.anchors.size()) {
+    if (section.last_position + 1 < section.anchors().size()) {
         end_offset = ctx.parsed_statements[
-            section.anchors[section.last_position + 1]].source.byte_start;
+            section.anchors()[section.last_position + 1]].source.byte_start;
     }
 
     for (const std::string& variable : variables) {
@@ -4541,11 +4533,11 @@ std::string source_section_key(const MapContext& ctx,
         << source_context_identity(ctx, section.context_source) << "\n"
         << section.direction << "\n" << section.includes_initial_block << "\n"
         << canonical_number(target_distance) << "\n";
-    if (!section.anchors.empty()) {
+    if (!section.anchors().empty()) {
         const ParsedStatement& first = ctx.parsed_statements[
-            section.anchors[std::min(section.first_position, section.anchors.size() - 1)]];
+            section.anchors()[std::min(section.first_position, section.anchors().size() - 1)]];
         const ParsedStatement& last = ctx.parsed_statements[
-            section.anchors[std::min(section.last_position, section.anchors.size() - 1)]];
+            section.anchors()[std::min(section.last_position, section.anchors().size() - 1)]];
         key << trim_field_copy(first.distance_expression) << "="
             << canonical_number(first.distance_value) << "@"
             << first.source.byte_start << ":" << first.source.byte_end << "\n"
@@ -4554,19 +4546,6 @@ std::string source_section_key(const MapContext& ctx,
             << last.source.byte_start << ":" << last.source.byte_end;
     }
     return "distance-resolution-" + hex64(stable_hash64(key.str()));
-}
-
-std::vector<DistanceResolutionBoundary> resolution_boundaries(
-    const MapContext& ctx,
-    const SourcePatch& patch,
-    const DistanceSectionAnalysis& section,
-    const std::string& recommended_token) {
-    std::vector<DistanceResolutionBoundary> boundaries;
-    for (const auto& boundary : distance_boundary_plans(ctx, patch, section)) {
-        boundaries.push_back({boundary.token, boundary.line, boundary.column,
-                              boundary.token == recommended_token});
-    }
-    return boundaries;
 }
 
 std::string statement_environment_mismatch(
@@ -4610,33 +4589,33 @@ void append_resolution_request(MapContext& ctx,
     for (size_t index : group.member_indices) {
         request.affected_edit_ids.push_back(prepared[index].change->edit_id);
     }
-    if (!group.section.anchors.empty()) {
+    if (!group.section.anchors().empty()) {
         const size_t first_position = std::min(
-            group.section.first_position, group.section.anchors.size() - 1);
+            group.section.first_position, group.section.anchors().size() - 1);
         const size_t last_position = std::min(
             std::max(group.section.first_position, group.section.last_position),
-            group.section.anchors.size() - 1);
+            group.section.anchors().size() - 1);
         const ParsedStatement& first = ctx.parsed_statements[
-            group.section.anchors[first_position]];
+            group.section.anchors()[first_position]];
         const ParsedStatement& last = ctx.parsed_statements[
-            group.section.anchors[last_position]];
+            group.section.anchors()[last_position]];
         request.source_section.first_line = first.source.line;
         request.source_section.last_line = last.source.line_end;
     }
     request.source_section.direction = group.section.direction;
     std::string effective_recommended_token = recommended_token;
-    if (effective_recommended_token.empty() && group.section.anchors.size() >= 2) {
+    if (effective_recommended_token.empty() && group.section.anchors().size() >= 2) {
         double best_score = std::numeric_limits<double>::infinity();
         const size_t first_position = std::min(
-            group.section.first_position, group.section.anchors.size() - 1);
+            group.section.first_position, group.section.anchors().size() - 1);
         const size_t last_position = std::min(
-            group.section.last_position, group.section.anchors.size() - 1);
+            group.section.last_position, group.section.anchors().size() - 1);
         for (size_t pos = first_position;
-             pos < last_position && pos + 1 < group.section.anchors.size(); ++pos) {
+             pos < last_position && pos + 1 < group.section.anchors().size(); ++pos) {
             const double before =
-                ctx.parsed_statements[group.section.anchors[pos]].distance_value;
+                ctx.parsed_statements[group.section.anchors()[pos]].distance_value;
             const double after =
-                ctx.parsed_statements[group.section.anchors[pos + 1]].distance_value;
+                ctx.parsed_statements[group.section.anchors()[pos + 1]].distance_value;
             double score = std::min(std::fabs(group.target_distance - before),
                                     std::fabs(group.target_distance - after));
             if (exact_distance_value(before, group.target_distance)) score = -1.0;
@@ -4652,22 +4631,16 @@ void append_resolution_request(MapContext& ctx,
             effective_recommended_token = candidate.token;
         }
     }
-    request.allowed_boundaries = resolution_boundaries(
-        ctx, patch, group.section, effective_recommended_token);
-    const auto plans = distance_boundary_plans(ctx, patch, group.section);
-    std::unordered_set<std::string> safe_tokens;
-    for (const auto& plan : plans) {
-        if (statement_environment_mismatch(ctx, group, prepared, plan).empty())
-            safe_tokens.insert(plan.token);
-    }
     bool rejected_environment = false;
-    request.allowed_boundaries.erase(std::remove_if(
-        request.allowed_boundaries.begin(), request.allowed_boundaries.end(),
-        [&](const DistanceResolutionBoundary& item) {
-            const bool reject = safe_tokens.find(item.token) == safe_tokens.end();
-            rejected_environment = rejected_environment || reject;
-            return reject;
-        }), request.allowed_boundaries.end());
+    for (const auto& plan : distance_boundary_plans(ctx, patch, group.section)) {
+        if (!statement_environment_mismatch(ctx, group, prepared, plan).empty()) {
+            rejected_environment = true;
+            continue;
+        }
+        request.allowed_boundaries.push_back({
+            plan.token, plan.line, plan.column,
+            plan.token == effective_recommended_token});
+    }
     if (rejected_environment && request.allowed_boundaries.empty()) {
         report.blocking_errors.push_back(
             "No distance boundary preserves the statement evaluation environment: " +
@@ -5464,6 +5437,9 @@ void validate_other_track_key_renames(
     MapContext& ctx, const std::vector<const MapEditChange*>& changes,
     MapEditReport& report) {
     if (ctx.other_track_changes.empty()) return;
+    if (std::none_of(changes.begin(), changes.end(), [](const MapEditChange* change) {
+            return has_field_change(*change, "trackKey");
+        })) return;
 
     std::vector<std::string> edit_ids(ctx.other_track_changes.size());
     std::map<std::string, size_t> source_index_by_edit_id;
@@ -5625,6 +5601,9 @@ void validate_other_track_key_renames(
 void validate_repeater_key_renames(
     MapContext& ctx, const std::vector<const MapEditChange*>& changes,
     MapEditReport& report) {
+    if (std::none_of(changes.begin(), changes.end(), [](const MapEditChange* change) {
+            return has_field_change(*change, "repeaterKey");
+        })) return;
     std::vector<std::string> edit_ids;
     const repeater_linkage::Linkage linkage =
         repeater_linkage_state(ctx, &edit_ids);
@@ -5865,6 +5844,7 @@ void validate_repeater_insert_key_overlaps(
         }
     }
 
+    if (inserted_events.empty()) return;
     const repeater_linkage::Linkage linkage = repeater_linkage_state(ctx);
     std::vector<RepeaterNamedInterval> intervals;
     intervals.reserve(linkage.chains.size() + inserted_events.size());
@@ -7194,8 +7174,8 @@ bool resolve_distance_group(MapContext& ctx,
 
     // The implicit initial block has its own unambiguous bracket even when
     // later explicit anchors form a plateau or a turn.
-    if (group.section.includes_initial_block && !group.section.anchors.empty() &&
-        group.target_distance < ctx.parsed_statements[group.section.anchors.front()].distance_value) {
+    if (group.section.includes_initial_block && !group.section.anchors().empty() &&
+        group.target_distance < ctx.parsed_statements[group.section.anchors().front()].distance_value) {
         bool conflict = false;
         const auto expression = common_group_expression(group, prepared, false, conflict);
         if (conflict || expression.empty()) {
@@ -7225,8 +7205,8 @@ bool resolve_distance_group(MapContext& ctx,
 
     std::vector<size_t> numeric_positions;
     for (size_t pos = group.section.first_position;
-         pos <= group.section.last_position && pos < group.section.anchors.size(); ++pos) {
-        const ParsedStatement& anchor = ctx.parsed_statements[group.section.anchors[pos]];
+         pos <= group.section.last_position && pos < group.section.anchors().size(); ++pos) {
+        const ParsedStatement& anchor = ctx.parsed_statements[group.section.anchors()[pos]];
         if (exact_distance_value(anchor.distance_value, group.target_distance)) {
             numeric_positions.push_back(pos);
         }
@@ -7252,18 +7232,18 @@ bool resolve_distance_group(MapContext& ctx,
     if (numeric_positions.size() == 1) {
         destination_before_position = numeric_positions.front();
     } else {
-        if (group.section.anchors.empty()) {
+        if (group.section.anchors().empty()) {
             edge_boundary = source_edge_boundary(ctx, patch, group.section, true);
         } else {
             const double first_distance = ctx.parsed_statements[
-                group.section.anchors.front()].distance_value;
+                group.section.anchors().front()].distance_value;
             const double last_distance = ctx.parsed_statements[
-                group.section.anchors.back()].distance_value;
-            if ((group.section.includes_initial_block || group.section.anchors.size() == 1) &&
+                group.section.anchors().back()].distance_value;
+            if ((group.section.includes_initial_block || group.section.anchors().size() == 1) &&
                 group.target_distance < first_distance) {
                 edge_boundary = source_edge_boundary(ctx, patch, group.section, false);
-            } else if (group.section.last_position + 1 == group.section.anchors.size() &&
-                       (group.section.anchors.size() == 1 ||
+            } else if (group.section.last_position + 1 == group.section.anchors().size() &&
+                       (group.section.anchors().size() == 1 ||
                         (group.section.direction == "increasing"
                             ? group.target_distance > last_distance
                             : group.target_distance < last_distance))) {
@@ -7272,9 +7252,9 @@ bool resolve_distance_group(MapContext& ctx,
         }
         std::vector<size_t> bracket_positions;
         for (size_t pos = group.section.first_position;
-             pos < group.section.last_position && pos + 1 < group.section.anchors.size(); ++pos) {
-            double before = ctx.parsed_statements[group.section.anchors[pos]].distance_value;
-            double after = ctx.parsed_statements[group.section.anchors[pos + 1]].distance_value;
+             pos < group.section.last_position && pos + 1 < group.section.anchors().size(); ++pos) {
+            double before = ctx.parsed_statements[group.section.anchors()[pos]].distance_value;
+            double after = ctx.parsed_statements[group.section.anchors()[pos + 1]].distance_value;
             bool bracketed = group.section.direction == "increasing"
                 ? before < group.target_distance && group.target_distance < after
                 : before > group.target_distance && group.target_distance > after;
@@ -7295,7 +7275,7 @@ bool resolve_distance_group(MapContext& ctx,
     DistanceBoundaryPlan boundary = edge_boundary.valid() ? edge_boundary : boundary_after_anchor(
         ctx, patch, group.section, destination_before_position);
     if (!boundary.valid() && !create_distance_block &&
-        destination_before_position + 1 == group.section.anchors.size()) {
+        destination_before_position + 1 == group.section.anchors().size()) {
         boundary = terminal_boundary_for_last_anchor(
             ctx, patch, group.section, destination_before_position, distance_index);
     }
@@ -7464,18 +7444,18 @@ MapEditReport build_edit_report(MapContext& ctx,
     }
     if (!report.blocking_errors.empty()) return report;
 
-    {
+    std::set<std::string> delete_ids;
+    for (const MapEditChange* change : effective_changes) {
+        if (ascii_lower(change->operation.empty() ? "update" : change->operation) == "delete") {
+            delete_ids.insert(change->edit_id);
+        }
+    }
+    if (!delete_ids.empty()) {
         const OwnTrackTransitionState transition_state = own_track_transition_state(ctx);
         std::map<std::string, std::string> paired_ids;
         for (const auto& pair : transition_state.pairs) {
             paired_ids[pair.first] = pair.second;
             paired_ids[pair.second] = pair.first;
-        }
-        std::set<std::string> delete_ids;
-        for (const MapEditChange* change : effective_changes) {
-            if (ascii_lower(change->operation.empty() ? "update" : change->operation) == "delete") {
-                delete_ids.insert(change->edit_id);
-            }
         }
         for (const std::string& edit_id : delete_ids) {
             if (transition_state.orphan_transition_ids.find(edit_id) !=
@@ -7769,7 +7749,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                                 ? canonical_number(target_distance)
                                 : trim_field_copy(change.distance_expression);
                         edit.section.context_source = insert_context;
-                        edit.section.anchors = context_anchors;
+                        edit.section.anchor_indices = &context_anchors;
                         edit.section.includes_initial_block = true;
                         edit.section.resolved = true;
                         edit.section.direction = "increasing";
@@ -7782,35 +7762,38 @@ MapEditReport build_edit_report(MapContext& ctx,
                     // target physical file. Other statements carry the current
                     // distance as metadata too, but are not valid source
                     // boundaries for a new distance block.
+                    struct TargetCounts {
+                        std::vector<size_t> exact, up_gap, down_gap;
+                    };
+                    std::map<const std::vector<size_t>*, TargetCounts> counts_by_context;
                     auto section_can_place_target = [&](const DistanceSectionAnalysis& section) {
-                        if (!section.resolved || section.anchors.empty()) return false;
-                        const size_t first = std::min(
-                            section.first_position, section.anchors.size() - 1);
-                        const size_t last = std::min(
-                            section.last_position, section.anchors.size() - 1);
-                        size_t exact_count = 0;
-                        for (size_t pos = first; pos <= last; ++pos) {
-                            if (exact_distance_value(
-                                    ctx.parsed_statements[section.anchors[pos]].distance_value,
-                                    target_distance)) {
-                                ++exact_count;
+                        const auto& anchors = section.anchors();
+                        if (!section.resolved || anchors.empty()) return false;
+                        auto entry = counts_by_context.try_emplace(&anchors);
+                        auto& counts = entry.first->second;
+                        if (entry.second) {
+                            counts.exact.resize(anchors.size() + 1);
+                            counts.up_gap.resize(anchors.size());
+                            counts.down_gap.resize(anchors.size());
+                            for (size_t pos = 0; pos < anchors.size(); ++pos) {
+                                const double value = ctx.parsed_statements[anchors[pos]].distance_value;
+                                counts.exact[pos + 1] = counts.exact[pos] +
+                                    static_cast<size_t>(exact_distance_value(value, target_distance));
+                                if (pos == 0) continue;
+                                const double before = ctx.parsed_statements[anchors[pos - 1]].distance_value;
+                                counts.up_gap[pos] = counts.up_gap[pos - 1] +
+                                    static_cast<size_t>(before < target_distance && target_distance < value);
+                                counts.down_gap[pos] = counts.down_gap[pos - 1] +
+                                    static_cast<size_t>(before > target_distance && target_distance > value);
                             }
                         }
+                        const size_t first = section.first_position;
+                        const size_t last = section.last_position;
+                        const size_t exact_count = counts.exact[last + 1] - counts.exact[first];
                         if (exact_count > 1) return false;
                         if (exact_count == 1) return true;
-                        size_t bracket_count = 0;
-                        for (size_t pos = first;
-                             pos < last && pos + 1 < section.anchors.size(); ++pos) {
-                            const double before = ctx.parsed_statements[
-                                section.anchors[pos]].distance_value;
-                            const double after = ctx.parsed_statements[
-                                section.anchors[pos + 1]].distance_value;
-                            const bool bracketed = section.direction == "increasing"
-                                ? before < target_distance && target_distance < after
-                                : before > target_distance && target_distance > after;
-                            if (bracketed) ++bracket_count;
-                        }
-                        return bracket_count == 1;
+                        const auto& gaps = section.direction == "increasing" ? counts.up_gap : counts.down_gap;
+                        return gaps[last] - gaps[first] == 1;
                     };
 
                     size_t origin_index = k_no_source_ref;
@@ -7826,6 +7809,8 @@ MapEditReport build_edit_report(MapContext& ctx,
                             continue;
                         }
                         const double gap = std::fabs(candidate.distance_value - target_distance);
+                        const DistanceSectionAnalysis section = analyze_distance_section(
+                            ctx, i, get_distance_index(), true);
                         const auto tie_breaks_before = [&](size_t current_index) {
                             return candidate.source.byte_start <
                                     ctx.parsed_statements[current_index].source.byte_start ||
@@ -7839,12 +7824,9 @@ MapEditReport build_edit_report(MapContext& ctx,
                             gap < best_gap ||
                             (gap == best_gap && tie_breaks_before(fallback_origin_index))) {
                             fallback_origin_index = i;
-                            fallback_section = analyze_distance_section(
-                                ctx, i, get_distance_index(), true);
+                            fallback_section = section;
                             best_gap = gap;
                         }
-                        const DistanceSectionAnalysis section = analyze_distance_section(
-                            ctx, i, get_distance_index(), true);
                         if (!section_can_place_target(section)) continue;
                         if (origin_index == k_no_source_ref ||
                             gap < best_resolved_gap ||
@@ -8354,7 +8336,7 @@ MapEditReport build_edit_report(MapContext& ctx,
         part.distance_expression = resolved.distance_expression;
         if (!resolved.boundary.terminal_context_boundary) {
             const ParsedStatement& boundary_after = ctx.parsed_statements[
-                group.section.anchors[resolved.boundary.after_anchor_position]];
+                group.section.anchors()[resolved.boundary.after_anchor_position]];
             auto boundary_after_range = source_range_in_text(
                 patches[group.source_file_index], boundary_after.source);
             if (resolved.boundary.insert_offset <= boundary_after_range.first) {
@@ -8374,7 +8356,7 @@ MapEditReport build_edit_report(MapContext& ctx,
         std::string part_statement_indent;
         if (any_insert_member && resolved.boundary.before_anchor_position != k_no_source_ref) {
             const ParsedStatement& before_anchor = ctx.parsed_statements[
-                group.section.anchors[resolved.boundary.before_anchor_position]];
+                group.section.anchors()[resolved.boundary.before_anchor_position]];
             const SourcePatch& group_patch = patches[group.source_file_index];
             const auto before_anchor_range =
                 source_range_in_text(group_patch, before_anchor.source);

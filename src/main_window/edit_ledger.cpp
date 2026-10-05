@@ -1103,7 +1103,7 @@ std::string edit_report_string(const KvEditReportSnapshot& report, KvStringRef r
 bool App::validate_resource_list_file_change_candidate(
     const std::map<std::string, MapElementPendingChange>& changes,
     ResourceListKind kind) {
-    if (!edit_actions_available() || !handle_ || load_state_.running) return false;
+    if (!edit_actions_available()) return false;
     TypedEditBatchStorage batch_storage = typed_edit_batch(changes);
     const KvEditBatch batch = batch_storage.view();
     KvEditReportSnapshot report{};
@@ -1436,7 +1436,6 @@ bool App::sync_edit_memory_with_ledger(
     std::vector<DistanceResolutionRequest>* resolution_requests) {
     if (resolution_requests) resolution_requests->clear();
     if (!edit_actions_available()) return false;
-    if (!handle_ || load_state_.running) return false;
 
     GuiTiming::Stage timing("backend.reset");
 
@@ -1693,16 +1692,13 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     }
 
     timing.next("preview.rows");
-    std::map<std::string, std::vector<std::string>> refresh_targets;
+    std::map<std::string, std::string> refresh_targets;
     auto note_refresh_target = [&](const std::string& row_kind, const std::string& edit_id,
                                    bool force_full_refresh) {
-        std::vector<std::string>& targets = refresh_targets[row_kind];
-        if (force_full_refresh) {
-            targets.assign(1, std::string{});
-            return;
+        auto entry = refresh_targets.emplace(row_kind, force_full_refresh ? std::string{} : edit_id);
+        if (!entry.second && (force_full_refresh || entry.first->second != edit_id)) {
+            entry.first->second.clear();
         }
-        if (!targets.empty() && targets.front().empty()) return;
-        targets.push_back(edit_id);
     };
     auto needs_full_refresh = [](const MapElementPendingChange& change) {
         return change.operation == "delete" ||
@@ -1778,14 +1774,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     }
     pending_edit_changes_ = changes;
     timing.next("preview.refresh");
-    std::map<std::string, std::string> combined_refresh;
-    for (auto& entry : refresh_targets) {
-        std::vector<std::string>& targets = entry.second;
-        std::sort(targets.begin(), targets.end());
-        targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
-        combined_refresh.emplace(entry.first, targets.size() == 1 ? targets.front() : std::string{});
-    }
-    refresh_local_preview_after_edits(combined_refresh);
+    refresh_local_preview_after_edits(refresh_targets);
     if (ended_batch) {
         distance_resolution_choices_.clear();
     }
@@ -1808,13 +1797,11 @@ bool App::save_pending_edits(bool refresh_inspector) {
     EditTimingScope operation(*this, "save");
     GuiTiming::Stage timing("save.prepare");
     if (!edit_actions_available()) return false;
-    if (load_state_.running) return false;
     if (has_unapplied_editable_list_drafts()) {
         KME_ADD_LOG("[warning]Save blocked by unapplied editable-list drafts");
         set_program_status("status.edit.apply_list_before_save");
         return false;
     }
-    if (!handle_) return false;
     if (!has_pending_edits()) {
         edit_timing_outcome_ = "no_changes";
         return false;
@@ -1957,46 +1944,10 @@ bool App::save_pending_document_changes(bool refresh_inspector) {
         }
         return false;
     }
+    const std::unique_ptr<const KvScenarioSnapshot, decltype(&kv_free_scenario_snapshot)> snapshot_owner(
+        snapshot, &kv_free_scenario_snapshot);
     try {
-        if (snapshot->version != KV_SCENARIO_SNAPSHOT_VERSION ||
-            snapshot->structure_size < sizeof(KvScenarioSnapshot)) {
-            throw std::runtime_error("Scenario save returned an invalid snapshot version or size");
-        }
-        const auto snapshot_string = [&](KvStringRef ref) {
-            if (ref.offset > snapshot->string_size ||
-                ref.length > snapshot->string_size - ref.offset ||
-                (ref.length != 0 && !snapshot->string_data)) {
-                throw std::runtime_error("Scenario save returned an invalid string reference");
-            }
-            return std::string(snapshot->string_data ? snapshot->string_data + ref.offset : "",
-                               static_cast<size_t>(ref.length));
-        };
-        ScenarioPreview saved;
-        saved.source_hash = snapshot_string(snapshot->source_hash);
-        saved.present_fields = snapshot->present_fields;
-        saved.title = snapshot_string(snapshot->title);
-        saved.route_title = snapshot_string(snapshot->route_title);
-        saved.vehicle_title = snapshot_string(snapshot->vehicle_title);
-        saved.author = snapshot_string(snapshot->author);
-        saved.image = snapshot_string(snapshot->image);
-        saved.comment = snapshot_string(snapshot->comment);
-        const auto copy_paths = [&](const KvScenarioPathWeightRow* rows, uint64_t count) {
-            if (count > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
-                (count != 0 && !rows)) {
-                throw std::runtime_error("Scenario save returned an invalid path row array");
-            }
-            std::vector<ScenarioPreviewPath> values;
-            values.reserve(static_cast<size_t>(count));
-            for (uint64_t i = 0; i < count; ++i) {
-                values.push_back({snapshot_string(rows[i].path), rows[i].weight,
-                                  rows[i].has_explicit_weight != 0});
-            }
-            return values;
-        };
-        saved.routes = copy_paths(snapshot->routes, snapshot->route_count);
-        saved.vehicles = copy_paths(snapshot->vehicles, snapshot->vehicle_count);
-        kv_free_scenario_snapshot(snapshot);
-        snapshot = nullptr;
+        const ScenarioPreview saved = hydrate_scenario_snapshot(*snapshot);
         scenario_preview_ = saved;
         scenario_preview_baseline_ = saved;
         if (scenario_route_warning_before_save) {
@@ -2009,7 +1960,6 @@ bool App::save_pending_document_changes(bool refresh_inspector) {
                                : "status.scenario_saved");
         edit_timing_outcome_ = "success";
     } catch (const std::exception& e) {
-        if (snapshot) kv_free_scenario_snapshot(snapshot);
         KME_ADD_LOG(std::string("[error]Scenario save snapshot was invalid: ") + e.what());
         set_program_status("status.scenario_save_failed");
         return false;

@@ -183,10 +183,10 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
         const auto apply = [&](App& app, const std::string& label) {
             const auto expected = shapes(app);
             app.apply_editable_list_drafts(app.signal_aspect_edit_, k_signal_aspect_edit_spec);
-            if (app.has_editable_list_drafts(app.signal_aspect_edit_, k_signal_aspect_edit_spec))
+            if (app.has_editable_list_drafts(app.signal_aspect_edit_))
                 for (const auto& line : app.logs_) *out << "app_log=" << line.text << '\n';
             require(label + "_drafts_consumed", !app.has_editable_list_drafts(
-                app.signal_aspect_edit_, k_signal_aspect_edit_spec));
+                app.signal_aspect_edit_));
             require(label + "_shape_and_values_reparsed", shapes(app) == expected);
         };
         const auto render = [&](App& app) {
@@ -219,7 +219,7 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
                 row_at(app, 0).secondary_structure_field_count == baseline[0].glare);
             act(app, SignalAspectColumnAction::RemoveLast, 0, false, "real_row_remove_empty");
             require("real_inverse_no_dirty", shapes(app) == baseline && !app.has_editable_list_drafts(
-                app.signal_aspect_edit_, k_signal_aspect_edit_spec));
+                app.signal_aspect_edit_));
             act(app, SignalAspectColumnAction::Append, 0, false, "real_pretrim_append");
             act(app, SignalAspectColumnAction::TrimTrailing, 0, false, "real_row_trim");
             act(app, SignalAspectColumnAction::AlignAll, -1, false, "real_align");
@@ -289,7 +289,7 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
                     row_at(app, 0).secondary_structure_field_count == 3);
                 act(app, SignalAspectColumnAction::RemoveLast, 0, true, "glare_remove_empty");
                 require("glare_inverse_no_dirty", shapes(app) == baseline && !app.has_editable_list_drafts(
-                    app.signal_aspect_edit_, k_signal_aspect_edit_spec));
+                    app.signal_aspect_edit_));
 
                 // Commit a live cell before deciding whether deletion needs confirmation.
                 auto& edit = app.signal_aspect_edit_;
@@ -318,7 +318,7 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
                 require("shape_only_change_is_dirty", row_at(app, 2).values == baseline[2].values &&
                     row_at(app, 2).primary_structure_field_count == 2 &&
                     row_at(app, 2).secondary_structure_field_count == 2 &&
-                    app.has_editable_list_drafts(edit, k_signal_aspect_edit_spec));
+                    app.has_editable_list_drafts(edit));
                 apply(app, "shape_only_apply");
                 require("shape_only_revert", app.revert_all_pending_edits());
                 require("shape_only_revert_baseline", shapes(app) == baseline);
@@ -472,7 +472,7 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
                 open(reload, map.u8string());
                 require("save_fresh_reload_shape_values", shapes(reload) == saved_shapes);
                 require("save_fresh_reload_clean", reload.pending_edit_changes_.empty() &&
-                    !reload.has_editable_list_drafts(reload.signal_aspect_edit_, k_signal_aspect_edit_spec));
+                    !reload.has_editable_list_drafts(reload.signal_aspect_edit_));
                 render(reload);
             }
         }
@@ -489,7 +489,7 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
                 require("empty_list_action_safe", empty.request_signal_aspect_column_action(action));
                 require("empty_list_action_no_dirty", shapes(empty).empty() &&
                     !empty.signal_aspect_column_confirmation_ && !empty.has_editable_list_drafts(
-                        empty.signal_aspect_edit_, k_signal_aspect_edit_spec));
+                        empty.signal_aspect_edit_));
             }
             require("empty_list_first_insert", empty.insert_editable_list_row(empty.signal_aspect_edit_,
                 k_signal_aspect_edit_spec, -1, false));

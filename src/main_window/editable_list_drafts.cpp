@@ -104,6 +104,33 @@ const std::string& editable_list_row_identity(const EditableListDraftRow& row) {
     return row.target_edit_id.empty() ? row.local_draft_id : row.target_edit_id;
 }
 
+namespace {
+EditableListDraftRow make_inserted_list_draft(
+    EditableListEditState& edit, const EditableListSpec& spec,
+    const std::map<std::string, MapElementPendingChange>& pending,
+    const std::string& source_file, const std::string& source_hash) {
+    EditableListDraftRow row;
+    const std::string local_prefix = std::string(spec.change_prefix) + "draft-";
+    do {
+        row.local_draft_id = local_prefix + std::to_string(edit.next_local_draft_id++);
+    } while (pending.find(row.local_draft_id) != pending.end() ||
+             std::any_of(edit.rows.begin(), edit.rows.end(), [&](const EditableListDraftRow& candidate) {
+                 return editable_list_row_identity(candidate) == row.local_draft_id;
+             }));
+    row.target_source_file = source_file;
+    row.target_expected_source_hash = source_hash;
+    row.inserted = true;
+    if (spec.numbered_structure_key_fields) {
+        row.values.assign(6, {});
+        row.primary_structure_field_count = 5;
+    } else {
+        row.values.assign(spec.field_count, {});
+    }
+    row.original_values = row.values;
+    return row;
+}
+} // namespace
+
 std::string editable_list_field_name(const EditableListSpec& spec,
                                      size_t field_index) {
     if (spec.numbered_structure_key_fields) {
@@ -295,6 +322,17 @@ bool build_editable_list_pending_changes(
         }
         return true;
     };
+    std::vector<const std::string*> insert_anchors(rows.size(), nullptr);
+    std::map<std::string, const std::string*> next_anchor_by_file;
+    for (size_t index = rows.size(); index-- > 0;) {
+        const auto& row = rows[index];
+        if (row.inserted) {
+            const auto next = next_anchor_by_file.find(row.target_source_file);
+            if (next != next_anchor_by_file.end()) insert_anchors[index] = next->second;
+        } else if (!row.deleted && !row.target_edit_id.empty()) {
+            next_anchor_by_file[row.target_source_file] = &row.target_edit_id;
+        }
+    }
     for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
         const EditableListDraftRow& row = rows[row_index];
         if (!editable_list_row_has_draft(row)) continue;
@@ -317,15 +355,7 @@ bool build_editable_list_pending_changes(
             change.source_insert_order =
                 static_cast<std::uint64_t>(row_index + 1);
             if (!append_insert_fields(change, row)) return false;
-            for (size_t next = row_index + 1; next < rows.size(); ++next) {
-                const EditableListDraftRow& anchor = rows[next];
-                if (!anchor.inserted && !anchor.deleted &&
-                    anchor.target_source_file == row.target_source_file &&
-                    !anchor.target_edit_id.empty()) {
-                    change.insert_before_edit_id = anchor.target_edit_id;
-                    break;
-                }
-            }
+            if (insert_anchors[row_index]) change.insert_before_edit_id = *insert_anchors[row_index];
             candidate_changes[row.local_draft_id] = std::move(change);
             continue;
         }
@@ -457,20 +487,18 @@ bool build_editable_list_pending_changes(
 
 bool App::has_unapplied_editable_list_drafts() const {
     return has_creator_message_drafts() || has_editable_list_drafts(
-               station_definition_edit_, k_station_definition_edit_spec) ||
+               station_definition_edit_) ||
         has_editable_list_drafts(
-               structure_model_edit_, k_structure_model_edit_spec) ||
+               structure_model_edit_) ||
         has_editable_list_drafts(
-               signal_aspect_edit_, k_signal_aspect_edit_spec) ||
+               signal_aspect_edit_) ||
         has_editable_list_drafts(
-               sound_list_edit_, k_sound_list_edit_spec) ||
+               sound_list_edit_) ||
         has_editable_list_drafts(
-               sound_3d_list_edit_, k_sound_3d_list_edit_spec);
+               sound_3d_list_edit_);
 }
 
-bool App::has_editable_list_drafts(const EditableListEditState& edit,
-                                   const EditableListSpec& spec) const {
-    (void)spec;
+bool App::has_editable_list_drafts(const EditableListEditState& edit) const {
     if (!edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
         edit.edit_buffer != edit.editing_baseline) {
         return true;
@@ -838,33 +866,14 @@ bool App::append_empty_list_row_draft(EditableListEditState& edit,
         model_.resource_list_sources[static_cast<size_t>(*kind)];
     if (!source.present || source.resolved_path.empty()) return false;
 
-    EditableListDraftRow row;
-    const std::string local_prefix = std::string(spec.change_prefix) + "draft-";
-    do {
-        row.local_draft_id = local_prefix +
-            std::to_string(edit.next_local_draft_id++);
-    } while (pending_edit_changes_.find(row.local_draft_id) !=
-                 pending_edit_changes_.end() ||
-             std::any_of(edit.rows.begin(), edit.rows.end(),
-                         [&](const EditableListDraftRow& candidate) {
-                             return editable_list_row_identity(candidate) ==
-                                 row.local_draft_id;
-                         }));
-    row.target_source_file = source.resolved_path;
+    EditableListDraftRow row = make_inserted_list_draft(
+        edit, spec, pending_edit_changes_, source.resolved_path, {});
     for (const EditSourceFileInfo& file : model_.edit_files) {
         if (file.file_path == source.resolved_path) {
             row.target_expected_source_hash = file.source_hash;
             break;
         }
     }
-    row.inserted = true;
-    if (spec.numbered_structure_key_fields) {
-        row.values.assign(6, {});
-        row.primary_structure_field_count = 5;
-    } else {
-        row.values.assign(spec.field_count, {});
-    }
-    row.original_values = row.values;
     edit.rows.push_back(std::move(row));
     edit.visible_rows = editable_list_visible_row_indices(edit.rows);
     edit.selected_row = static_cast<int>(edit.visible_rows.size()) - 1;
@@ -892,28 +901,9 @@ bool App::insert_editable_list_row(EditableListEditState& edit,
     const EditableListDraftRow& anchor = edit.rows[anchor_index];
     if (anchor.deleted || anchor.target_source_file.empty()) return false;
 
-    EditableListDraftRow row;
-    const std::string local_prefix = std::string(spec.change_prefix) + "draft-";
-    do {
-        row.local_draft_id = local_prefix +
-            std::to_string(edit.next_local_draft_id++);
-    } while (pending_edit_changes_.find(row.local_draft_id) !=
-                 pending_edit_changes_.end() ||
-             std::any_of(edit.rows.begin(), edit.rows.end(),
-                         [&](const EditableListDraftRow& candidate) {
-                             return editable_list_row_identity(candidate) ==
-                                 row.local_draft_id;
-                         }));
-    row.target_source_file = anchor.target_source_file;
-    row.target_expected_source_hash = anchor.target_expected_source_hash;
-    row.inserted = true;
-    if (spec.numbered_structure_key_fields) {
-        row.values.assign(6, {});
-        row.primary_structure_field_count = 5;
-    } else {
-        row.values.assign(spec.field_count, {});
-    }
-    row.original_values = row.values;
+    EditableListDraftRow row = make_inserted_list_draft(
+        edit, spec, pending_edit_changes_, anchor.target_source_file,
+        anchor.target_expected_source_hash);
     const size_t insert_index = above ? anchor_index : anchor_index + 1;
     edit.rows.insert(
         edit.rows.begin() + static_cast<std::ptrdiff_t>(insert_index),
@@ -1140,7 +1130,7 @@ void App::apply_editable_list_drafts(EditableListEditState& edit,
     GuiTiming::Stage timing("list.prepare_apply");
     if (!edit_actions_available()) return;
     commit_editable_list_active_edit(edit, spec);
-    if (!has_editable_list_drafts(edit, spec)) {
+    if (!has_editable_list_drafts(edit)) {
         edit_timing_outcome_ = "no_changes";
         set_program_status("status.edit.no_changes");
         return;

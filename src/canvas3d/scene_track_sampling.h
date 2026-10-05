@@ -27,6 +27,8 @@ public:
     void rebuild(const Canvas3DScene& scene);
     const Canvas3DTrackPath* own(const Canvas3DScene& scene) const;
     const Canvas3DTrackPath* find(const Canvas3DScene& scene, const std::string& key) const;
+    const Canvas3DTrackPath* find_other(const Canvas3DScene& scene,
+                                       const std::string& normalized_key) const;
 private:
     size_t own_index_ = static_cast<size_t>(-1);
     std::unordered_map<std::string, size_t> other_indices_;

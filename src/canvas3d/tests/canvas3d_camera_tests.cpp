@@ -323,6 +323,8 @@ void placement_track_lookup_contract() {
         check(lookup.find(scene, key) == &scene.tracks[3], "placement alias and missing key preserve own fallback");
     }
     check(lookup.find(scene, "1") == &scene.tracks[1], "track 1 remains an other track; duplicates keep first match");
+    check(lookup.find_other(scene, "1") == &scene.tracks[1], "other-only lookup preserves first match");
+    check(!lookup.find_other(scene, "missing"), "other-only lookup never falls back to own track");
     check(lookup.find(scene, " OwN ") == &scene.tracks[4], "own text does not become a placement alias");
     reset({"same", "SAME", " Right "});
     check(lookup.own(scene) == &scene.tracks[0], "missing own key uses first path");

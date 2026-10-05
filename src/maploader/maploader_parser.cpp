@@ -2445,16 +2445,6 @@ void validate_station_put_statements(MapContext& ctx) {
                     as_text(row.margin1) + ").";
                 ctx.diagnostics.push_back(std::move(diagnostic));
             }
-        } else if (row.margin1.kind == ValueKind::String) {
-            double v = 0.0;
-            if (parse_finite_number(row.margin1.text, v) && v >= 0.0) {
-                MapDiagnostic diagnostic = row.source;
-                diagnostic.statement_kind = "Station.Put";
-                diagnostic.message =
-                    "Station.Put margin1 (rearward tolerance) must be a negative value (got " +
-                    row.margin1.text + ").";
-                ctx.diagnostics.push_back(std::move(diagnostic));
-            }
         }
 
         if (row.margin2.kind == ValueKind::Number) {
@@ -2464,16 +2454,6 @@ void validate_station_put_statements(MapContext& ctx) {
                 diagnostic.message =
                     "Station.Put margin2 (forward tolerance) must be a positive value (got " +
                     as_text(row.margin2) + ").";
-                ctx.diagnostics.push_back(std::move(diagnostic));
-            }
-        } else if (row.margin2.kind == ValueKind::String) {
-            double v = 0.0;
-            if (parse_finite_number(row.margin2.text, v) && v <= 0.0) {
-                MapDiagnostic diagnostic = row.source;
-                diagnostic.statement_kind = "Station.Put";
-                diagnostic.message =
-                    "Station.Put margin2 (forward tolerance) must be a positive value (got " +
-                    row.margin2.text + ").";
                 ctx.diagnostics.push_back(std::move(diagnostic));
             }
         }

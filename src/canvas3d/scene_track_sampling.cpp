@@ -40,12 +40,16 @@ const Canvas3DTrackPath* PlacementTrackLookup::own(const Canvas3DScene& scene) c
 const Canvas3DTrackPath* PlacementTrackLookup::find(const Canvas3DScene& scene, const std::string& key) const {
     const std::string normalized = normalize_track_lookup_key(key);
     if (!is_own_track_placement_key(normalized)) {
-        const auto found = other_indices_.find(normalized);
-        if (found != other_indices_.end() && found->second < scene.tracks.size()) {
-            return &scene.tracks[found->second];
-        }
+        if (const auto* other = find_other(scene, normalized)) return other;
     }
     return own(scene);
+}
+
+const Canvas3DTrackPath* PlacementTrackLookup::find_other(
+    const Canvas3DScene& scene, const std::string& normalized_key) const {
+    const auto found = other_indices_.find(normalized_key);
+    return found != other_indices_.end() && found->second < scene.tracks.size()
+        ? &scene.tracks[found->second] : nullptr;
 }
 
 bool has_ordered_finite_distances(const Canvas3DTrackPath& path) {
