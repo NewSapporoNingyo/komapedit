@@ -92,6 +92,8 @@ ctest --test-dir build --output-on-failure
 
 `build\bin\typed_snapshot_tests.exe patch-bench 7` 對 100、1,000、10,000 項確定性更新執行完整 dry-run，測量 `plan.patch_sources` 階段。每種規模預熱一次，再輸出各次樣本及 median/p95；重複次數預設 7，範圍 5–50。此基準透過命令顯式執行。
 
+`build\bin\typed_snapshot_tests.exe distance-plan-bench 4000 middle` 測量含 1,000、2,000 或 4,000 個距離錨點的合成 Map 中的一次插入，目標可選 `middle` 或 `eof`。每個處理程序預熱一次，再進行五次 dry-run，報告 `plan.prepare` 和總耗時的 median/p95、處理程序工作集峰值位元組數，並檢查記憶體 Apply/Reset 與磁碟位元組保持性。
+
 執行階段輸出配置如下：
 
 - Debug 使用 `build\`，Release 使用 `build_release\`。
@@ -369,7 +371,7 @@ ctest --test-dir build --output-on-failure
 - `gui_kme.cpp` 管理 `App` 建構、解構與記錄回呼；`kme.h` 宣告 EXE 內共用狀態和跨翻譯單元介面。
 - `win32_dx11_bootstrap.cpp` 擁有 D3D11 裝置/算繪目標、`WndProc()`、視窗訊息迴圈和 `main()`。
 - `gui_common_utils.cpp` 集中字型、主題/記錄顏色、編碼轉換、數值格式、路徑及里程跳轉控制項輔助函式；`background_image.cpp` 擁有 WIC 解碼、背景貼圖重建與 history 背景持久化。
-- `map_snapshot_hydration.cpp` 從 typed snapshot 建置 `MapModel`、列後設資料、Station edit id、限速快取與過渡關聯；`map_load_pipeline.cpp` 處理 Map/Scenario 探測、Scenario 快照/草稿基線與 Route 候選、非同步地圖載入、入口歷史、結果套用、後設資料合併、載入計時和幾何重新產生。
+- `map_snapshot_hydration.cpp` 從 typed snapshot 建置 `MapModel`、列後設資料、Station edit id、限速快取與過渡關聯，並為載入與儲存提供共用的 Scenario 快照複製處理；`map_load_pipeline.cpp` 處理 Map/Scenario 探測、Scenario 草稿基線與 Route 候選、非同步地圖載入、入口歷史、結果套用、後設資料合併、載入計時和幾何重新產生。
 - `edit_ledger.cpp` 處理 typed 批次/報告、帳本同步、本機預覽、刪除、儲存/撤銷/關閉；`distance_resolution_workflow.cpp` 處理距離消歧請求與繼續套用。
 - `edit_benchmark.cpp` 承載獨立的 Debug 編輯效能入口：真實輸入只做記憶體 Apply/Delete/Revert 與位元組保護，Save 僅在保持相對相依項配置的排他臨時普通檔案副本中執行，同時檢查重新整理合併、還原和階段計時契約。
 - `element_inspector_data.cpp` 管理 Inspector 開啟、定位、欄位/場景編輯資料與 Apply；`element_inspector_render.cpp` 只算繪 Inspector 欄位、可選插入參數和可變 Repeater/Section UI。
@@ -808,7 +810,7 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 | `--debug-headless-pretrain-edit` | 含既有 `PreTrain.Pass` 的地圖 | `headless_pretrain.cpp` 驗證時間/秒數多輪 Apply、里程、無效輸入、刪除、精靈、插入後編輯/取消、Revert，以及 2D 識別資訊/標籤和 3D 標記資料 |
 | `--debug-headless-legacy-fog-edit` | 舊式霧列數量不限的地圖 | `legacy_fog_edit_validation.cpp` 驗證識別資訊、無效輸入、多輪 Apply、刪除、精靈和 Revert；WARP 場景驗證霧重新整理，另檢查表格/平面快取和完整重建安排 |
 | `--debug-headless-curve-parameter-edit` | 同時含 SetGauge、SetCenter、SetFunction 的地圖 | CG/CC/CF 識別資訊、白色標牌、獨立可見性、Inspector 里程/參數、`SetFunction(2)` 拒絕、刪除/新增、Revert 和來源位元組 |
-| `--debug-headless-station-put-margin-edit` | 里程 0 有可編輯 `Station.Put` | 零值/錯誤符號容差拒絕，精靈預設 `margin1=-5`、`margin2=5`，有效插入與 Revert |
+| `--debug-headless-station-put-margin-edit` | 有可編輯 `Station.Put` 的地圖 | 選擇既有可編輯放置並報告其里程；檢查零值/錯誤符號容差拒絕，精靈預設 `margin1=-5`、`margin2=5`，有效插入與 Revert |
 | `--debug-headless-sparse-new-element` | 目標源有零/一條數值距離陳述式，或錨點非遞減且末值小於 866 | 正式 `DrawDistance.Change(500)` 精靈；稀疏源用里程 25，單調尾部用 866，檢查塊重用/前插/尾插、原文、新列識別資訊和值，Reset 後核對雜湊 |
 | `--debug-headless-auto-insert-diagnostics` | `testmap\auto_insert_failures` 測試素材目錄 | 按實體檔案、行、型別、里程及識別資訊選擇目標，驗證自動成功、人工恢復、硬拒絕、每個候選的實際 Apply、二次 Apply、重試終止和 Reset；成功條件為 `failed_cases=0`、`result=PASS` |
 

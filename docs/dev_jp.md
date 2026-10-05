@@ -92,6 +92,8 @@ ctest --test-dir build --output-on-failure
 
 `build\bin\typed_snapshot_tests.exe patch-bench 7` は、100・1,000・10,000 件の決定的な更新を完全に dry run し、`plan.patch_sources` を計測します。各規模で 1 回ウォームアップした後、全サンプルと中央値・p95 を出力します。反復回数の既定値は 7、範囲は 5–50 です。このベンチマークは明示的に実行します。
 
+`build\bin\typed_snapshot_tests.exe distance-plan-bench 4000 middle` は、1,000・2,000・4,000 個の距離程アンカーを持つ合成 Map への 1 回の挿入を計測します。挿入先は `middle` または `eof` を選べます。各プロセスで 1 回ウォームアップした後、5 回の dry run を行い、`plan.prepare` と全体の所要時間の中央値・p95、プロセスのワーキングセット最大値（バイト）を出力します。メモリ内 Apply/Reset の動作と、ディスク上のバイト列が変わらないことも確認します。
+
 実行時ファイルの配置：
 
 - Debug は `build\`、Release は `build_release\` を使います。
@@ -369,7 +371,7 @@ ctest --test-dir build --output-on-failure
 - `gui_kme.cpp` は `App` の構築・破棄とログコールバック、`kme.h` は EXE の共有状態と翻訳単位間インターフェースを担当します。
 - `win32_dx11_bootstrap.cpp` は D3D11 デバイスと描画先、`WndProc()`、メッセージループ、`main()` を所有します。
 - `gui_common_utils.cpp` はフォント、テーマ・ログ色、文字コード変換、数値書式、パス、距離程ジャンプを集約します。`background_image.cpp` は WIC デコード、背景テクスチャ再構築、履歴への背景保存を担当します。
-- `map_snapshot_hydration.cpp` は型付きスナップショットから `MapModel`、行メタデータ、Station 編集 ID、速度制限キャッシュ、移行区間の対応を構築します。`map_load_pipeline.cpp` は Map/Scenario 判別、Scenario スナップショット・下書き基準、Route 候補、非同期マップ読み込み、入口の履歴、結果適用、メタデータ結合、読み込み計時、形状再生成を扱います。
+- `map_snapshot_hydration.cpp` は型付きスナップショットから `MapModel`、行メタデータ、Station 編集 ID、速度制限キャッシュ、移行区間の対応を構築し、読み込みと保存の両方で使う Scenario スナップショットのコピーも担当します。`map_load_pipeline.cpp` は Map/Scenario 判別、Scenario 下書き基準、Route 候補、非同期マップ読み込み、入口の履歴、結果適用、メタデータ結合、読み込み計時、形状再生成を扱います。
 - `edit_ledger.cpp` は型付きバッチ・レポート、変更台帳の同期、局所プレビュー、削除、Save、Revert、終了処理を担当します。`distance_resolution_workflow.cpp` は距離程解決要求と Apply の再開を担当します。
 - `edit_benchmark.cpp` は独立した Debug 編集ベンチマークです。実入力をバイト単位で保護してメモリ内 Apply/Delete/Revert を測り、Save は相対依存関係を保った通常ファイルのコピーを専用一時ディレクトリで使います。更新の集約、ロールバック、段階別計時の契約も確認します。
 - `element_inspector_data.cpp` は Inspector の開始・対象移動、項目・シーン編集データ、Apply を管理します。`element_inspector_render.cpp` は項目、省略可能な挿入引数、可変長の Repeater/Section 操作部品を描画します。
@@ -808,7 +810,7 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 | `--debug-headless-pretrain-edit` | 既存の `PreTrain.Pass` を含むマップ | `headless_pretrain.cpp` で時刻・秒数の反復 Apply、距離程、不正入力、削除、作成、挿入後の編集・キャンセル、Revert、2D 識別・ラベル、3D マーカーを確認 |
 | `--debug-headless-legacy-fog-edit` | Legacy.Fog 行が任意件数のマップ | `legacy_fog_edit_validation.cpp` で識別、不正入力、反復 Apply、削除、作成、Revert を確認。WARP シーンで霧の更新、加えてテーブル・平面キャッシュと全再構築の予約を確認 |
 | `--debug-headless-curve-parameter-edit` | SetGauge、SetCenter、SetFunction を含むマップ | CG/CC/CF 識別、白い標識、独立した表示切替、Inspector の距離程・値、`SetFunction(2)` の拒否、削除・作成、Revert、ソースバイト列 |
-| `--debug-headless-station-put-margin-edit` | 距離程 0 の編集可能な `Station.Put` | 0・誤符号の許容範囲の拒否、ウィザード既定値 `margin1=-5`・`margin2=5`、有効な挿入、Revert |
+| `--debug-headless-station-put-margin-edit` | 編集可能な `Station.Put` を含むマップ | 既存の編集可能な配置を選択して距離程を出力し、0・誤符号の許容範囲の拒否、ウィザード既定値 `margin1=-5`・`margin2=5`、有効な挿入、Revert を確認 |
 | `--debug-headless-sparse-new-element` | 数値距離程文が 0・1 個、または単調非減少で末尾が 866 未満の対象ソース | 実際の `DrawDistance.Change(500)` ウィザードを、疎なソースは距離程 25、単調な末尾は 866 で実行。ブロック再利用、前後挿入、元テキスト、新行の ID・値、Reset 後のハッシュ |
 | `--debug-headless-auto-insert-diagnostics` | `testmap\auto_insert_failures` のフィクスチャディレクトリ | 実ファイル・行・種類・距離程・ID で対象を選び、自動成功、手動復旧、確定的な拒否、全候補の実 Apply、2 回目の Apply、再試行終了、Reset を確認。合格条件は `failed_cases=0` と `result=PASS` |
 
