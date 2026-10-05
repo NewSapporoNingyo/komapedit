@@ -28,7 +28,7 @@ Select a language:
 - **Interface**: Movable, dockable windows, searchable data tables, and navigation between tables, 2D views, and the 3D scene.
 - **Preview**: Route plans, elevation profiles, markers, Structure models, and 3D scenes, with background-image alignment, measurement, and track-geometry CSV export.
 - **Editing**: Modify, delete, or add supported map elements through property windows, resource lists, and wizards; adjust some elements' positions with 3D gizmos. Manage submaps and create or edit Map, Scenario, and resource-list files.
-- **UI languages**: Simplified Chinese, Traditional Chinese (Taiwan), Traditional Chinese (Hong Kong), English, and Japanese. The Language menu groups `简体`, `台湾繁體`, and `香港繁體` under `中文`.
+- **UI languages**: English, Simplified Chinese, Traditional Chinese and Japanese. The Language menu groups `简体`, `台湾繁體`, and `香港繁體` under `中文`.
 
 
 ## Current BVE Map Syntax Support
