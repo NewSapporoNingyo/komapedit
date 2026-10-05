@@ -10,11 +10,10 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 
 ## 文档导航
 
-- [English Readme](../README.md)
 - [用户手册](user-manual_zhcn.md)
 - [开发进度（待办事项列表）](../TODO.md)
-- [开发者指南](dev_zhcn.md)（[English ver](dev.md)）
-- [AI 辅助开发指南](ai-dev_zhcn.md)（[English ver](ai-dev.md)）
+- [开发者指南](dev_zhcn.md)
+- [AI 辅助开发指南](ai-dev_zhcn.md)
 - [供 AI 编程工具使用的仓库规范](../AGENTS.md)
 - [许可证](../LICENSE)、[项目声明](../NOTICE)与[第三方声明](../THIRD_PARTY_NOTICES.md)
 

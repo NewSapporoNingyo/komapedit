@@ -10,11 +10,14 @@ Editing is experimental. Back up route files or keep them under version control 
 
 ## Documentation
 
-- [简体中文README](docs/README_zhcn.md)
+Select a language:
+  [简体中文](docs/README_zhcn.md)
+
+---
 - [User manual](docs/user-manual.md)
 - [Development status (Todo List)](TODO.md)
-- [Developer guide](docs/dev.md) ([简体中文版](docs/dev_zhcn.md))
-- [AI-assisted development guide](docs/ai-dev.md) ([简体中文版](docs/ai-dev_zhcn.md))
+- [Developer guide](docs/dev.md)
+- [AI-assisted development guide](docs/ai-dev.md)
 - [Repository instructions for AI coding tools](AGENTS.md)
 - [License](LICENSE), [project notice](NOTICE), and [third-party notices](THIRD_PARTY_NOTICES.md)
 
