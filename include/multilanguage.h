@@ -301,7 +301,7 @@ struct Translation {
             {"scene.route_info.straight", "直线"}, {"scene.route_info.interpolate", "(Interpolate)"}, {"scene.route_info.next_station", "下一站："}, {"scene.route_info.no_station_ahead", "前方无车站"},
             {"dialog.distance_expression_message", "是否手动编辑距离源字符串？"},
             {"dialog.distance_environment_boundary_message", "当前位置会改变语句的求值结果。请选择能够保留原求值结果的源码位置。"},
-            {"status.edit.distance_choice_rejected", "此选择已验证失败。请修改表达式、位置或编辑字段后重试。"},
+            {"status.edit.distance_choice_rejected", "此选择验证失败。请修改表达式、位置或编辑字段后重试。"},
             {"status.edit.distance_resolution_blocked", "无法应用此次编辑。请查看控制台中的具体原因并调整编辑字段。"},
             {"dialog.signal_full_form_convert_title", "转换 Signal.Put"}, {"dialog.signal_full_form_convert_message", "当前信号机使用 Signal.Put 短式。是否先转换为完整式，再编辑 Z、旋转、倾斜或跨度参数？"},
             {"dialog.structure_z_rebase_title", "重新设置里程"}, {"dialog.structure_z_rebase_message", "当前模型的z轴偏移大于5m，是否重新设置里程？"},
