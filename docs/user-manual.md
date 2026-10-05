@@ -6,9 +6,13 @@ For a project overview, supported BVE map syntax, and installation and startup i
 
 ## Reporting Bugs
 
+Keep in mind: komapedit is a personal project consisting of *more than 80% vibeslop*, so you shouldn't expect it to be as stable as large-scale commercial software.
+
 If you encounter crashes, display problems, differences between map element behavior in komapedit and BVE, or failures when editing or saving, use `Help -> Report Bugs` to open the issue submission page, or visit the project's [GitHub Issues](https://github.com/NewSapporoNingyo/komapedit/issues).
 
 Before submitting a report, search for an existing issue about the same problem and add your information there if one exists. For a new problem, sign in to GitHub and create an issue. Use a title that briefly identifies the affected feature and symptom, such as "Crash when loading the 3D Scene Preview after opening a particular map."
+
+**You should only open an issue when you encounter a genuine exception in the program. Please do not create issues such as “I don’t understand how to use a certain feature” or “I want the developers to add a new feature.”**
 
 ### Information to Provide
 
