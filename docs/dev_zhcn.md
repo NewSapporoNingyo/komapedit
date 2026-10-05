@@ -126,7 +126,7 @@ ctest --test-dir build --output-on-failure
 | 三维视图 | `include/canvas3D.h` 与 `src/canvas3d/canvas3D.cpp`：公共预览接口和薄委托；私有 `canvas3d_impl.h` 状态及按职责划分的 `canvas3d_*.cpp` 实现，详见下文三维模块表；`scene_track_sampling.cpp/.h` 与 `scene_route_overlay.cpp/.h`：CPU 采样和纯线路信息格式化 |
 | 表格/导航 | 按功能划分的 `src/table/datatable*.cpp`、`datatable_internal.h` 与 `table_navigation.cpp`：共享单元格/列、单一缓存水合、查找、资源列表行内编辑、线路/效果/Scenario 窗口、Debug 基准及行/平面/场景导航 |
 | 共享标记 | `include/map_marker_visuals.h`、`map_marker_visuals.cpp`：二维/三维标记的唯一视觉配方 |
-| 本地化 | `include/multilanguage.h`：简体中文、英语和日语界面文本 |
+| 本地化 | `include/multilanguage.h`：简体中文、台湾繁体中文、英语和日语界面文本 |
 
 源码所有权、关联、标记、导航、解析、验证和写回应沿用各自的组件边界与共享实现。
 
@@ -196,8 +196,10 @@ ctest --test-dir build --output-on-failure
 
 #### `include/multilanguage.h`
 
-- `Language` 指定日、英、简中，`Translation` 的三个字段保存同一 UI 文本。文件主体按窗口、菜单、工具栏、表格、属性编辑、错误提示和 2D/3D 操作分组声明翻译常量。
-- `tr()`/语言选择帮助代码在运行时返回当前语言字段。增加用户可见字符串时必须在同一个 `Translation` 初始化器中同时填写三种语言，并保持格式占位符一致。
+- `Language` 指定日语、英语、简体中文或台湾繁体中文，`Translation` 的四个字段保存同一 UI 文本，其中 `Language::ZhTw` 对应 `zh_tw`。文件主体按窗口、菜单、工具栏、表格、属性编辑、错误提示和 2D/3D 操作分组声明翻译常量。
+- `tr()`/语言选择帮助代码在运行时返回当前语言字段。增加用户可见字符串时必须在同一个 `Translation` 初始化器中同时填写四种语言，并保持格式占位符一致。繁体中文使用台湾用语，表格 row 为「列」、column 为「欄」。
+- 现有 `[General] language` 设置保存 `ja`、`en`、`zh` 或 `zh-TW`，默认仍为简体中文。`中文` 子菜单提供 `简体` 和 `台湾繁體`，该子菜单与英语和日语选项并列。
+- `multilanguage_contract` 检查键集一致、文本非空、占位符名称与次数、语言查找和关键术语。字体加载保留完整中文字集，在既有 CJK 字体候选之后、Segoe UI 之前加入微軟正黑體（`msjh.ttc`）。
 
 #### `include/resource.h`
 
@@ -650,8 +652,8 @@ GUI 的首次处理和缓存复用共用动作判断，优先处理阻断错误�
 
 ### UI、表格与渲染
 
-- 保持 Dear ImGui docking 布局、菜单和工具概念。普通 UI 文本同步简体中文、英语和日语；语言切换时保持 ImGui ID 稳定。
-- BVE 参数标签使用官方英文名或缩写，如 `distance`、`trackKey`、`x`、`ry`；程序诊断正文和 headless 输出使用英语，控制台周边 UI 使用三语。
+- 保持 Dear ImGui docking 布局、菜单和工具概念。普通 UI 文本同步简体中文、台湾繁体中文、英语和日语；语言切换时保持 ImGui ID 稳定。
+- BVE 参数标签使用官方英文名或缩写，如 `distance`、`trackKey`、`x`、`ry`；程序诊断正文和 headless 输出使用英语，控制台周边 UI 使用四语。
 - 保持二维平移/缩放/旋转/适配、测量、网格、车站跳转、背景对齐，以及三维相机传递、拾取/高亮、可见性、标记、线路信息和操纵器联动。
 - 表格按 revision 缓存，保留 Section 动态参数和显式 `null`、变量顺序及跨视图导航。Repeater 查找使用有序类型化结构键；查找未使用结构前，将活动 Signal 主行/glare 单元格提交到草稿。
 - Assimp 隔离在 `model_loader.dll`，加载错误经诊断和清理路径返回。模型包围范围以 double 计算，非有限位置或超出公开 float 范围的半径被拒绝；动态场景刷新失败时恢复 Repeater chunks 及缓存总数。

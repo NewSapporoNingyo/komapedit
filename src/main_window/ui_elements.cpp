@@ -987,7 +987,11 @@ void App::render_menu() {
             settings_.language = lang_;
             persist_user_settings();
         };
-        if (ImGui::MenuItem("简体中文", nullptr, lang_ == Language::Zh)) set_language(Language::Zh);
+        if (ImGui::BeginMenu("中文")) {
+            if (ImGui::MenuItem("简体", nullptr, lang_ == Language::Zh)) set_language(Language::Zh);
+            if (ImGui::MenuItem("台湾繁體", nullptr, lang_ == Language::ZhTw)) set_language(Language::ZhTw);
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("English", nullptr, lang_ == Language::En)) set_language(Language::En);
         if (ImGui::MenuItem("日本語", nullptr, lang_ == Language::Ja)) set_language(Language::Ja);
         ImGui::EndMenu();

@@ -22,7 +22,7 @@ For example, when addressing a slowdown, the triggering action, route size, buil
 
 ## Choose a workflow
 
-The repository provides four workflows: everyday development, bug fixing, code maintenance, and documentation writing. If your client supports explicit skill invocation, you can use the prompt templates below. In other clients, describe the task in natural language and reference the skill path. The workflow skills bring in specialist skills for source editing, tables, 2D/3D previews, settings, trilingual UI, and validation as needed.
+The repository provides four workflows: everyday development, bug fixing, code maintenance, and documentation writing. If your client supports explicit skill invocation, you can use the prompt templates below. In other clients, describe the task in natural language and reference the skill path. The workflow skills bring in specialist skills for source editing, tables, 2D/3D previews, settings, multilingual UI, and validation as needed.
 
 ### Everyday development
 
@@ -103,7 +103,7 @@ If a Pi session encounters an abnormal condition, the collaboration ends with a 
 
 First compare the actual code diff with the task scope and acceptance criteria, then choose the relevant checks:
 
-- **Features and UI:** repeat the affected operations, checking English, Simplified Chinese, and Japanese text, selection, markers, navigation across tables and 2D/3D views, and saved settings.
+- **Features and UI:** repeat the affected operations, checking English, Simplified Chinese, Traditional Chinese (Taiwan), and Japanese text, selection, markers, navigation across tables and 2D/3D views, and saved settings.
 - **Route editing:** check preservation of Includes, original expressions, statement order, encoding, BOM, and line endings, and compare the contents after saving and reloading.
 - **Module interfaces:** for DLL changes, check the versioned typed C ABI, structure sizes, data ownership, matching free functions, and exception handling.
 - **Performance:** compare before/after data using the same route, parameters, build type, and workload; also review repeated I/O, per-frame rebuilding, and cache invalidation.

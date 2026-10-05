@@ -8,7 +8,9 @@
 
 #include <cstddef>
 #include <iostream>
+#include <set>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -39,41 +41,53 @@ bool expect_no_value_fragment(const Map& translations, const char* fragment) {
     return true;
 }
 
-bool same_keys(const Translation& translation) {
+std::multiset<std::string> placeholders(std::string_view text) {
+    std::multiset<std::string> result;
+    std::size_t position = 0;
+    while ((position = text.find('{', position)) != std::string_view::npos) {
+        const auto end = text.find('}', position);
+        if (end == std::string_view::npos) {
+            result.emplace(text.substr(position));
+            break;
+        }
+        result.emplace(text.substr(position, end - position + 1));
+        position = end + 1;
+    }
+    return result;
+}
+
+bool complete_translations(const Translation& translation) {
     constexpr std::size_t expected_key_count = 605;
-    if (translation.en.size() != expected_key_count ||
-        translation.zh.size() != expected_key_count ||
-        translation.ja.size() != expected_key_count) {
-        std::cerr << "unexpected translation map size\n";
-        return false;
-    }
-    if (translation.en.size() != translation.zh.size() ||
-        translation.en.size() != translation.ja.size()) {
-        std::cerr << "translation map sizes differ\n";
-        return false;
-    }
-    for (const auto& entry : translation.en) {
-        const auto& key = entry.first;
-        if (translation.zh.find(key) == translation.zh.end() ||
-            translation.ja.find(key) == translation.ja.end()) {
-            std::cerr << "translation key is not present in all languages: " << key << '\n';
+    struct LanguageTable {
+        const char* name;
+        Language language;
+        const decltype(translation.en)* texts;
+    };
+    const LanguageTable tables[] = {
+        {"en", Language::En, &translation.en},
+        {"zh", Language::Zh, &translation.zh},
+        {"zh-TW", Language::ZhTw, &translation.zh_tw},
+        {"ja", Language::Ja, &translation.ja}
+    };
+    for (const auto& table : tables) {
+        if (table.texts->size() != expected_key_count) {
+            std::cerr << "unexpected translation map size: " << table.name << '\n';
             return false;
         }
-    }
-    for (const auto& entry : translation.zh) {
-        const auto& key = entry.first;
-        if (translation.en.find(key) == translation.en.end() ||
-            translation.ja.find(key) == translation.ja.end()) {
-            std::cerr << "translation key is not present in all languages: " << key << '\n';
-            return false;
-        }
-    }
-    for (const auto& entry : translation.ja) {
-        const auto& key = entry.first;
-        if (translation.en.find(key) == translation.en.end() ||
-            translation.zh.find(key) == translation.zh.end()) {
-            std::cerr << "translation key is not present in all languages: " << key << '\n';
-            return false;
+        for (const auto& [key, english] : translation.en) {
+            const auto it = table.texts->find(key);
+            if (it == table.texts->end() || it->second.empty()) {
+                std::cerr << "missing or empty translation: " << table.name << ':' << key << '\n';
+                return false;
+            }
+            if (placeholders(it->second) != placeholders(english)) {
+                std::cerr << "translation placeholders differ: " << table.name << ':' << key << '\n';
+                return false;
+            }
+            if (translation.get(table.language, key) != it->second) {
+                std::cerr << "wrong language lookup: " << table.name << ':' << key << '\n';
+                return false;
+            }
         }
     }
     return true;
@@ -83,7 +97,39 @@ bool same_keys(const Translation& translation) {
 
 int main() {
     const Translation translation;
-    bool ok = same_keys(translation);
+    bool ok = complete_translations(translation);
+    ok = expect_value(translation.zh_tw, "menu.file", "檔案") && ok;
+    ok = expect_value(translation.zh_tw, "menu.open", "開啟...") && ok;
+    ok = expect_value(translation.zh_tw, "menu.reload", "重新載入") && ok;
+    ok = expect_value(translation.zh_tw, "button.save", "儲存") && ok;
+    ok = expect_value(translation.zh_tw, "button.apply", "套用") && ok;
+    ok = expect_value(translation.zh_tw, "button.revert", "復原") && ok;
+    ok = expect_value(translation.zh_tw, "button.reset", "重設") && ok;
+    ok = expect_value(translation.zh_tw, "button.copy", "複製") && ok;
+    ok = expect_value(translation.zh_tw, "button.select_directory", "選取資料夾") && ok;
+    ok = expect_value(translation.zh_tw, "column.field", "欄位") && ok;
+    ok = expect_value(translation.zh_tw, "label.source_section", "原始碼區段") && ok;
+    ok = expect_value(translation.zh_tw, "frame.console", "主控台") && ok;
+    ok = expect_value(translation.zh_tw, "dialog.element_properties", "內容/編輯") && ok;
+    ok = expect_value(translation.zh_tw, "frame.scenario_file", "Scenario 檔案") && ok;
+    ok = expect_value(translation.zh_tw, "frame.scene_preview", "3D-場景預覽") && ok;
+    ok = expect_value(translation.zh_tw, "button.add_row", "新增列") && ok;
+    ok = expect_value(translation.zh_tw, "context.station_list.insert_above", "在上方新增列") && ok;
+    ok = expect_value(translation.zh_tw, "context.station_list.move_up", "上移整列") && ok;
+    ok = expect_value(translation.zh_tw, "context.editable_list.delete_row", "刪除整列") && ok;
+    ok = expect_value(translation.zh_tw, "context.editable_list.clear_cell", "清除儲存格") && ok;
+    ok = expect_value(translation.zh_tw, "button.signal_aspect.align_columns", "對齊所有欄") && ok;
+    ok = expect_value(translation.zh_tw, "button.signal_aspect.append_column", "在右側新增欄") && ok;
+    ok = expect_value(translation.zh_tw, "button.signal_aspect.remove_last_column", "刪除最右側欄") && ok;
+    ok = expect_value(translation.zh_tw, "dialog.signal_columns_scope_all", "所有列") && ok;
+    ok = expect_value(translation.zh_tw, "dialog.signal_columns_scope_row", "目前列") && ok;
+    ok = expect_value(translation.zh_tw, "menu.map_info.signal_aspects", "號誌顯示") && ok;
+    ok = expect_value(translation.zh_tw, "frame.signal_aspects", "號誌顯示清單") && ok;
+    ok = expect_value(translation.zh_tw, "resource_list.name.signal", "號誌顯示清單") && ok;
+    ok = expect_value(translation.zh_tw, "dialog.apply_list_before_save",
+        "儲存前請先套用所有清單表格中的變更。") && ok;
+    ok = expect_value(translation.zh_tw, "dialog.revert_all_edits_message",
+        "要復原所有未儲存的變更嗎？這會將記憶體中的地圖還原至上次儲存的狀態，且無法重做。") && ok;
     ok = expect_value(translation.en, "dialog.distance_environment_boundary_message",
         "The current placement would change the statement's evaluated values. Select a source position that preserves them.") && ok;
     ok = expect_value(translation.zh, "dialog.distance_environment_boundary_message",
@@ -93,7 +139,7 @@ int main() {
     ok = expect_value(translation.en, "status.edit.distance_choice_rejected",
         "This choice already failed. Change the expression, position, or edit fields before trying again.") && ok;
     ok = expect_value(translation.zh, "status.edit.distance_choice_rejected",
-        "此选择已验证失败。请修改表达式、位置或编辑字段后重试。") && ok;
+        "此选择验证失败。请修改表达式、位置或编辑字段后重试。") && ok;
     ok = expect_value(translation.ja, "status.edit.distance_choice_rejected",
         "この選択は既に失敗しています。式、挿入位置、または編集項目を変更してから再試行してください。") && ok;
     ok = expect_value(translation.en, "status.edit.distance_resolution_blocked",

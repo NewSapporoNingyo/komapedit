@@ -790,6 +790,7 @@ int main(int, char**) {
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/YuGothM.ttc",
         "C:/Windows/Fonts/meiryo.ttc",
+        "C:/Windows/Fonts/msjh.ttc",
         "C:/Windows/Fonts/segoeui.ttf"
     };
     bool font_loaded = false;

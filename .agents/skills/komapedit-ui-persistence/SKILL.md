@@ -26,7 +26,7 @@ Do not create a new sidecar file when one of these owners already fits.
 
 ## Preserve related contracts
 
-1. Update all three UI languages if visible text changes.
+1. Update all four UI languages if visible text changes.
 2. Keep headless modes from writing `imgui.ini`.
 3. The current persisted 3D schema covers scene visibility, fog, map-driven draw distance, automatic scene loading, explicit draw distance, edit-component size, camera speed, and performance-warning thresholds. Do not claim or add render-scale, MSAA, texture-filtering, or outline-quality keys without an explicit schema-changing task.
 4. Keep window visibility synchronization shared between menus, runtime state, and persisted settings.

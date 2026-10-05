@@ -230,6 +230,7 @@ std::string language_to_string(Language lang) {
         case Language::Ja: return "ja";
         case Language::En: return "en";
         case Language::Zh: return "zh";
+        case Language::ZhTw: return "zh-TW";
     }
     return "zh";
 }
@@ -239,6 +240,7 @@ std::optional<Language> language_from_string(const std::string& text) {
     if (value == "ja") return Language::Ja;
     if (value == "en") return Language::En;
     if (value == "zh") return Language::Zh;
+    if (value == "zh-TW") return Language::ZhTw;
     return std::nullopt;
 }
 

@@ -172,6 +172,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Add a `Scenarios` category and a `BveTs Scenario 2.00` template to the New File Wizard. The scenario form drops `Import File` and `Reference in` and instead shows the same eight official fields as the Scenario File tab; Confirm writes the non-empty fields in official key order as a UTF-8/CRLF file with exclusive creation and reparse validation, `Confirm and Load` opens the created file through the normal document flow, and values containing weights, multi-candidates, or comment characters are rejected while weighted multi-candidate editing stays in the Scenario File tab.
 - [x] Dear ImGui docking-based multi-window layout.
 - [x] UI language switching between Simplified Chinese, English, and Japanese.
+- [x] Add Taiwan Traditional Chinese for all 605 localized UI keys, with `简体` and `台湾繁體` under the `中文` submenu, canonical `zh-TW` settings persistence, and a Microsoft JhengHei font fallback. Preserve the original three dictionaries and unlocalized diagnostics/parameter labels. Debug build and all seven CTests passed, including four-language key, placeholder, lookup, and terminology checks; menu interaction, language persistence across restarts, glyphs, and layout await manual review. No headless or GUI automation was run for this change.
 - [x] Prefill the current New Map Element wizard template's matching key from the Structure Model, Sound File, or 3D Sound File List context menu while preserving its other draft fields and target source file.
 - [x] Settings for font size, UI component size, station marker size, 2D line widths, theme color, 3D scene draw distance/fog/map-draw-distance, camera speed, gizmo size, and scene-instance performance warnings.
 - [x] Recent-map history.
@@ -366,6 +367,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 在“新建文件向导”中新增“场景文件”分类与 `BveTs Scenario 2.00` 模板。场景表单不再提供“导入文件”和“在以下文件中引用”，改为显示与“Scenario 文件”标签页相同的 8 个官方字段；“确定”以排他方式创建文件并按官方键序写入非空字段（UTF-8/CRLF），写入后重新解析验证；“确定并载入”按普通打开流程载入新建文件；含权重、多候选或注释字符的值会被拒绝，权重与多候选编辑仍在“Scenario 文件”标签页进行。
 - [x] Dear ImGui Docking 多窗口布局
 - [x] 简体中文、英文、日文界面语言切换
+- [x] 为全部 605 个本地化 UI 键新增台湾繁体中文，在 `中文` 子菜单下提供 `简体` 和 `台湾繁體`，支持规范保存值 `zh-TW` 和微軟正黑體字体回退。保留原有三套字典及未本地化的诊断正文和参数标签。Debug 构建与全部七项 CTest 通过，涵盖四语键集、占位符、语言查找和术语检查；菜单操作、重启后的语言保持、字形与排版留待人工确认。本次未运行 headless 或 GUI 自动点击测试。
 - [x] 通过布景模型、音效文件或 3D 音效文件列表的右键菜单，将当前资源 key 预填入“新建地图元素向导”的匹配字段，并保留其他草稿字段和目标源文件
 - [x] 字体大小、组件大小、车站标记大小、2D 线宽、主题色、3D 场景绘制距离/雾效果/地图绘制距离、相机速度、操纵器尺寸和场景实例性能警告设置
 - [x] 最近打开地图历史记录

@@ -126,7 +126,7 @@ ctest --test-dir build --output-on-failure
 | 三維檢視 | `include/canvas3D.h` 與 `src/canvas3d/canvas3D.cpp`：公開預覽介面和薄委託；私有 `canvas3d_impl.h` 狀態及按職責劃分的 `canvas3d_*.cpp` 實作，詳見下文三維模組表；`scene_track_sampling.cpp/.h` 與 `scene_route_overlay.cpp/.h`：CPU 取樣和純路線資訊格式化 |
 | 表格/導覽 | 按功能劃分的 `src/table/datatable*.cpp`、`datatable_internal.h` 與 `table_navigation.cpp`：共用儲存格/欄、單一快取資料填入、查詢、資源清單列內編輯、路線/效果/Scenario 視窗、Debug 基準及列/平面/場景導覽 |
 | 共用標記 | `include/map_marker_visuals.h`、`map_marker_visuals.cpp`：二維/三維標記的唯一視覺配方 |
-| 在地化 | `include/multilanguage.h`：簡體中文、英文和日文介面文字 |
+| 在地化 | `include/multilanguage.h`：簡體中文、台灣繁體中文、英文和日文介面文字 |
 
 原始碼所有權、關聯、標記、導覽、剖析、驗證和寫回應沿用各自的元件邊界與共用實作。
 
@@ -196,8 +196,10 @@ ctest --test-dir build --output-on-failure
 
 #### `include/multilanguage.h`
 
-- `Language` 指定日、英、簡中，`Translation` 的三個欄位儲存同一 UI 文字。檔案主體按視窗、選單、工具列、表格、屬性編輯、錯誤提示和 2D/3D 操作分組宣告翻譯常數。
-- `tr()`/語言選擇輔助程式碼在執行階段傳回目前語言欄位。增加使用者可見字串時必須在同一個 `Translation` 初始化器中同時填寫三種語言，並保持格式預留位置一致。
+- `Language` 指定日文、英文、簡體中文或台灣繁體中文，`Translation` 的四個欄位儲存同一 UI 文字，其中 `Language::ZhTw` 對應 `zh_tw`。檔案主體按視窗、選單、工具列、表格、內容編輯、錯誤提示和 2D/3D 操作分組宣告翻譯常數。
+- `tr()`/語言選擇輔助程式碼在執行階段傳回目前語言欄位。增加使用者可見字串時必須在同一個 `Translation` 初始化器中同時填寫四種語言，並保持格式預留位置一致。繁體中文使用台灣用語，表格 row 為「列」、column 為「欄」。
+- 既有 `[General] language` 設定儲存 `ja`、`en`、`zh` 或 `zh-TW`，預設仍為簡體中文。`中文` 子選單提供 `简体` 和 `台湾繁體`，此子選單與英文和日文選項並列。
+- `multilanguage_contract` 檢查索引鍵集合一致、文字非空、預留位置名稱與次數、語言查找和關鍵術語。字型載入保留完整中文字集，在既有 CJK 字型候選之後、Segoe UI 之前加入微軟正黑體（`msjh.ttc`）。
 
 #### `include/resource.h`
 
@@ -650,8 +652,8 @@ GUI 的首次處理和快取重用共用動作判斷，優先處理阻斷錯誤�
 
 ### UI、表格與算繪
 
-- 保持 Dear ImGui docking 配置、選單和工具概念。普通 UI 文字同步簡體中文、英文和日文；語言切換時保持 ImGui ID 穩定。
-- BVE 參數標籤使用官方英文名或縮寫，如 `distance`、`trackKey`、`x`、`ry`；程式診斷本文和 headless 輸出使用英文，主控台周邊 UI 使用三語。
+- 保持 Dear ImGui docking 配置、選單和工具概念。普通 UI 文字同步簡體中文、台灣繁體中文、英文和日文；語言切換時保持 ImGui ID 穩定。
+- BVE 參數標籤使用官方英文名或縮寫，如 `distance`、`trackKey`、`x`、`ry`；程式診斷本文和 headless 輸出使用英文，主控台周邊 UI 使用四語。
 - 保持二維平移/縮放/旋轉/適配、測量、網格、車站跳轉、背景對齊，以及三維攝影機傳遞、拾取/醒目提示、可見性、標記、路線資訊和操縱器聯動。
 - 表格按 revision 快取，保留 Section 動態參數和顯式 `null`、變數順序及跨檢視導覽。Repeater 查詢使用有序型別化佈景鍵；尋找未使用結構前，將活動 Signal 主列/glare 儲存格提交到草稿。
 - Assimp 隔離在 `model_loader.dll`，載入錯誤經診斷和清理路徑傳回。模型包圍範圍以 double 計算，非有限位置或超出公開 float 範圍的半徑被拒絕；動態場景重新整理失敗時恢復 Repeater chunks 及快取總數。
