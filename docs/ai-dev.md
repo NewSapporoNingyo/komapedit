@@ -2,125 +2,113 @@
 
 [Chinese version](ai-dev_zhcn.md) · [Human Developer Guide](dev.md) · [Repository Rules for AI Tools](../AGENTS.md) · [Development Progress](../TODO.md)
 
-This document is for people who use AI coding tools to work on komapedit. It explains how to define a task, select the repository workflow, supervise changes, and decide whether the result is safe to accept.
+This guide is for people using AI coding tools to develop komapedit. It explains how to describe a task, choose a workflow, follow the changes, and review the result.
 
-AI tools should read [`AGENTS.md`](../AGENTS.md) themselves. Repeatable execution workflows live in [`.agents/skills`](../.agents/skills), and durable historical lessons live in [`.agents/memories`](../.agents/memories/INDEX.md). Do not paste all of these documents into a prompt. The operator remains responsible for scope, product decisions, validation, and final acceptance.
+Before starting, it helps to understand the affected application features, basic C++, the Windows build environment, and how to read diffs and test results. This knowledge helps you assess an AI's proposed solution and make product and acceptance decisions.
 
-Keep AI assets that apply only to komapedit in those project directories. User-level Codex skills and memories are reserved for genuinely cross-project guidance. If a global registry mixes several projects, distill only shareable conclusions that still match current source instead of copying it wholesale; keep raw task summaries only in the Git-ignored local project archive.
+The repository provides [`AGENTS.md`](../AGENTS.md) and [project skills](../.agents/skills) for AI tools; prompts can refer directly to the relevant skills. [Project memories](../.agents/memories/INDEX.md) provide context for past decisions. Current implementation details come from source and tests, while [`TODO.md`](../TODO.md) tracks development progress. Project-specific skills and lessons belong in `.agents`; user-level guidance is for content shared across projects.
 
-## Understand the limitations
+## Describe the task clearly
 
-Don’t treat AI agents as some kind of magical beings that can “do anything with just a single command.”AI agents can produce plausible but incorrect code, lose constraints in long tasks, overfit to one example route, and claim more validation than they performed. Using an AI tool does not remove the need to understand basic C/C++, the Windows build environment, diffs, tests, and the affected application behavior.
-
-Avoid vague requests such as “make the code better,” “fix all bugs,” “improve performance,” or “rewrite this module.” A useful request states:
+Start with concrete actions and observable results. Include:
 
 - the observed behavior or desired feature;
-- the affected workflow and what must remain unchanged;
-- concrete inputs, logs, screenshots, or route files when relevant;
+- reproduction steps and relevant inputs, logs, screenshots, or route files;
+- the scope of changes and the interactions, compatibility, and performance to preserve;
 - the expected result and acceptance criteria;
-- allowed build/test scope, including whether manual GUI testing will happen later;
-- any file, compatibility, dependency, or Release constraints.
+- the build and test scope, routes available for validation, and arrangements for manual GUI checks.
 
-If an important choice cannot be inferred from current code—such as a format strategy, breaking migration, public ABI change, or new dependency—ask for a read-only investigation first and make the human decision before implementation.
+For example, when addressing a slowdown, the triggering action, route size, build type, and elapsed time make diagnosis and acceptance easier than a general request to “improve performance.” For important choices involving file formats, compatibility migrations, public ABIs, or new dependencies, you can request a read-only investigation and agree on a plan before implementation.
 
-## Mandatory BVE format compliance
+## Choose a workflow
 
-Every change that adds or modifies BVE map-element reading, parsing, validation, typed representation, editing, creation, serialization, or writeback must use [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md). This includes the official Map, Structure List, Signal Aspects List, Sound List, other-train, and Scenario formats covered by its [official-source baseline](../.agents/skills/komapedit-bve-format-compliance/references/official-bve-format-baseline.md).
-
-Use the compliance skill in addition to `komapedit-develop`, `komapedit-fix`, `komapedit-source-backed-editing`, or another matching subsystem skill. It requires the agent to check the dated local official-page cache, refresh the complete cache only when its timestamp is invalid or older than 30 days, read the affected cached page, classify current syntax, official legacy aliases, project compatibility forms, and unsupported forms separately, then build a compliance matrix before implementation. If the official page, request, and current implementation disagree in a behavior-changing way, the agent must stop for a human decision.
-
-```text
-Use $komapedit-bve-format-compliance together with $komapedit-develop (or $komapedit-fix).
-Official formats/elements: [affected files, statements, rows, sections, or keys]
-Operations: [read / validate / edit / create / serialize / write back]
-Acceptance: [documented signatures and semantics, round trip, negative cases, source fidelity]
-```
-
-## Four common project workflows
-
-The repository provides four scenario skills plus narrower subsystem skills. When the client supports explicit skill invocation, reference the skill name. Otherwise describe the scenario clearly; the agent should route the task through the matching project skill listed in `AGENTS.md`.
+The repository provides four workflows: everyday development, bug fixing, code maintenance, and documentation writing. If your client supports explicit skill invocation, you can use the prompt templates below. In other clients, describe the task in natural language and reference the skill path. The workflow skills bring in specialist skills for source editing, tables, 2D/3D previews, settings, trilingual UI, and validation as needed.
 
 ### Everyday development
 
-Use [`komapedit-develop`](../.agents/skills/komapedit-develop/SKILL.md) for a scoped feature or behavior change.
+[`komapedit-develop`](../.agents/skills/komapedit-develop/SKILL.md) is suitable for new features or behavior changes.
 
 ```text
 Use $komapedit-develop.
-Request: [describe the feature, affected workflow, constraints, and acceptance criteria]
-Validation: [Debug build only / affected CTests / headless mode and authorized route / manual GUI check later]
-Preserve: [compatibility, performance, user interaction, files, or APIs that must not change]
+Request: [feature, affected workflow, constraints, and acceptance criteria]
+Preserve: [compatibility, performance, user interactions, files, or APIs]
+Validation: [Debug build, relevant CTest/headless checks, validation routes, and manual GUI checks]
 ```
 
-The skill routes source editing, resource-list workflows, typed tables, 2D/3D previews, settings/persistence, localization, and Debug/headless validation to narrower project skills when needed.
+Use Debug builds for routine development. Add Release validation for distribution packaging, runtime dependencies, or optimization-related issues. See the [Human Developer Guide](dev.md) for commands.
 
 ### Bug fixing
 
-Use [`komapedit-fix`](../.agents/skills/komapedit-fix/SKILL.md) for a concrete regression or defect.
+[`komapedit-fix`](../.agents/skills/komapedit-fix/SKILL.md) starts by reproducing the problem and identifying its cause, then fixes it in the module responsible for that behavior. If the cause is unclear, you can request a read-only diagnosis first. Review the result against the original reproduction steps and relevant regression tests.
 
 ```text
 Use $komapedit-fix.
 Observed: [symptoms, logs, build type, route/input, and reproduction steps]
 Expected: [correct behavior]
-Scope: [diagnosis only, or diagnose and implement the smallest proven fix]
+Scope: [diagnosis only, or diagnose and fix]
 Validation: [original reproduction plus the relevant Debug/Release/headless checks]
 ```
 
-Do not authorize a broad rewrite while the cause is unknown. A fix should explain the owning-layer root cause and prove the original reproduction no longer fails.
+### Code maintenance (slop-fix)
 
-For resource-list work routed through either scenario, also use [`komapedit-resource-list-source-editing`](../.agents/skills/komapedit-resource-list-source-editing/SKILL.md) for `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, or `Sound3D.Load` import/replacement, list creation, blank-list first rows, and source-backed row insertion. Combine it with `komapedit-bve-format-compliance` and `komapedit-source-backed-editing`; the focused skill does not replace official-format review or the shared Apply/Save contract.
-
-### slop-fix
-
-Use [`komapedit-slop-fix`](../.agents/skills/komapedit-slop-fix/SKILL.md) for a development-sustainability pass.
+[`komapedit-slop-fix`](../.agents/skills/komapedit-slop-fix/SKILL.md) addresses code quality problems supported by evidence, such as duplicated logic, unused state, cache errors, and hidden crash risks. It audits first, then fixes confirmed problems while preserving existing behavior and ABI.
 
 ```text
 Use $komapedit-slop-fix.
-Scope: [specific subsystem or changed files]
-Audit first: duplication, dead state, unsafe code, repeated work, cache/invalidation errors, hidden crash/hang risks, and confusing logic.
-Repair only proven findings; preserve behavior and ABI.
-Validation: strict Debug, registered CTests, affected headless checks, and controlled before/after performance evidence where applicable.
+Scope: [specific subsystem, changed files, or the entire project]
+Start with a read-only audit listing the evidence, impact, proposed fix, and validation method for each problem, then fix confirmed findings.
+Preserve existing behavior and ABI.
+Validation: Debug with strict warnings enabled, registered CTests, and relevant headless checks; include before/after data under identical conditions for performance work.
 ```
 
-A valid result may contain no code change. Do not invent a defect, compress lines, delete useful comments, lower performance gates, or change user behavior merely to report progress.
+An audit can also conclude that no changes are needed.
 
 ### Documentation writing
 
-Use [`komapedit-write-docs`](../.agents/skills/komapedit-write-docs/SKILL.md) for documentation-only updates or synchronization after a code change.
+[`komapedit-write-docs`](../.agents/skills/komapedit-write-docs/SKILL.md) is suitable for revising documentation or updating it after code changes. Specify the audience, files, and languages, using current source, tests, and build scripts as the factual basis.
 
 ```text
 Use $komapedit-write-docs.
-Facts to document: [current implemented behavior or workflow]
-Documents in scope: [README, TODO, developer guide, AI guide, AGENTS, skills, or memories]
-Language scope: [English and Simplified Chinese pair, if applicable]
-Keep the task documentation-only unless implementation discrepancies must only be reported.
+Content and audience: [current behavior or workflow to explain, and intended readers]
+Files and languages: [document paths; English/Simplified Chinese versions to synchronize]
+Scope: documentation only.
 ```
 
-Documentation must be derived from current source/tests. Use [`komapedit-doc-sync-validation`](../.agents/skills/komapedit-doc-sync-validation/SKILL.md) for the final scope, parity, encoding, link, and table checks.
+[`komapedit-doc-sync-validation`](../.agents/skills/komapedit-doc-sync-validation/SKILL.md) checks scope, meaning across languages, encoding, links, and tables. Source maps and validation commands also need to be checked against current files, CMake targets, and command-line entry points.
 
-For source-map or validation-command updates, compare the current `include/`/`src/` inventory and CMake target list, then check the live command-line parsing/dispatch. A previous guide or remembered headless list is not proof of the current owners or options.
+### Tasks involving BVE formats and source editing
 
-## Explicit Pi Agent collaboration
+Development and fixes involving BVE formats require [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md). It covers reading, parsing, validation, typed representation, editing, creation, serialization, and writeback for the Map, Structure List, Signal Aspects List, Sound List, other-train, and Scenario formats in the [official-source baseline](../.agents/skills/komapedit-bve-format-compliance/references/official-bve-format-baseline.md).
 
-[`collaborate-with-pi`](../.agents/skills/collaborate-with-pi/SKILL.md) is an explicit-only workflow. Use it only when the current user explicitly asks to “调用pi agent” (case and spacing variants are equivalent) or invokes `$collaborate-with-pi` for that purpose. Do not activate it because a task is difficult, because Pi-related files exist, or from a mere discussion of the skill. Without that current explicit request, the active agent must complete the work itself and must not launch Pi.
+These tasks begin with a compliance matrix based on the official pages, distinguishing current syntax, legacy aliases, project compatibility forms, and unsupported forms before implementation. The official pages are cached locally with a date; the entire cache is refreshed when its timestamp is invalid or older than 30 days. The user decides how to resolve differences between the official specification, requirements, and implementation that affect behavior.
 
-This skill may be used only by a programming agent other than Pi Agent; invoking another Pi from inside Pi is prohibited. The supervising agent researches the current tree, defines acceptance criteria, writes the complete `pi-prompts_local.txt` brief, launches `pi-agent-here(local).bat` in a visible Windows Terminal, and retains responsibility for scope, product decisions, independent review, and any correction round. Pi performs the main implementation, focused tests, owned documentation updates, and its evidence report. While Pi is working, the supervising agent checks state only about once every five minutes and does not make overlapping edits or start concurrent builds.
+```text
+Use $komapedit-bve-format-compliance together with $komapedit-develop (or $komapedit-fix).
+Formats and elements: [affected files, statements, list rows, sections, or keys]
+Operations: [read / validate / edit / create / serialize / write back]
+Acceptance: [official signatures and semantics, save and reload, valid and invalid inputs, source fidelity]
+```
 
-After Pi exits, the supervising agent must inspect the actual diff and independently rerun the smallest decisive validation. If a defect is proven, it writes a narrow correction brief and starts another visible Pi round; it does not accept Pi's report as proof or silently transfer final responsibility.
+Source editing uses [`komapedit-source-backed-editing`](../.agents/skills/komapedit-source-backed-editing/SKILL.md). For importing, replacing, or creating Station, Structure, Signal, Sound, or Sound3D lists, adding the first row to an empty list, or inserting rows, also use [`komapedit-resource-list-source-editing`](../.agents/skills/komapedit-resource-list-source-editing/SKILL.md) to check the format, editing, and saving workflows together.
 
-## Review the result
+## Collaborate with Pi Agent
 
-Even a small diff should be checked for the project risks that apply:
+Pi Agent is a simple, efficient coding agent. To have Pi handle the implementation, you can enter prompts directly in Pi, explicitly ask another coding agent to “调用 pi agent” (“invoke Pi Agent”), or invoke [`$collaborate-with-pi`](../.agents/skills/collaborate-with-pi/SKILL.md).
 
-- **Scope:** no unrelated rewrite, generated files, or hidden behavior change.
-- **Public ABI:** exact version/structure sizes, explicit ownership, matching free functions, and no STL types or exceptions crossing C boundaries.
-- **Route-source fidelity:** official BVE syntax, Include context, raw expressions, parse order, encoding/BOM/line endings, and Apply/Revert/Save/Reload behavior.
-- **UI:** English/Simplified Chinese/Japanese text, table/plan/scene identity and navigation, marker hit priority, settings persistence, and remaining manual visual checks.
-- **Performance:** no new unconditional per-frame I/O/rebuilds, repeated decoding/hashing, incomplete cache keys, or unsupported performance claims.
-- **Dependencies/distribution:** Windows/toolchain compatibility, license and notice updates, ABI impact, binary/runtime layout, and migration cost.
-- **Evidence:** exact commands, relevant output, known failures, and an honest distinction between automated proof and unperformed manual testing.
+The coordinating agent first investigates the repository and prepares a development plan, writes it to `pi-prompts_local.txt`, and launches Pi through `pi-agent-here(local).bat` in a visible Windows Terminal. Pi handles the main implementation, relevant tests, and documentation updates. The coordinating agent follows progress, reviews the actual diff after Pi finishes, independently reruns key checks, and arranges corrections when needed.
 
-Runtime route data and edit commands must continue to use the versioned typed ABI. Alternate parsers, text-serialized route transports, fallback data models, or disk snapshot caches require an explicit human architecture decision.
+If a Pi session encounters an abnormal condition, the collaboration ends with a report of completed changes and remaining work. The user decides what happens next. See the skill for launch, status-check, and correction procedures.
 
-## Stop and reassess
+## Review the changes
 
-Stop the agent when it clearly leaves scope, repeatedly performs the same failed action, starts a broad rewrite without evidence, modifies unrelated files, adds an unapproved framework/dependency, deletes substantial code without a recoverable plan, or claims tests/visual checks that were not run. Review the diff and restore control before continuing.
+First compare the actual code diff with the task scope and acceptance criteria, then choose the relevant checks:
+
+- **Features and UI:** repeat the affected operations, checking English, Simplified Chinese, and Japanese text, selection, markers, navigation across tables and 2D/3D views, and saved settings.
+- **Route editing:** check preservation of Includes, original expressions, statement order, encoding, BOM, and line endings, and compare the contents after saving and reloading.
+- **Module interfaces:** for DLL changes, check the versioned typed C ABI, structure sizes, data ownership, matching free functions, and exception handling.
+- **Performance:** compare before/after data using the same route, parameters, build type, and workload; also review repeated I/O, per-frame rebuilding, and cache invalidation.
+- **Dependencies and distribution:** check Windows and toolchain compatibility, licenses and notices, and the runtime DLL layout.
+
+For maps and resource lists, Apply updates the in-memory working copy and preview, Save writes changes to files, Revert discards pending changes, and Reload rereads disk after requesting confirmation if there are unsaved changes. Resource-list drafts need to be applied in their table first; Scenario drafts are saved directly through Save. Use this sequence to plan complete editing-workflow checks.
+
+The acceptance report should list the commands actually run, their results, and known failures, with separate records for builds, CTest, headless checks, and manual GUI checks. Rendering, menus, dialogs, and dragging also need to be checked in the actual interface. If work drifts outside scope, repeatedly stalls on the same failed operation, or the report conflicts with the evidence, you can pause the task, inspect the current diff, and clarify the objective.
