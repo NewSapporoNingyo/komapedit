@@ -93,7 +93,7 @@ Source editing uses [`komapedit-source-backed-editing`](../.agents/skills/komape
 
 ## Collaborate with Pi Agent
 
-Pi Agent is a simple, efficient coding agent. To have Pi handle the implementation, you can enter prompts directly in Pi, explicitly ask another coding agent to “调用 pi agent” (“invoke Pi Agent”), or invoke [`$collaborate-with-pi`](../.agents/skills/collaborate-with-pi/SKILL.md).
+Pi Agent is a simple, efficient coding agent. To have Pi handle the implementation, you can enter prompts directly in Pi, explicitly ask another coding agent to invoke Pi Agent, or invoke [`$collaborate-with-pi`](../.agents/skills/collaborate-with-pi/SKILL.md).
 
 The coordinating agent first investigates the repository and prepares a development plan, writes it to `pi-prompts_local.txt`, and launches Pi through `pi-agent-here(local).bat` in a visible Windows Terminal. Pi handles the main implementation, relevant tests, and documentation updates. The coordinating agent follows progress, reviews the actual diff after Pi finishes, independently reruns key checks, and arranges corrections when needed.
 
