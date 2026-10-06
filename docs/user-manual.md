@@ -2,7 +2,7 @@
 
 This manual describes komapedit's interface, preview and editing operations, and the formats of exported CSV data.
 
-For a project overview, supported BVE map syntax, and installation and startup instructions, see the [English README](../README.md).
+For a project overview, supported BVE map syntax, and installation and startup instructions, see the [README](../README.md).
 
 ## Reporting Bugs
 

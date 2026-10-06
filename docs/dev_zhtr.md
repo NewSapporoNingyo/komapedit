@@ -1,6 +1,6 @@
 # 開發者指南
 
-[專案首頁](README_zhtr.md) · [開發進度](../TODO.md) · [AI 輔助開發](ai-dev_zhtr.md)
+[專案README](README_zhtr.md) · [開發進度](../TODO.md) · [AI 輔助開發](ai-dev_zhtr.md)
 
 本文件介紹 komapedit 的開發環境、架構、原始碼職責與驗證流程。使用 AI 程式設計工具時，須遵守 [`ai-dev_zhtr.md`](ai-dev_zhtr.md)、[`AGENTS.md`](../AGENTS.md)，並採用 [`.agents/skills`](../.agents/skills) 中適用的工作流程。
 

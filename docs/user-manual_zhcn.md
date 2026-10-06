@@ -2,7 +2,7 @@
 
 本手册介绍 komapedit 的界面、预览和编辑操作，并提供导出 CSV 数据的格式说明。
 
-项目简介、支持的 BVE 地图语法及安装与启动说明，请参阅[中文 README](README_zhcn.md)。
+项目简介、支持的 BVE 地图语法及安装与启动说明，请参阅[README](README_zhcn.md)。
 
 ## 报告问题
 

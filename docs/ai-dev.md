@@ -1,6 +1,6 @@
 # Developing komapedit with AI Coding Tools
 
-[Chinese version](ai-dev_zhcn.md) · [Human Developer Guide](dev.md) · [Repository Rules for AI Tools](../AGENTS.md) · [Development Progress](../TODO.md)
+[Human Developer Guide](dev.md) · [Repository Rules for AI Tools](../AGENTS.md) · [Development Progress](../TODO.md)
 
 This guide is for people using AI coding tools to develop komapedit. It explains how to describe a task, choose a workflow, follow the changes, and review the result.
 

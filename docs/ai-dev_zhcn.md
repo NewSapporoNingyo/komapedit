@@ -1,6 +1,6 @@
 # 使用 AI 编程工具开发 komapedit
 
-[English version](ai-dev.md) · [人工开发指南](dev_zhcn.md) · [供 AI 工具阅读的仓库规范](../AGENTS.md) · [开发进度](../TODO.md)
+[人工开发指南](dev_zhcn.md) · [供 AI 工具阅读的仓库规范](../AGENTS.md) · [开发进度](../TODO.md)
 
 本文面向使用 AI 编程工具开发 komapedit 的人员，介绍如何描述任务、选择工作流、跟进修改和验收结果。
 

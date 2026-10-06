@@ -2,11 +2,11 @@
 
 本手冊介紹 komapedit 的介面、預覽和編輯操作，並提供匯出 CSV 資料的格式說明。
 
-專案簡介、支援的 BVE 地圖語法及安裝與啟動說明，請參閱[繁體中文 README](README_zhtr.md)。
+專案簡介、支援的 BVE 地圖語法及安裝與啟動說明，請參閱[README](README_zhtr.md)。
 
 ## 報告問題
 
-komapedit 是一個*80% 以上的內容為 vibeslop*的個人專案，穩定性仍與大型商業軟體有差距。
+留意：komapedit 是一個 *80% 以上的內容為 vibeslop* 的個人專案，穩定性與大型商業軟體可能有差距。
 
 如果你遇到當機、介面顯示異常、地圖元素特性與 BVE 中不一致、編輯或儲存失敗等問題，可透過 `說明 -> 報告問題` 開啟問題提交頁面，也可以直接存取專案的 [GitHub Issues](https://github.com/NewSapporoNingyo/komapedit/issues)。
 
