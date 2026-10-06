@@ -1,6 +1,6 @@
 # 开发者指南
 
-[README](README_zhcn.md) · [路线图](../TODO.md) · [AI 辅助开发](ai-dev_zhcn.md)
+[README](README_zhcn.md) · [开发进度](../TODO.md) · [AI 辅助开发](ai-dev_zhcn.md)
 
 本文档介绍 komapedit 的开发环境、架构、源码职责与验证流程。使用 AI 编程工具时，还须遵守 [`ai-dev_zhcn.md`](ai-dev_zhcn.md)、[`AGENTS.md`](../AGENTS.md) 与 [`.agents/skills`](../.agents/skills) 中匹配的工作流。
 

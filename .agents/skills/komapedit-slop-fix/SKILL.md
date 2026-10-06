@@ -27,7 +27,7 @@ description: Audit and repair evidence-backed maintainability, correctness, safe
 - Cache keys that omit visible inputs or invalidation with no clear owner.
 - Async/thread paths that can exhaust resources, deadlock, or leave inconsistent state.
 - Logic whose names or structure conceal the real invariant.
-- Overdesign and over-engineering, such as “significantly increasing code complexity for a boundary case that occurs only one in a thousand times.”
+- Overdesigns, over-engineering, excessive safety measures and redundant design. Such as “significantly increasing code complexity for a boundary case that occurs only one in a thousand times.”
 - Module boundaries are unclear; for example, “a function that places a model on 3D canvas is located in a source file related to the main window.”
 - Fragmentation that forces one responsibility to be understood or changed across unrelated owners. File count alone is not evidence: the current Canvas2D and Canvas3D functional module splits are intentional, and each module should retain the responsibility listed in `docs/dev.md`.
 - The same set of operational logic uses inconsistent backend implementations; for example, “when setting the number of parameters to be inserted into a statement, two different approaches coexist: enabling parameters via checkboxes and automatically detecting the number of parameters based on the entered data.”

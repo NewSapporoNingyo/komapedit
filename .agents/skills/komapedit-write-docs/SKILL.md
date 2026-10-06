@@ -35,6 +35,7 @@ Komapedit-only skills and distilled memories belong in the repository's `.agents
 4. Preserve UTF-8 without BOM and each file's existing line-ending policy. Do not introduce mixed endings or mojibake.
 5. Do not describe planned work as implemented or historical behavior as a current guarantee.
 6. Keep exhaustive volatile lists out of `AGENTS.md`; point to source, `TODO.md`, or the appropriate detailed guide.
+7. To avoid confusion with "railway route maps", avoid referring to `TODO.md` as a "roadmap" (also “路线图” in Chinese).
 
 ## Validate documentation
 
