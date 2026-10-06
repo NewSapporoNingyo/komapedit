@@ -298,7 +298,7 @@ LoadedText load_header_text(const std::filesystem::path& path,
         } catch (...) {
             std::string retry = ascii_lower(encoding) == "utf-8" ? "cp932" : "utf-8";
             KME_MAPLOADER_LOG_WARN(path_to_utf8(path.filename()) + " cannot be decoded with " + encoding +
-                                    ". Kobushi tries to decode with " + retry + ".");
+                                    ". Komapedit tries to decode with " + retry + ".");
             encoding = retry;
             if (retry == "cp932") {
                 text = decode_codepage(bytes, 932, false);

@@ -68,7 +68,7 @@ for %%F in (LICENSE NOTICE THIRD_PARTY_NOTICES.md) do (
     if exist "%%F" copy /y "%%F" "build\%%F" >nul
 )
 
-echo kobushiCPP dev built: %cd%\build
+echo komapedit dev built: %cd%\build
 echo Runtime DLLs: %cd%\build\bin
 echo Settings: %cd%\build\settings
 
