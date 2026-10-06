@@ -1471,8 +1471,8 @@ enum class NewFileKind : std::uint8_t {
 };
 
 // Wizard draft for the eight official BveTs Scenario 2.00 fields. Empty
-// scalar fields omit the row; Route/Vehicle/Image stay single paths with the
-// official default weight 1. Weighted multi-candidate editing belongs to the
+// values omit their rows. Route/Vehicle use one candidate with default weight
+// 1; Image is a single path. Weighted multi-candidate editing belongs to the
 // Scenario File tab, not to file creation.
 struct NewFileScenarioDraft {
     std::string title;

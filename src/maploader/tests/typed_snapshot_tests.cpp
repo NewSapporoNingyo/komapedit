@@ -1316,8 +1316,8 @@ int scenario_route_contract() {
         kv_free_scenario_candidates(candidates);
     }
 
-    // shift_jis declaration decodes CP932 relative paths. The target lives in
-    // a directory whose name only round-trips through the declared encoding.
+    // The shift_jis declaration must decode CP932 bytes for the Japanese directory
+    // name and resolve the relative Route path from the Scenario directory.
     const std::wstring japanese_dir_name = L"\x5730\x56f3";
     std::filesystem::create_directories(directory / japanese_dir_name);
     write_bytes(directory / japanese_dir_name / "map.txt",

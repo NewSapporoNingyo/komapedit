@@ -281,9 +281,9 @@ void App::update_scenario_route_warning() {
         set_program_status("status.scenario_route_changed");
         scenario_route_changed_ = true;
     } else if (scenario_route_warning_persistent_) {
-        // A saved Route change still describes the map currently loaded in
-        // memory. Keep the warning visible until the Scenario is reloaded,
-        // even if a later draft happens to restore the original signature.
+        // Saving Route changes does not reload the map currently in memory.
+        // Keep its warning until the Scenario is reloaded, even if a later
+        // draft restores the original Route signature.
         scenario_route_changed_ = true;
         set_program_status("status.scenario_route_changed");
     } else {

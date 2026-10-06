@@ -2486,9 +2486,9 @@ void validate_light_statements(MapContext& ctx) {
 }
 
 // Resource loads indexed by kind; each entry is the first syntactically valid
-// Load of that kind in global parse order. Shared by the duplicate-Load
-// rejection above and post-parse resource ordering rules so there is exactly
-// one Load-collection/sorting owner.
+// Load of that kind in global parse order. Shared by duplicate-Load validation
+// and post-parse resource ordering rules so there is exactly one owner for
+// collecting and sorting Load statements.
 using FirstResourceListLoads = std::array<const ResourceListLoad*, 5>;
 
 FirstResourceListLoads validate_unique_preview_statements(const MapContext& ctx) {
@@ -2533,12 +2533,11 @@ FirstResourceListLoads validate_unique_preview_statements(const MapContext& ctx)
     return first_loads;
 }
 
-// Warns when the Station List uses arrival/deperture sound keys but Sound.Load
-// is not strictly earlier than Station.Load in BVE's logical load order: same
-// physical Map file orders by source line/column (parse order as tie-breaker);
-// different Map files order by Include depth (entry map first), falling back
-// to global parse order only for equal depths. The warning is advisory and
-// never blocks loading.
+// With both Sound.Load and Station.Load present, warn when the Station List
+// uses arrival/deperture sound keys and Sound.Load is not strictly earlier.
+// Same-file order uses source line/column, then parse order; cross-file order
+// uses Include depth (entry map first), then global parse order at equal
+// depths. This advisory warning never blocks loading.
 void append_station_sound_load_order_diagnostic(
     MapContext& ctx, const FirstResourceListLoads& first_loads) {
     const ResourceListLoad* station_load = first_loads[static_cast<size_t>(ResourceListLoadKind::Station)];

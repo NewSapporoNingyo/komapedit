@@ -477,7 +477,7 @@ void App::render_scene_preview_window() {
         }
         drain_scene_preview_logs();
     } else {
-        // A collapsed view rebuilds when reopened; do not time the user's wait.
+        // No scene frame can render while collapsed; do not time the user's wait.
         edit_timing_wait_scene_frame_ = false;
     }
     focus_scene_preview_next_ = false;

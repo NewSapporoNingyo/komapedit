@@ -10277,10 +10277,10 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
             return snapshot_text(snap, snap.source_files[file_index].file_path);
         };
 
-        // The insert target is the source file that owns the most distance
-        // statements: it is the map body with resolvable distance sections,
-        // unlike the entry file (usually include-only) or small list files
-        // whose same-distance blocks are ambiguous.
+        // Select only files with parsed Distance.Set statements. Prefer a file
+        // with a usable variable-distance gap; choose the largest statement count
+        // within that group, or across all distance-bearing files if no such gap
+        // exists. Resource-list rows do not participate in this selection.
         const KvMapSnapshot baseline_snap = get_snapshot();
         std::map<std::string, std::uint64_t> distance_statement_counts;
         std::map<std::string, std::vector<const KvStatementRow*>> distance_statements_by_file;

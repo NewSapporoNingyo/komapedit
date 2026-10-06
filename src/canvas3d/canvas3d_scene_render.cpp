@@ -823,8 +823,9 @@ void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 m
     std::map<int, std::vector<SceneVisibleInstanceRef>> visible_object_instances;
     std::vector<SceneInstanceData> track_instance(1);
     const bool can_pick = pick_enabled && scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
-    // Evict the complete old window before preparing new chunks, so a
-    // backwards jump can use the same bounded budget as forward movement.
+    // Evict Repeater caches outside the new visible window before preparing
+    // visible chunks so either travel direction uses the same bounded budget.
+    // Chunks in the overlapping window retain their cached placements.
     for (SceneChunk& chunk : scene_chunks) {
         if (!scene_chunk_visible(chunk, visible_min, visible_max) && chunk.repeater_cache_prepared) {
             invalidate_scene_repeater_cache(chunk);

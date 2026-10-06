@@ -822,9 +822,9 @@ std::string build_editable_csv_list_statement(
     const std::array<const char*, FieldCount>& field_names,
     const std::array<std::string, FieldCount>& fallback_values,
     Normalize&& normalize) {
-    // A moved row supplies the complete source row as its template. Fields
-    // whose semantic values already match that template keep their original
-    // quoting/spacing; only genuinely edited slots are serialized anew.
+    // A moved row supplies the complete source row as its template. Reuse fields
+    // with equivalent normalized values unless a blank must become a concrete
+    // default; serialize changed values and required blank normalization.
     const std::string& source_text = change.replacement_statement.empty()
         ? statement.raw_arguments
         : change.replacement_statement;
@@ -901,9 +901,9 @@ std::string build_station_list_statement(const MapEditChange& change,
                                          const ParsedStatement& statement,
                                          const StationListEntry& row) {
     // Existing source rows keep their original text unless this operation
-    // serializes them. Once a Station.List row is serialized, BVE requires
-    // the numeric/enumerated slots to be concrete values rather than blanks.
-    // Use the operation's source template here so row moves normalize the row
+    // serializes them. Unedited blanks in the six slots selected by
+    // station_list_empty_field_defaults_to_zero() are filled with zero.
+    // Use the operation's source template so row moves normalize the row
     // being moved, not the row previously at the destination.
     MapEditChange effective_change = change;
     const std::string& source_text = change.replacement_statement.empty()
@@ -8925,9 +8925,9 @@ void apply_edit_report_to_memory(MapContext& ctx, const MapEditReport& report) {
 
 void reset_memory_edits(MapContext& ctx) {
     if (ctx.source_overrides.empty()) {
-        // The current context already represents the disk baseline. Re-parsing
-        // here would regenerate global-order-based editIds after a committed
-        // distance move and break the session-stable identities held by the GUI.
+        // No source overrides remain to discard. Keep the current disk-baseline
+        // context and its session-stable identities; reparsing here would only
+        // repeat work already represented by this context.
         return;
     }
     bool has_arbitrary_distribution = ctx.cp_arbdistribution_explicit;

@@ -48,8 +48,9 @@ KV_API int kv_probe_file_kind(const char* path);
 
 /* One Route candidate of a BVE Scenario file. route_text is the original
    relative-path text as written (without any weight suffix); resolved_path is
-   the absolute normalized path of an existing map file. Both strings are
-   UTF-8 and owned by the returned block. */
+   the absolute normalized path of an existing regular target file. Map syntax
+   is checked by the map loader. Both strings are UTF-8 and owned by the
+   returned block. */
 typedef struct KvScenarioRouteCandidate {
     const char* route_text;
     const char* resolved_path;
@@ -97,8 +98,8 @@ KV_API const KvScenarioSnapshot* kv_save_scenario_document(
    KV_LOAD_EDIT_METADATA is not also set. */
 KV_API void* kv_load_map_ex(const char* path, double unit_distance, unsigned flags);
 
-/* Regenerates geometry in-place for an existing handle and invalidates the
-   regular geometry in KvMapSnapshot. */
+/* Regenerates regular geometry in-place. Invalidates previously borrowed
+   Map snapshot views, edit-target views, and the separate 3D scene cache. */
 KV_API int kv_generate_geometry(
     void* handle,
     double unit_distance,
@@ -107,8 +108,11 @@ KV_API int kv_generate_geometry(
     double arbitrary_end,
     double arbitrary_step);
 /* Generates or reuses denser geometry in a separate 3D scene cache without
-   changing the regular geometry buffers or parser state. Scene buffer views
-   remain valid until the scene cache is regenerated or the handle is freed. */
+   changing the regular geometry buffers or parser state. Borrowed scene
+   snapshot views expire on scene-cache or regular-geometry regeneration,
+   replacement of the parsed context by Apply/Reset, a commit that changes
+   source metadata, or handle release. Reusing an unchanged scene cache
+   preserves its views. */
 KV_API int kv_generate_scene_geometry(
     void* handle,
     double unit_distance,
@@ -125,12 +129,18 @@ KV_API int kv_get_scene_geometry_snapshot(void* handle, uint32_t version,
                                           uint64_t out_size);
 
 /* Typed edit transport. Input views only need to remain valid for the call.
-   Returned target/report views are handle-owned and are invalidated as
-   documented by maploader_snapshot.h and the API guide. Creator-message edits
-   use rowKind "creator.message" and the literal, single-line "content" field.
-   Inserts target a loaded Map physical file and are placed after its header's
-   separating blank line and consecutive creator-message block. Apply remains
-   memory-only; commit preserves the original encoding and line endings. */
+   Returned target/report views are handle-owned. Target views may be
+   invalidated by another target query, an edit operation/reset, or regular
+   geometry regeneration. Report views may be invalidated by an edit
+   operation/reset. Both expire when the handle is freed.
+   kv_edit_dry_run_typed validates; kv_edit_apply_to_memory_typed updates the
+   working copy; kv_edit_apply_typed writes directly to disk; and
+   kv_edit_commit_typed saves the validated working copy. Writeback preserves
+   the original encoding and line endings.
+   Creator-message edits use rowKind "creator.message" and the literal,
+   single-line "content" field. Their inserts target a loaded Map physical
+   file and follow its header's separating blank line and consecutive
+   creator-message block. */
 KV_API int kv_get_edit_target_typed(void* handle, KvUtf8View edit_id,
                                     KvEditTargetSnapshot* out_target,
                                     uint64_t out_size);
@@ -151,9 +161,9 @@ KV_API int kv_edit_commit_typed(void* handle, KvEditReportSnapshot* out_report,
    to the loaded map. Release the returned string with kv_free_string(). */
 KV_API const char* kv_get_source_text(void* handle, const char* file_path);
 
-/* Discards in-memory edited source overrides and reparses the active handle from
-   the current source files. Does not write source files. Returns nonzero on
-   success. */
+/* Discards in-memory edited source overrides. Reparses from disk only when
+   overrides exist; otherwise keeps the current context without rereading disk.
+   Does not write source files. Returns nonzero on success. */
 KV_API int kv_edit_reset_memory(void* handle);
 
 /* Returns a thread-local error string owned by maploader.dll. Do not free it. */

@@ -169,8 +169,8 @@ void camera_sampling_before_start_contract() {
         check_near(sampled->cant_angle, 0.0, 1e-9, "before-start sample keeps first cant_angle");
     }
     {
-        // Curved start with a climbing gradient: verifies the non-zero theta
-        // and gradient extrapolation terms.
+        // Non-zero initial heading with a climbing gradient: verifies the theta
+        // and gradient terms when extrapolating before the first track point.
         const double theta = 0.5; // radians, arbitrary heading
         const double gradient = 25.0; // per-mille climb
         const Canvas3DTrackPath path = make_own_track(

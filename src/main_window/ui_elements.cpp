@@ -1158,9 +1158,9 @@ void App::render_status_bar() {
 
         ImGui::SameLine(0.0f, horizontal_padding);
         ImGui::SetCursorPosY((status_bar_height - status_font_size) * 0.5f);
-        // A Scenario Route edit describes a map that is no longer loaded in
-        // memory. Keep the warning visible until the Scenario entry is
-        // reloaded, even if another transient status was set meanwhile.
+        // Route edits and saves do not reload the current map. Show the Route
+        // warning while scenario_route_changed_ is set; a saved warning remains
+        // until Scenario reload even if a draft restores the original paths.
         const char* displayed_status_key = scenario_route_changed_
             ? "status.scenario_route_changed" : program_status_key_;
         ImGui::TextUnformatted(tr(displayed_status_key).c_str());

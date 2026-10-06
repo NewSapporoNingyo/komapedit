@@ -545,8 +545,10 @@ typedef struct KvLegacyFogRow {
     KvRowMetadata metadata;
 } KvLegacyFogRow;
 
-/* One validated Light.Ambient or Light.Diffuse declaration. The row remains
- * valid until the owning map handle is freed or reparsed. */
+/* One validated Light.Ambient or Light.Diffuse declaration. The row and its
+ * strings are borrowed from the Map snapshot and expire on its invalidation,
+ * including regular-geometry regeneration, replacement of the parsed context
+ * by Apply/Reset, a commit that changes source metadata, or handle release. */
 typedef struct KvLightColorRow {
     double red;
     double green;

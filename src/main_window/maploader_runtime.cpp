@@ -101,7 +101,8 @@ private:
         return false;
     }
 
-    // Keep maploader and its returned buffers/strings valid until process exit.
+    // Keep maploader loaded until process exit for API calls and DLL-owned frees.
+    // Returned buffers and strings still follow their individual API lifetimes.
     HMODULE library_ = nullptr;
     std::string load_error_;
 };

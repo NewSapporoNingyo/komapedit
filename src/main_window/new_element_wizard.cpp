@@ -2230,8 +2230,8 @@ void App::render_new_file_wizard() {
     const bool scenario_template = tpl.kind == NewFileKind::Scenario;
     if (scenario_template) {
         // The Scenario form mirrors the Scenario File tab's eight official
-        // fields. Scalar values are raw strings; Route/Vehicle/Image stay
-        // single paths with the official default weight, and weighted
+        // fields. Route/Vehicle use one candidate with default weight 1; Image
+        // is a single path. Other fields are scalar strings. Weighted
         // multi-candidate editing remains in the Scenario File tab.
         NewFileScenarioDraft& draft = wizard.scenario_draft;
         ImGui::Separator();

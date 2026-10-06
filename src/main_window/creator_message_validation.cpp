@@ -436,8 +436,8 @@ int App::run_debug_headless_creator_message(const HeadlessCreatorMessageOptions&
         require("save_with_clean_selected_draft", selected_saved && !app.has_pending_edits());
         const auto selected_draft = app.creator_message_drafts_.find(selected_id);
         require("clean_selected_draft_survives_save", selected_draft != app.creator_message_drafts_.end());
-        // ImGui edits the selected draft buffer directly; do not refresh its
-        // metadata through the setter before proving Apply updates the guard.
+        // Change the retained draft directly without another setter call;
+        // Apply must resolve the current disk-baseline guard after Save.
         selected_draft->second.content = "C";
         require("same_row_edit_after_save_staged", app.has_creator_message_drafts());
         const bool subsequent_applied = app.apply_creator_message_drafts();

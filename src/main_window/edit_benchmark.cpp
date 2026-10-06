@@ -372,8 +372,8 @@ int App::run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& o
                 require_benchmark(expected && actual && expected->size() == actual->size(), "reload family mismatch");
                 for (size_t row = 0; row < expected->size(); ++row) {
                     for (const auto& field : (*expected)[row].cells) {
-                        // Source positions/global ordinals and edit linkage are
-                        // remapped by Save; vector order and semantic cells must match.
+                        // A fresh disk load has a new identity session; source metadata and
+                        // edit linkage may differ. Compare row order and semantic cells.
                         if (!field.first.empty() && field.first.front() == '_') continue;
                         if (field.first == "filePath" || field.first == "line" || field.first == "column" ||
                             field.first == "order" || field.first == "rowNumber") continue;
