@@ -1,6 +1,6 @@
 # Developer Guide
 
-[README](../README.md) · [Roadmap](../TODO.md) · [AI-assisted development](ai-dev.md)
+[README](../README.md) · [Todo List](../TODO.md) · [AI-assisted development](ai-dev.md)
 
 This guide covers the development environment, architecture, source responsibilities, and validation workflows for komapedit. Work using AI coding tools must also follow [`ai-dev.md`](ai-dev.md), [`AGENTS.md`](../AGENTS.md), and the matching workflows in [`.agents/skills`](../.agents/skills).
 
