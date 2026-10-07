@@ -10,6 +10,8 @@ Keep in mind: komapedit is a personal project consisting of *more than 80% vibes
 
 If you encounter crashes, display problems, differences between map element behavior in komapedit and BVE, or failures when editing or saving, use `Help -> Report Bugs` to open the issue submission page, or visit the project's [GitHub Issues](https://github.com/NewSapporoNingyo/komapedit/issues).
 
+Unlike pull requests, issues can be created in any language; developers will provide English translations for valid issues.
+
 Before submitting a report, search for an existing issue about the same problem and add your information there if one exists. For a new problem, sign in to GitHub and create an issue. Use a title that briefly identifies the affected feature and symptom, such as "Crash when loading the 3D Scene Preview after opening a particular map."
 
 **You should only open an issue when you encounter a genuine exception in the program. Please do not create issues such as “I don’t understand how to use a certain feature” or “I want the developers to add a new feature.”**
