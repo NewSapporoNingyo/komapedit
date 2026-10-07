@@ -24,6 +24,32 @@ komapedit 是一款 Windows 輕量級 BVE Trainsim 地圖檢視與編輯工具�
 - **編輯**：透過屬性視窗、資源清單和新增精靈修改、刪除或新增受支援的地圖元素，使用三維操縱器調整部分元素的位置；支援子地圖管理，以及地圖、Scenario 和資源清單檔案的建立與編輯。
 - **介面語言**：繁體中文、簡體中文、英文和日文。語言選單中的 `中文` 子選單提供 `简体`、`台湾繁體` 和 `香港繁體`。
 
+## 安裝與啟動
+
+### 下載發行版（建議）
+
+從 [GitHub Releases](https://github.com/NewSapporoNingyo/komapedit/releases) 下載執行檔壓縮檔，完整解壓縮後按兩下 `komapedit.exe` 執行程式。
+
+### 自行編譯
+
+自行編譯適合具備軟體開發基礎的使用者。
+
+按照[開發者指南](dev_zhtr.md)建置應用程式，然後執行 `build_release\komapedit.exe`（Release）或 `build\komapedit.exe`（Debug）。
+
+執行檔與 DLL 應使用同一建置版本。建置指令碼若提示輸出根目錄中存在舊 INI 或 DLL，請依提示整理為 `bin`/`settings` 配置後重新建置。
+
+### 啟動與設定
+
+程式從 `komapedit.exe` 同級的 `bin` 目錄載入 `maploader.dll`、`model_loader.dll` 及其相依項。
+
+程式啟動時會視需要新增 `settings` 目錄，並在其中建立或讀取：
+
+- `settings/imgui.ini`：使用者介面內的視窗位置等資訊
+- `settings/settings.ini`：儲存介面語言、字型/元件/車站標記大小、2D 線寬、主題色、編輯模式警告狀態，以及開啟地圖時自動載入場景預覽、霧效果、繪製距離、操縱器尺寸、攝影機速度和效能警告等 3D 畫布設定
+- `settings/history.ini`：最近開啟地圖、背景圖對齊參數，以及各地圖的自訂訊息顯示偏好
+
+建議透過介面修改設定。程式按目前設定格式讀取有效項，其餘項使用預設值；儲存時寫入完整設定。
+
 ## 支援的 BVE 地圖語法
 
 - 讀取/預覽：剖析資料，並透過軌道幾何、表格、標記或 3D 場景顯示。
@@ -100,32 +126,6 @@ komapedit 是一款 Windows 輕量級 BVE Trainsim 地圖檢視與編輯工具�
 | `Train.Add(trainKey, filePath, trackKey, direction)` / `Train[trainKey].Load(filePath, trackKey, direction)`                                                                                |   △   |    ✕     |    ✕     |     ✕      | 顯示其他列車定義，部分讀取外部定義檔案 |
 | `Train[trainKey].Enable(time)` / `Train[trainKey].Enable(second)`                                                                                                                           |   √   |    ✕     |    ✕     |     ✕      | 在其他列車停止位置表上方顯示啟用時間 |
 | `Train[trainKey].Stop(decelerate, stopTime, accelerate, speed)`                                                                                                                             |   √   |    ✕     |    ✕     |     ✕      | 顯示唯讀的其他列車停止位置表、路徑與地圖標記 |
-
-## 安裝與啟動
-
-### 下載發行版（建議）
-
-從 [GitHub Releases](https://github.com/NewSapporoNingyo/komapedit/releases) 下載執行檔壓縮檔，完整解壓縮後按兩下 `komapedit.exe` 執行程式。
-
-### 自行編譯
-
-自行編譯適合具備軟體開發基礎的使用者。
-
-按照[開發者指南](dev_zhtr.md)建置應用程式，然後執行 `build_release\komapedit.exe`（Release）或 `build\komapedit.exe`（Debug）。
-
-執行檔與 DLL 應使用同一建置版本。建置指令碼若提示輸出根目錄中存在舊 INI 或 DLL，請依提示整理為 `bin`/`settings` 配置後重新建置。
-
-### 啟動與設定
-
-程式從 `komapedit.exe` 同級的 `bin` 目錄載入 `maploader.dll`、`model_loader.dll` 及其相依項。
-
-程式啟動時會視需要新增 `settings` 目錄，並在其中建立或讀取：
-
-- `settings/imgui.ini`：使用者介面內的視窗位置等資訊
-- `settings/settings.ini`：儲存介面語言、字型/元件/車站標記大小、2D 線寬、主題色、編輯模式警告狀態，以及開啟地圖時自動載入場景預覽、霧效果、繪製距離、操縱器尺寸、攝影機速度和效能警告等 3D 畫布設定
-- `settings/history.ini`：最近開啟地圖、背景圖對齊參數，以及各地圖的自訂訊息顯示偏好
-
-建議透過介面修改設定。程式按目前設定格式讀取有效項，其餘項使用預設值；儲存時寫入完整設定。
 
 ## 著作權、授權和第三方聲明
 

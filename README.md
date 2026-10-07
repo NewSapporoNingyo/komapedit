@@ -30,6 +30,31 @@ Select a language:
 - **Editing**: Modify, delete, or add supported map elements through property windows, resource lists, and wizards; adjust some elements' positions with 3D gizmos. Manage submaps and create or edit Map, Scenario, and resource-list files.
 - **UI languages**: English, Simplified Chinese, Traditional Chinese and Japanese. The Language menu groups `简体`, `台湾繁體`, and `香港繁體` under `中文`.
 
+## Installation and Startup
+
+### Download a release (recommended)
+
+Download the archive containing the prebuilt executables from [GitHub Releases](https://github.com/NewSapporoNingyo/komapedit/releases). Extract the entire archive, then double-click `komapedit.exe` to run the application.
+
+### Build from source
+
+Building from source is not recommended if you have no background in software development.
+
+Follow the [developer guide](docs/dev.md) to build the application, then run `build_release\komapedit.exe` (Release) or `build\komapedit.exe` (Debug).
+
+Use the executable and DLLs from the same build. If a build script reports old INI or DLL files in the output root, follow its instructions to arrange them under `bin`/`settings`, then build again.
+
+### Startup and settings
+
+The application loads `maploader.dll`, `model_loader.dll`, and their dependencies from the `bin` directory next to `komapedit.exe`.
+
+On startup, the application creates the `settings` directory as needed and creates or reads:
+
+- `settings/imgui.ini`: UI window positions and layout.
+- `settings/settings.ini`: UI language, font/component/station-marker sizes, 2D line widths, theme color, edit-mode warning state, and 3D settings such as automatic scene loading when opening a map, fog, draw distance, gizmo size, camera speed, and performance warnings.
+- `settings/history.ini`: Recent maps, background-image alignment parameters, and per-map Custom Message display preferences.
+
+Use the interface to change settings. The application reads valid entries in the current settings format and uses defaults for other entries; saving writes a complete settings file.
 
 ## Current BVE Map Syntax Support
 
@@ -107,32 +132,6 @@ Ratings cover all current UI entry points. When a row lists multiple overloads o
 | `Train.Add(trainKey, filePath, trackKey, direction)` / `Train[trainKey].Load(filePath, trackKey, direction)`                                                                                |    △    |       ✕       |      ✕      |         ✕         | Displays other-train definitions with partial reading of external definition files |
 | `Train[trainKey].Enable(time)` / `Train[trainKey].Enable(second)`                                                                                                                           |    √    |       ✕       |      ✕      |         ✕         | Displays the enable time above the other-train stop-position table |
 | `Train[trainKey].Stop(decelerate, stopTime, accelerate, speed)`                                                                                                                             |    √    |       ✕       |      ✕      |         ✕         | Displays read-only other-train stop-position tables, paths, and map markers |
-
-## Installation and Startup
-
-### Download a release (recommended)
-
-Download the archive containing the prebuilt executables from [GitHub Releases](https://github.com/NewSapporoNingyo/komapedit/releases). Extract the entire archive, then double-click `komapedit.exe` to run the application.
-
-### Build from source
-
-Building from source is not recommended if you have no background in software development.
-
-Follow the [developer guide](docs/dev.md) to build the application, then run `build_release\komapedit.exe` (Release) or `build\komapedit.exe` (Debug).
-
-Use the executable and DLLs from the same build. If a build script reports old INI or DLL files in the output root, follow its instructions to arrange them under `bin`/`settings`, then build again.
-
-### Startup and settings
-
-The application loads `maploader.dll`, `model_loader.dll`, and their dependencies from the `bin` directory next to `komapedit.exe`.
-
-On startup, the application creates the `settings` directory as needed and creates or reads:
-
-- `settings/imgui.ini`: UI window positions and layout.
-- `settings/settings.ini`: UI language, font/component/station-marker sizes, 2D line widths, theme color, edit-mode warning state, and 3D settings such as automatic scene loading when opening a map, fog, draw distance, gizmo size, camera speed, and performance warnings.
-- `settings/history.ini`: Recent maps, background-image alignment parameters, and per-map Custom Message display preferences.
-
-Use the interface to change settings. The application reads valid entries in the current settings format and uses defaults for other entries; saving writes a complete settings file.
 
 ## License and Third-Party Notices
 

@@ -24,6 +24,32 @@ komapedit は、BVE Trainsim のマップをプレビュー・編集する Windo
 - **編集**：プロパティ画面、リソースリスト、ウィザードによる対応要素の変更・削除・追加。3D ギズモによる一部要素の位置調整。サブマップの管理と、マップ・シナリオ・リソースリストファイルの作成・編集。
 - **表示言語**：日本語、簡体字中国語、繁体字中国語、英語。
 
+## インストールと起動
+
+### リリース版をダウンロードする（推奨）
+
+[GitHub Releases](https://github.com/NewSapporoNingyo/komapedit/releases) から、ビルド済みの実行ファイルを含むアーカイブをダウンロードします。全ファイルを展開し、`komapedit.exe` をダブルクリックして起動してください。
+
+### ソースからビルドする
+
+ソースからのビルドは、ソフトウェア開発の基礎知識がある方向けです。
+
+[開発者ガイド](dev_jp.md)に従ってビルドし、Release 版は `build_release\komapedit.exe`、Debug 版は `build\komapedit.exe` を起動します。
+
+実行ファイルと DLL は同じビルドのものを組み合わせてください。ビルドスクリプトが出力先の直下に古い INI や DLL を検出した場合は、案内に従って `bin`・`settings` に整理し、再度ビルドします。
+
+### 起動時の処理と設定
+
+`maploader.dll`、`model_loader.dll` とその依存 DLL は、`komapedit.exe` と同じ場所にある `bin` ディレクトリから読み込みます。
+
+起動時に必要に応じて `settings` ディレクトリを作成し、次のファイルを作成または読み込みます。
+
+- `settings/imgui.ini`：ウィンドウの位置とレイアウト。
+- `settings/settings.ini`：表示言語、文字・UI 部品・停車場マーカーのサイズ、2D の線幅、テーマ色、編集モードの警告状態、3D 設定。3D 設定にはマップを開く際のシーン自動読み込み、霧、描画距離、ギズモのサイズ、カメラ速度、パフォーマンス警告を含みます。
+- `settings/history.ini`：最近開いたマップ、背景画像の位置合わせ、マップごとのカスタムメッセージ表示設定。
+
+設定は操作画面から変更してください。現在の設定書式に合う有効な値を読み込み、それ以外の項目には既定値を使います。保存時には設定ファイル全体を書き出します。
+
 ## BVE マップ構文の対応状況
 
 - 読み込み・プレビュー：データを解析し、軌道形状、テーブル、マーカー、3D シーンに表示します。
@@ -100,32 +126,6 @@ komapedit は、BVE Trainsim のマップをプレビュー・編集する Windo
 | `Train.Add(trainKey, filePath, trackKey, direction)` / `Train[trainKey].Load(filePath, trackKey, direction)` | △ | ✕ | ✕ | ✕ | 他列車の定義を表示。外部定義ファイルの読み込みは一部対応 |
 | `Train[trainKey].Enable(time)` / `Train[trainKey].Enable(second)` | √ | ✕ | ✕ | ✕ | 他列車の停止位置テーブル上部に有効化時刻を表示 |
 | `Train[trainKey].Stop(decelerate, stopTime, accelerate, speed)` | √ | ✕ | ✕ | ✕ | 他列車の停止位置テーブル、走行経路、マップ上のマーカーを読み取り専用で表示 |
-
-## インストールと起動
-
-### リリース版をダウンロードする（推奨）
-
-[GitHub Releases](https://github.com/NewSapporoNingyo/komapedit/releases) から、ビルド済みの実行ファイルを含むアーカイブをダウンロードします。全ファイルを展開し、`komapedit.exe` をダブルクリックして起動してください。
-
-### ソースからビルドする
-
-ソースからのビルドは、ソフトウェア開発の基礎知識がある方向けです。
-
-[開発者ガイド](dev_jp.md)に従ってビルドし、Release 版は `build_release\komapedit.exe`、Debug 版は `build\komapedit.exe` を起動します。
-
-実行ファイルと DLL は同じビルドのものを組み合わせてください。ビルドスクリプトが出力先の直下に古い INI や DLL を検出した場合は、案内に従って `bin`・`settings` に整理し、再度ビルドします。
-
-### 起動時の処理と設定
-
-`maploader.dll`、`model_loader.dll` とその依存 DLL は、`komapedit.exe` と同じ場所にある `bin` ディレクトリから読み込みます。
-
-起動時に必要に応じて `settings` ディレクトリを作成し、次のファイルを作成または読み込みます。
-
-- `settings/imgui.ini`：ウィンドウの位置とレイアウト。
-- `settings/settings.ini`：表示言語、文字・UI 部品・停車場マーカーのサイズ、2D の線幅、テーマ色、編集モードの警告状態、3D 設定。3D 設定にはマップを開く際のシーン自動読み込み、霧、描画距離、ギズモのサイズ、カメラ速度、パフォーマンス警告を含みます。
-- `settings/history.ini`：最近開いたマップ、背景画像の位置合わせ、マップごとのカスタムメッセージ表示設定。
-
-設定は操作画面から変更してください。現在の設定書式に合う有効な値を読み込み、それ以外の項目には既定値を使います。保存時には設定ファイル全体を書き出します。
 
 ## ライセンスとサードパーティーの権利表記
 
