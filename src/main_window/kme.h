@@ -2861,6 +2861,7 @@ private:
     void render_model_preview_window();
     void render_scene_preview_window();
     void preview_structure_model(const std::string& path);
+    void open_model_preview_file();
     void reload_model_preview();
     void start_scene_preview();
     void stop_scene_preview();
@@ -3022,6 +3023,7 @@ private:
     std::string open_editable_list_file_dialog(
         const EditableListSpec& spec,
         const std::string& initial_directory);
+    std::string open_model_file_dialog(const std::string& initial_directory);
     std::string choose_folder_dialog(const char* title_key = "dialog.select_export_folder");
 };
 

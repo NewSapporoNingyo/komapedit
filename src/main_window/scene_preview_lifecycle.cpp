@@ -503,6 +503,16 @@ void App::preview_structure_model(const std::string& path) {
     KME_ADD_LOG("[INFO]model preview: " + path);
 }
 
+void App::open_model_preview_file() {
+    std::string current_path =
+        model_preview_canvas_ ? model_preview_canvas_->model_path() : std::string();
+    const std::string selected_file = open_model_file_dialog(
+        list_asset_picker_initial_directory(
+            current_path, current_document_entry_path()));
+    if (selected_file.empty()) return;
+    preview_structure_model(selected_file);
+}
+
 void App::reload_model_preview() {
     if (!model_preview_canvas_ || !model_preview_canvas_->has_model()) return;
     std::string path = model_preview_canvas_->model_path();
@@ -600,6 +610,9 @@ void App::render_model_preview_window() {
         ImGui::BeginDisabled(show_structure_models_window_);
         if (ImGui::Button(tr("button.model_list").c_str())) show_structure_models_window_ = true;
         ImGui::EndDisabled();
+        ImGui::SameLine();
+
+        if (ImGui::Button(tr("button.open_file").c_str())) open_model_preview_file();
         ImGui::SameLine();
 
         ImGui::BeginDisabled(!has_preview_model);

@@ -120,6 +120,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 3D Canvas
 
+- [x] Open arbitrary model files directly in the 3D-Model Preview window without a Structure List entry: add an `Open File` button next to `Structure List`, reuse the localized Structure List model-file picker and existing single-model preview loading, derive the dialog's initial directory from the current preview file or the current map entry file, and keep existing reload/clear/background behavior for the opened model. Debug build and all seven CTests passed, including the five-language translation contract. GUI operation and visual confirmation remain manual checks.
+
 - [x] Align Repeater placement with the BVE 5.8 analysis: retain each Begin's `begin + k * interval` grid and `k % N` model cycle, follow global parse order at shared distances, preserve typed structure-list slots including unresolved models, and keep zero-length segments editable without drawing instances. Prevent duplicate submissions at preview chunk boundaries and reject edits that unexpectedly change non-target segment boundaries. Debug build, all seven CTests, scene-loader contracts, Scenario loading, real-route 2D/3D benchmarks, Repeater memory edits, and five scene-enabled edit/Save/reload benchmark rounds passed. Real sources remained unchanged; no automatic clicks or manual visual checks were performed.
 
 - [x] Apply `Legacy.Fog` linear fog through the existing scene fog toggle and shader, sharing mileage keyframes with exponential fog, including 25-meter Legacy transitions, same-mileage order, and hard mode switches.
@@ -315,6 +317,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 从 2D 平面图的布景/信号机放置标记打开“属性/编辑”
 
 ### 3D画布
+
+- [x] 在“3D-模型预览”窗口新增“打开文件”按钮，可直接预览未列入布景模型列表的任意模型文件，而不限于 Structure List 条目：按钮位于“模型列表”右侧，复用布景模型列表的本地化模型文件选择对话框与现有单模型预览加载逻辑，对话框初始目录优先取当前预览文件所在目录、回退当前地图入口文件目录，已打开模型的重新加载/清除/背景颜色行为保持不变。Debug 构建与全部七项 CTest 通过，含五语翻译契约；GUI 操作与视觉确认留待人工检查。
 
 - [x] 按 BVE 5.8 分析对齐 Repeater 放置：保留每个 Begin 的 `begin + k * interval` 网格与 `k % N` 模型循环，同里程事件遵循全局解析顺序，typed 结构列表保留包括未解析模型在内的全部位置，零长度段仍可编辑但不绘制实例。阻止预览分块边界重复提交，并拒绝意外改变非目标段边界的编辑。Debug 构建、七项 CTest、scene-loader 契约、Scenario 加载、真实线路 2D/3D benchmark、Repeater 内存编辑和五轮启用场景的编辑/Save/reload benchmark 均通过；真实源文件保持不变，未执行自动点击或人工视觉检查。
 

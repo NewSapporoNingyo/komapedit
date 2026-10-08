@@ -272,6 +272,13 @@ std::string App::save_include_file_dialog(const std::string& initial_directory) 
     return {};
 }
 
+std::string App::open_model_file_dialog(const std::string& initial_directory) {
+    // Reuse the Structure List model-file picker: same localized title,
+    // model filter, and initial-directory handling as resource-list rows.
+    return open_editable_list_file_dialog(
+        k_structure_model_edit_spec, initial_directory);
+}
+
 std::string_view new_bve_file_header(NewFileKind kind) {
     switch (kind) {
     case NewFileKind::Map: return "BveTs Map 2.02:utf-8\r\n";
