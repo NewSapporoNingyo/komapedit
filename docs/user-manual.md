@@ -281,9 +281,15 @@ In komapedit, each Map file's `distance` starts at `0`; returning from an Includ
 
 ### 8. 3D Model Preview
 
-Open `3D View -> Structure Model Preview`, then right-click a structureKey in the Structure List and choose `Preview Model`.
+Open `3D View -> Structure Model Preview`, then open a model in one of the following ways:
+
+- Click `Open File` in the toolbar and choose any model file, including `.x` files that are not listed in the Structure List. The dialog starts in the current preview file's directory, or in the map's directory when no model has been opened yet.
+- Right-click a structureKey in the Structure List and choose `Preview Model`.
+
+The toolbar provides these actions:
 
 - **Structure List**: Opens the Structure List.
+- **Open File**: Chooses any model file directly, without a Structure List entry.
 - **Reload**: Reads the current model, materials, and textures again.
 - **Clear**: Removes the current model from the preview.
 - **Background Color**: Selects any RGB color or uses the white, black, gray, blue, or green shortcut colors.

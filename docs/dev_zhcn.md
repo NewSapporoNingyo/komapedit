@@ -376,7 +376,7 @@ ctest --test-dir build --output-on-failure
 - `edit_benchmark.cpp` 承载独立的 Debug 编辑性能入口：真实输入只做内存 Apply/Delete/Revert 与字节保护，Save 仅在保持相对依赖布局的排他临时普通文件副本中运行，同时检查刷新合并、回滚和阶段计时契约。
 - `element_inspector_data.cpp` 管理 Inspector 打开、定位、字段/场景编辑数据与 Apply；`element_inspector_render.cpp` 只渲染 Inspector 字段、可选插入参数和可变 Repeater/Section UI。
 - `editable_list_drafts.cpp` 管理资源列表草稿；`new_element_wizard.cpp` 拥有新元素模板/向导、结构化插入以及新建文件向导的状态与渲染；`headless_entrypoints.cpp` 承载复用正式 App 工作流的新元素、资源列表替换/插入、新建文件向导和 Scenario 创建契约。
-- `app_dialogs.cpp` 拥有文件对话框、Scenario Route 候选选择、Scenario 新文件正文构建和其它模态弹窗；`element_inspector_data.cpp` 处理新文件请求的延迟、排他创建与创建后打开；`ui_elements.cpp` 拥有 dockspace、菜单、工具栏、状态栏、控制台、快捷键和设置投影；`scene_preview_lifecycle.cpp` 拥有场景/模型预览的启停、重建、可见性和窗口渲染。
+- `app_dialogs.cpp` 拥有文件对话框、Scenario Route 候选选择、Scenario 新文件正文构建和其它模态弹窗；布景模型列表的模型文件选择对话框同时复用于 3D-模型预览窗口直接打开任意模型；`element_inspector_data.cpp` 处理新文件请求的延迟、排他创建与创建后打开；`ui_elements.cpp` 拥有 dockspace、菜单、工具栏、状态栏、控制台、快捷键和设置投影；`scene_preview_lifecycle.cpp` 拥有场景/模型预览的启停、重建、可见性和窗口渲染。
 
 #### `src/main_window/file_structure_diagram.cpp`
 
@@ -455,7 +455,7 @@ ctest --test-dir build --output-on-failure
 | `canvas3d_scene_lifecycle.cpp` | 场景替换、动态/地图/车站刷新、可见性与设置、模型请求及资源生命周期 |
 | `canvas3d_model_loader.cpp/.h` | 模型加载器 v2 客户端、WIC 纹理与缓存、CPU 模型 worker、上传队列及诊断 |
 | `canvas3d_put_between.cpp/.h` | 源模型准备与变形、异步 PutBetween 预览及经过序号检查的结果发布 |
-| `canvas3d_model_preview.cpp` | 单模型加载、资源清理与交互预览 |
+| `canvas3d_model_preview.cpp` | 单模型加载、资源清理与交互预览；应用层入口也可打开布景模型列表以外的模型 |
 | `canvas3d_d3d_resources.cpp` | HLSL、shader 管线、深度/混合/光栅化状态、渲染目标与实例缓冲 |
 | `canvas3d_scene_geometry.cpp/.h` | 场景/轨道分块、轨道放置坐标系及 Repeater 实例与缓存操作 |
 | `canvas3d_scene_markers.cpp` | 标记顶点、文字与图标、字体缓存、可见索引与标记绘制 |

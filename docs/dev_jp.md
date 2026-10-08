@@ -376,7 +376,7 @@ ctest --test-dir build --output-on-failure
 - `edit_benchmark.cpp` は独立した Debug 編集ベンチマークです。実入力をバイト単位で保護してメモリ内 Apply/Delete/Revert を測り、Save は相対依存関係を保った通常ファイルのコピーを専用一時ディレクトリで使います。更新の集約、ロールバック、段階別計時の契約も確認します。
 - `element_inspector_data.cpp` は Inspector の開始・対象移動、項目・シーン編集データ、Apply を管理します。`element_inspector_render.cpp` は項目、省略可能な挿入引数、可変長の Repeater/Section 操作部品を描画します。
 - `editable_list_drafts.cpp` はリソースリスト下書き、`new_element_wizard.cpp` はテンプレート、要素追加、構造化挿入、新規ファイルウィザードの状態・描画を担当します。`headless_entrypoints.cpp` は実際の App 操作経路を使い、要素追加、リスト置換・挿入、新規ファイル、Scenario 作成を検証します。
-- `app_dialogs.cpp` はファイル選択、Scenario Route 選択、新規 Scenario の内容、その他のモーダル画面を担当します。`element_inspector_data.cpp` は遅延した新規ファイル要求、排他的作成、結果を開く処理を担当します。`ui_elements.cpp` はドックスペース、メニュー、ツールバー、ステータス、コンソール、ショートカット、設定の反映を、`scene_preview_lifecycle.cpp` はシーン・モデルの開始・終了・再構築・表示切替・ウィンドウ描画を担当します。
+- `app_dialogs.cpp` はファイル選択、Scenario Route 選択、新規 Scenario の内容、その他のモーダル画面を担当します。ストラクチャーリストのモデルファイル選択ダイアログは、3D モデルプレビューから任意のモデルを直接開くためにも再利用されます。`element_inspector_data.cpp` は遅延した新規ファイル要求、排他的作成、結果を開く処理を担当します。`ui_elements.cpp` はドックスペース、メニュー、ツールバー、ステータス、コンソール、ショートカット、設定の反映を、`scene_preview_lifecycle.cpp` はシーン・モデルの開始・終了・再構築・表示切替・ウィンドウ描画を担当します。
 
 #### `src/main_window/file_structure_diagram.cpp`
 
@@ -455,7 +455,7 @@ ctest --test-dir build --output-on-failure
 | `canvas3d_scene_lifecycle.cpp` | シーン置換、動的内容・マップ・停車場の更新、表示・設定、モデル要求、リソース寿命 |
 | `canvas3d_model_loader.cpp/.h` | モデルローダー v2 クライアント、WIC テクスチャとキャッシュ、CPU モデルワーカー、アップロード待ち行列、診断 |
 | `canvas3d_put_between.cpp/.h` | 元モデルの準備・変形、非同期 PutBetween プレビュー、要求順の確認後の結果公開 |
-| `canvas3d_model_preview.cpp` | 単体モデルの読み込み、リソース解放、対話的プレビュー |
+| `canvas3d_model_preview.cpp` | 単体モデルの読み込み、リソース解放、対話的プレビュー。アプリ側の入口ではストラクチャーリスト外のモデルも開けます |
 | `canvas3d_d3d_resources.cpp` | HLSL、シェーダーパイプライン、深度・合成・ラスタライザー状態、描画先、インスタンスバッファ |
 | `canvas3d_scene_geometry.cpp/.h` | シーン・軌道チャンク、軌道配置座標系、Repeater インスタンスとキャッシュ |
 | `canvas3d_scene_markers.cpp` | マーカー頂点、文字・アイコン、フォントキャッシュ、可視索引、マーカー描画 |

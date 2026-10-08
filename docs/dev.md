@@ -376,7 +376,7 @@ This section describes the main responsibilities of files in `include/` and `src
 - `edit_benchmark.cpp` provides the separate Debug edit benchmark: real inputs are used for in-memory Apply/Delete/Revert with byte protection; Save runs on regular-file copies in an exclusive temporary directory that preserves relative dependencies. It also checks refresh coalescing, rollback, and stage-timing contracts.
 - `element_inspector_data.cpp` manages opening and locating the Inspector, field and scene edit data, and Apply; `element_inspector_render.cpp` renders Inspector fields, optional insertion parameters, and variable-length Repeater/Section controls.
 - `editable_list_drafts.cpp` manages resource-list drafts; `new_element_wizard.cpp` owns new-element templates, the wizard, structured insertion, and the state and rendering of the New File wizard; `headless_entrypoints.cpp` reuses production App workflows for new-element, resource-list replacement/insertion, New File wizard, and Scenario creation contracts.
-- `app_dialogs.cpp` owns file dialogs, Scenario Route candidate selection, new Scenario file content, and other modal dialogs; `element_inspector_data.cpp` handles deferred new-file requests, exclusive creation, and opening the result; `ui_elements.cpp` owns the dockspace, menus, toolbar, status bar, console, shortcuts, and settings projection; `scene_preview_lifecycle.cpp` owns scene/model preview startup, shutdown, rebuilding, visibility, and window rendering.
+- `app_dialogs.cpp` owns file dialogs, Scenario Route candidate selection, new Scenario file content, and other modal dialogs; the Structure List model-file picker is also reused to open arbitrary models from the 3D-Model Preview window; `element_inspector_data.cpp` handles deferred new-file requests, exclusive creation, and opening the result; `ui_elements.cpp` owns the dockspace, menus, toolbar, status bar, console, shortcuts, and settings projection; `scene_preview_lifecycle.cpp` owns scene/model preview startup, shutdown, rebuilding, visibility, and window rendering.
 
 #### `src/main_window/file_structure_diagram.cpp`
 
@@ -455,7 +455,7 @@ This section describes the main responsibilities of files in `include/` and `src
 | `canvas3d_scene_lifecycle.cpp` | Scene replacement, dynamic/map/station refresh, visibility and settings, model requests, and resource lifetime |
 | `canvas3d_model_loader.cpp/.h` | Model-loader v2 client, WIC textures and caches, CPU model workers, upload queues, and diagnostics |
 | `canvas3d_put_between.cpp/.h` | Source-model preparation and deformation, asynchronous PutBetween preview, and publication after sequence checks |
-| `canvas3d_model_preview.cpp` | Single-model loading, resource cleanup, and interactive preview |
+| `canvas3d_model_preview.cpp` | Single-model loading, resource cleanup, and interactive preview; the App entry point also opens models outside the Structure List |
 | `canvas3d_d3d_resources.cpp` | HLSL, shader pipelines, depth/blend/rasterizer states, render targets, and instance buffers |
 | `canvas3d_scene_geometry.cpp/.h` | Scene/track chunks, track placement frames, and Repeater instances and caches |
 | `canvas3d_scene_markers.cpp` | Marker vertices, text and icons, font caches, visible indices, and marker drawing |
