@@ -93,9 +93,10 @@ typedef struct KvScenarioEditPathRow {
     uint32_t reserved;
 } KvScenarioEditPathRow;
 
-/* Call-scoped Scenario draft. Existing Route/Vehicle fields accept one or
-   more candidates (at least one is required) in the order supplied by the
-   caller. Missing Route/Vehicle fields are not created. The arrays are
+/* Call-scoped Scenario draft. Existing Route fields require at least one
+   candidate. Vehicle accepts zero or more candidates in supplied order: zero
+   clears an existing value, and a nonempty array creates a missing Vehicle
+   field. Missing Route fields remain absent. The arrays are
    call-scoped views and remain valid only for the duration of the save call. */
 typedef struct KvScenarioEditDocument {
     uint32_t version;

@@ -93,6 +93,7 @@ void App::render_scenario_file_window() {
     };
     enum class ScenarioCandidateActionKind {
         None,
+        SetFirst,
         AddAfter,
         Delete,
         MoveUp,
@@ -102,6 +103,7 @@ void App::render_scenario_file_window() {
         ScenarioCandidateActionKind::None;
     std::vector<ScenarioPreviewPath>* pending_candidate_paths = nullptr;
     size_t pending_candidate_index = 0;
+    ScenarioPreviewPath pending_candidate_value;
     const auto defer_candidate_action =
         [&](ScenarioCandidateActionKind kind,
             std::vector<ScenarioPreviewPath>& paths, size_t index) {
@@ -137,7 +139,8 @@ void App::render_scenario_file_window() {
             }
             ImGui::EndDisabled();
 
-            ImGui::BeginDisabled(!editable || candidate_paths->size() <= 1);
+            ImGui::BeginDisabled(!editable ||
+                (candidate_paths != &preview.vehicles && candidate_paths->size() <= 1));
             if (ImGui::MenuItem(tr("context.scenario.delete_candidate").c_str())) {
                 defer_candidate_action(ScenarioCandidateActionKind::Delete,
                                        *candidate_paths, candidate_index);
@@ -221,21 +224,20 @@ void App::render_scenario_file_window() {
         };
         const auto render_paths = [&](const char* field,
                                       std::vector<ScenarioPreviewPath>& paths) {
+            const bool vehicle = &paths == &preview.vehicles;
             const bool show_weight = paths.size() > 1 || std::any_of(
                 paths.begin(), paths.end(), [](const ScenarioPreviewPath& path) {
                     return path.has_explicit_weight;
                 });
-            if (paths.empty()) {
+            if (paths.empty() && !vehicle) {
                 std::string empty;
-                // An absent Route/Vehicle entry is intentionally not an
-                // insertion surface: this editor only changes existing
-                // candidates, while missing scalar fields may be filled in.
                 render_value(field, empty, false, false, false);
                 return;
             }
+            ScenarioPreviewPath first_vehicle;
             ImGui::PushID(field);
-            for (size_t index = 0; index < paths.size(); ++index) {
-                ScenarioPreviewPath& path = paths[index];
+            for (size_t index = 0; index < std::max(size_t{1}, paths.size()); ++index) {
+                ScenarioPreviewPath& path = paths.empty() ? first_vehicle : paths[index];
                 ImGui::PushID(static_cast<int>(index));
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -247,7 +249,7 @@ void App::render_scenario_file_window() {
                         update_scenario_route_warning();
                     }
                     render_context_menu("##scenario_path_context", path.path, false,
-                                       &paths, index);
+                                       paths.empty() ? nullptr : &paths, index);
                 } else {
                     const float weight_width = 72.0f;
                     const float path_width = std::max(
@@ -273,6 +275,12 @@ void App::render_scenario_file_window() {
                 ImGui::PopID();
             }
             ImGui::PopID();
+            if (vehicle && paths.empty() && !first_vehicle.path.empty()) {
+                pending_candidate_value = std::move(first_vehicle);
+                defer_candidate_action(ScenarioCandidateActionKind::SetFirst, paths, 0);
+            } else if (vehicle && paths.size() == 1 && paths.front().path.empty()) {
+                defer_candidate_action(ScenarioCandidateActionKind::Delete, paths, 0);
+            }
         };
 
         render_value("Title", preview.title);
@@ -291,6 +299,10 @@ void App::render_scenario_file_window() {
             const size_t index = pending_candidate_index;
             bool changed = false;
             switch (pending_candidate_action) {
+            case ScenarioCandidateActionKind::SetFirst:
+                paths.push_back(std::move(pending_candidate_value));
+                changed = true;
+                break;
             case ScenarioCandidateActionKind::AddAfter:
                 if (index < paths.size()) {
                     paths.insert(paths.begin() + static_cast<std::ptrdiff_t>(index + 1),
@@ -299,7 +311,7 @@ void App::render_scenario_file_window() {
                 }
                 break;
             case ScenarioCandidateActionKind::Delete:
-                if (paths.size() > 1 && index < paths.size()) {
+                if ((paths.size() > 1 || &paths == &preview.vehicles) && index < paths.size()) {
                     paths.erase(paths.begin() + static_cast<std::ptrdiff_t>(index));
                     changed = true;
                 }

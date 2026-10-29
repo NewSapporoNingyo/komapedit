@@ -170,7 +170,12 @@ ScenarioDocument parse_scenario_loaded_document(const LoadedText& loaded) {
             set_field(2, value, document.route_title, value);
         } else if (key == "Vehicle") {
             set_field(3, value, document.vehicles,
-                      parse_weighted_path_terms(value, "Vehicle"));
+                      value.empty() ? std::vector<ScenarioPathWeight>{}
+                                    : parse_weighted_path_terms(value, "Vehicle"));
+            if (value.empty()) {
+                KME_MAPLOADER_LOG_WARN(path_to_utf8(loaded.path.filename()) +
+                                      " has an empty Vehicle entry; Route loading continues.");
+            }
         } else if (key == "VehicleTitle") {
             set_field(4, value, document.vehicle_title, value);
         } else if (key == "Author") {
@@ -424,40 +429,57 @@ ScenarioDocument save_scenario_document(const std::filesystem::path& scenario_pa
         "Title", "Route", "RouteTitle", "Vehicle", "VehicleTitle", "Author", "Image", "Comment"};
     const std::array<const std::vector<ScenarioEditPath>*, 8> path_values{
         nullptr, &request.routes, nullptr, &request.vehicles, nullptr, nullptr, nullptr, nullptr};
-    std::string missing_scalar_insertions;
+    std::string missing_field_insertions;
     const std::string insertion_newline = scenario_newline(source.loaded.newline);
 
     for (size_t i = 0; i < scalar_names.size(); ++i) {
+        std::string desired;
         if (path_values[i]) {
-            if (!ranges[i].present) {
-                if (!path_values[i]->empty()) {
-                    throw std::runtime_error(std::string("Scenario ") + scalar_names[i] +
-                                             " entry is missing; candidate insertion is not supported");
+            const auto& paths = *path_values[i];
+            if (ranges[i].present) {
+                if (i == 3 && (ranges[i].value.empty() || paths.empty())) {
+                    desired = paths.empty() ? std::string{}
+                                            : serialize_scenario_path_value(paths, scalar_names[i]);
+                    if (!desired.empty() && ranges[i].value.empty() &&
+                        ranges[i].value_end < source.text.size() &&
+                        (source.text[ranges[i].value_end] == '#' ||
+                         source.text[ranges[i].value_end] == ';')) {
+                        desired += ' ';
+                    }
+                    add_replacement(replacements, ranges[i].value_begin, ranges[i].value_end,
+                                    std::move(desired));
+                } else {
+                    patch_scenario_path_value(source.text, ranges[i], paths, scalar_names[i], replacements);
                 }
                 continue;
             }
-            patch_scenario_path_value(source.text, ranges[i], *path_values[i], scalar_names[i], replacements);
-            continue;
+            if (paths.empty()) continue;
+            if (i != 3) {
+                throw std::runtime_error(std::string("Scenario ") + scalar_names[i] +
+                                         " entry is missing; candidate insertion is not supported");
+            }
+            desired = serialize_scenario_path_value(paths, scalar_names[i]);
+        } else {
+            desired = scalar_values[i];
         }
-        const std::string& desired = scalar_values[i];
         if (ranges[i].present) {
             add_replacement(replacements, ranges[i].value_begin, ranges[i].value_end, desired);
         } else if (!desired.empty()) {
-            // Missing scalar fields are appended in canonical key spelling;
-            // existing rows, comments and unknown keys retain their order.
-            if (!missing_scalar_insertions.empty()) missing_scalar_insertions += insertion_newline;
-            missing_scalar_insertions += scalar_names[i];
-            missing_scalar_insertions += " = ";
-            missing_scalar_insertions += desired;
+            if (!missing_field_insertions.empty()) missing_field_insertions += insertion_newline;
+            missing_field_insertions += scalar_names[i];
+            missing_field_insertions += " = ";
+            missing_field_insertions += desired;
         }
     }
-    if (!missing_scalar_insertions.empty()) {
+    if (!missing_field_insertions.empty()) {
         const bool needs_leading = !source.text.empty() && source.text.back() != '\n' && source.text.back() != '\r';
         std::string insertion;
         if (needs_leading) insertion += insertion_newline;
-        insertion += missing_scalar_insertions;
+        insertion += missing_field_insertions;
         if (source.loaded.newline != "none" || needs_leading) insertion += insertion_newline;
-        add_replacement(replacements, source.text.size(), source.text.size(), std::move(insertion));
+        // Equal-offset patches keep a final empty field's value ahead of appended rows.
+        replacements.insert(replacements.begin(), ScenarioReplacement{
+            source.text.size(), source.text.size(), std::move(insertion)});
     }
 
     std::stable_sort(replacements.begin(), replacements.end(),

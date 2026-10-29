@@ -6,11 +6,6 @@ This file is the active project progress and contains unfinished items only. Com
 
 ## 待办事项列表
 
-### Bugfix:
-
-- [ ] 场景文件Vehicle为空时，加载会被直接中断
-- [ ] 场景文件缺少`Vehicle =`参数时，此参数无法被新建（整个参数输入框直接不可用）
-
 ### Features:
 - [ ] 增加韩语UI与文档
 - [ ] 支持通过3D操纵器编辑布景旋转

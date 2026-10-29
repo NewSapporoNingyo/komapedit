@@ -141,7 +141,7 @@ ctest --test-dir build --output-on-failure
 #### `include/maploader.h`
 
 - **导出与日志接口**：`KV_API` 控制 DLL 导出/导入；`KvLogCallback` 与 `kv_set_log_callback()` 把 DLL 内的英文诊断交给宿主。`kv_api_version()` 返回 ABI 版本，EXE 必须精确匹配。
-- **场景文件接口**：`kv_probe_file_kind()` 区分地图与 Scenario；`kv_resolve_scenario_routes()` 返回目标文件存在的 Route 候选，配对 `kv_free_scenario_candidates()` 释放；`kv_load_scenario_snapshot()` 返回独立 v2 快照，配对 `kv_free_scenario_snapshot()` 释放；v2 `kv_save_scenario_document()` 校验源哈希、完整重解析后按原编码事务写回，支持调整已有 Route/Vehicle 候选的数量和顺序。
+- **场景文件接口**：`kv_probe_file_kind()` 区分地图与 Scenario；`kv_resolve_scenario_routes()` 返回目标文件存在的 Route 候选，配对 `kv_free_scenario_candidates()` 释放；`kv_load_scenario_snapshot()` 返回独立 v2 快照，配对 `kv_free_scenario_snapshot()` 释放；v2 `kv_save_scenario_document()` 校验源哈希、完整重解析后按原编码事务写回，支持调整候选数量和顺序、补建缺失 Vehicle 及保存空 Vehicle。
 - **句柄与几何生成**：`kv_load_map_ex()` 通过 `KV_LOAD_PREVIEW`、`KV_LOAD_EDIT_METADATA` 选择预览或编辑元数据。`kv_generate_geometry()` 和 `kv_generate_scene_geometry()` 分别生成常规与场景轨道数据，更新句柄缓存及各自修订号。
 - **只读快照**：`kv_get_map_snapshot()`、`kv_get_scene_geometry_snapshot()` 校验版本与结构尺寸后返回句柄拥有的视图；调用方在重解析或对应几何失效前复制所需数据，嵌套存储随句柄管理。
 - **编辑与源码访问**：`kv_get_edit_target_typed()` 取得一个稳定 edit id 的字段和源码信息，`kv_get_source_text()` 返回当前磁盘或内存覆盖层中的解码文本。`kv_edit_dry_run_typed()`、`kv_edit_apply_to_memory_typed()`、`kv_edit_apply_typed()`、`kv_edit_commit_typed()`、`kv_edit_reset_memory()` 分别承担验证、应用到工作副本、直接写盘、提交工作副本和撤销覆盖层。
@@ -313,8 +313,8 @@ ctest --test-dir build --output-on-failure
 #### `src/maploader/scenario_route.h` 与 `src/maploader/scenario_route.cpp`
 
 - `probe_bve_file_kind()` 只读取文件开头，用于区分 Map、Scenario 和未知文件；不可读文件保留为 Unknown，交由正常加载流程报告详细错误。
-- `load_scenario_document()` 按声明编码解析 `BveTs Scenario 2.00`，处理 `#`/`;` 注释和重复字段的末项优先规则，保留八个官方字段、源哈希/存在位以及 Route/Vehicle 的源码相对路径、权重与显式权重标记。
-- `save_scenario_document()` 重新读取磁盘并比较 expected source hash；候选数量不变时对最后生效字段逐项做最小补丁，数量变化时仅重写该字段的完整候选值；拒绝空路径、保留语法字符和非正/非有限权重，要求每个已存在字段至少一个候选，完整重解析后调用共享事务写回。
+- `load_scenario_document()` 按声明编码解析 `BveTs Scenario 2.00`，处理 `#`/`;` 注释和重复字段的末项优先规则，保留八个官方字段、源哈希/存在位以及 Route/Vehicle 的源码相对路径、权重与显式权重标记。整个 Vehicle 值为空时输出警告，保留存在位和零候选，有效 Route 地图继续加载。
+- `save_scenario_document()` 重新读取磁盘并比较 expected source hash；候选数量不变时对最后生效字段逐项做最小补丁，数量变化时仅重写该字段的完整候选值。候选路径须非空且避开保留语法字符，权重须为有限正数。已有 Route 字段至少保留一个候选；Vehicle 接受零个或多个候选，非空草稿可补建缺失 Vehicle，零候选可清空已有值。完整重解析后调用共享事务写回。
 - `resolve_scenario_route_candidates()` 复用 Scenario 解析结果，按其所在目录解析 Route 相对路径并验证目标文件存在；快照读取负责保留声明数据。
 
 #### `src/maploader/diagnostics.h` 与 `src/maploader/diagnostics.cpp`
@@ -607,8 +607,8 @@ AI 编程工具修改 BVE 地图、列表或 Scenario 的读取、校验、类�
 `scenario_route.cpp/.h` 管理以下流程：
 
 - **读取与预览**：探测文件类型，校验 `BveTs Scenario 2.00` 头部并按声明编码解码，处理 `#`/`;` 注释，保留八个官方字段的最后一项，以及相对路径、权重、源哈希和字段存在位。快照可预览缺少 Route 或目标文件的 Scenario。
-- **打开地图**：`kv_resolve_scenario_routes()` 检查 Route 候选及目标文件，再交给地图加载器验证。Vehicle 数据用于预览。Route 解析或地图加载失败时，GUI 保留 Scenario 预览。
-- **保存草稿**：GUI 通过 Save 直接提交 Scenario。已有 Route/Vehicle 字段至少保留一个候选，按草稿顺序写回；候选路径须非空且避开保留语法字符，权重须为有限正数。数量相同时逐项修改，数量变化时重写该字段的候选值。写盘前核对源哈希并完整重解析，事务写入保留原编码、BOM 和行尾。
+- **打开地图**：`kv_resolve_scenario_routes()` 检查 Route 候选及目标文件，再交给地图加载器验证。Vehicle 数据用于预览；整个 Vehicle 值为空时输出警告，有效 Route 地图继续加载。Route 解析或地图加载失败时，GUI 保留 Scenario 预览。
+- **保存草稿**：GUI 通过 Save 直接提交 Scenario。已有 Route 字段至少保留一个候选；Vehicle 支持输入或选择首个候选、补建缺失字段及清空最后候选。空白占位保持草稿干净，候选容器的结构变化在表格绘制结束后执行。非空候选按草稿顺序写回，路径须避开保留语法字符，权重须为有限正数。数量相同时逐项修改，数量变化时重写该字段的候选值。零候选草稿使缺失 Vehicle 保持缺失，或清空已有值。写盘前核对源哈希并完整重解析，事务写入保留原编码、BOM 和行尾。
 - **创建文件**：新建向导通过 `build_new_scenario_file_content()` 按官方键序生成 UTF-8/CRLF 文件，排他创建后重解析验证。Route/Vehicle 初始值为单路径、无权重；多候选和权重在 Scenario 文件标签页编辑。
 
 #### 曲线参数与光照

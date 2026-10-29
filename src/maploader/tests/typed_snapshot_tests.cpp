@@ -1081,6 +1081,34 @@ int scenario_route_contract() {
         return kv_load_scenario_snapshot(path.u8string().c_str(),
                                          KV_SCENARIO_SNAPSHOT_VERSION);
     };
+    auto save_vehicle_draft = [&](const std::filesystem::path& path,
+                                  const KvScenarioSnapshot& baseline,
+                                  const std::vector<KvScenarioEditPathRow>& vehicles,
+                                  const std::string& title) {
+        const auto view = [&](KvStringRef ref) {
+            return KvUtf8View{baseline.string_data + ref.offset, ref.length};
+        };
+        std::vector<KvScenarioEditPathRow> routes;
+        for (uint64_t i = 0; i < baseline.route_count; ++i) {
+            const auto& row = baseline.routes[i];
+            routes.push_back({view(row.path), row.weight, row.has_explicit_weight, 0u});
+        }
+        KvScenarioEditDocument edit{};
+        edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+        edit.structure_size = sizeof(edit);
+        edit.expected_source_hash = view(baseline.source_hash);
+        edit.title = utf8_view(title);
+        edit.routes = routes.data();
+        edit.route_count = routes.size();
+        edit.route_title = view(baseline.route_title);
+        edit.vehicles = vehicles.data();
+        edit.vehicle_count = vehicles.size();
+        edit.vehicle_title = view(baseline.vehicle_title);
+        edit.author = view(baseline.author);
+        edit.image = view(baseline.image);
+        edit.comment = view(baseline.comment);
+        return kv_save_scenario_document(path.u8string().c_str(), &edit);
+    };
 
     std::filesystem::create_directories(directory / "maps");
     write_bytes(directory / "maps" / "map-a.txt", "BveTs Map 2.02:utf-8\n0;\n");
@@ -1246,7 +1274,8 @@ int scenario_route_contract() {
         const KvScenarioSnapshot* snapshot =
             load_snapshot(directory / "vehicle-missing.txt");
         check(snapshot != nullptr && snapshot->route_count == 1 &&
-                  snapshot->vehicle_count == 0,
+                  snapshot->vehicle_count == 0 &&
+                  (snapshot->present_fields & KV_SCENARIO_FIELD_VEHICLE) == 0,
               "scenario snapshot loads without a Vehicle entry");
         kv_free_scenario_snapshot(snapshot);
         auto [candidates, count] = resolve(directory / "vehicle-missing.txt");
@@ -1259,6 +1288,40 @@ int scenario_route_contract() {
                   "missing Vehicle does not block the map load");
         }
         kv_free_scenario_candidates(candidates);
+    }
+
+    for (const std::string value : {"", "   \t", " ; keep comment", " # keep comment"}) {
+        const auto path = directory / "vehicle-empty.txt";
+        write_bytes(path, "BveTs Scenario 2.00\nRoute = maps\\map-a.txt\nVehicle =" + value + "\n");
+        {
+            std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+            diagnostic_logs.clear();
+        }
+        kv_set_log_callback(diagnostic_log_callback);
+        const KvScenarioSnapshot* snapshot = load_snapshot(path);
+        check(snapshot && snapshot->vehicle_count == 0 &&
+                  (snapshot->present_fields & KV_SCENARIO_FIELD_VEHICLE) != 0,
+              "empty Vehicle retains its presence bit with zero candidates");
+        kv_free_scenario_snapshot(snapshot);
+        auto [candidates, count] = resolve(path);
+        check(candidates && count == 1, "empty Vehicle resolves the valid Route");
+        if (candidates && count == 1) {
+            MapHandle handle(kv_load_map_ex(candidates[0].resolved_path, 25.0, KV_LOAD_PREVIEW));
+            check(handle.value != nullptr, "empty Vehicle permits map loading");
+        }
+        kv_free_scenario_candidates(candidates);
+        kv_set_log_callback(nullptr);
+        {
+            std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+            check(std::any_of(diagnostic_logs.begin(), diagnostic_logs.end(), [](const auto& log) {
+                return log.find("[WARN]") != std::string::npos &&
+                       log.find("empty Vehicle") != std::string::npos;
+            }), "empty Vehicle emits a warning");
+            check(std::none_of(diagnostic_logs.begin(), diagnostic_logs.end(), [](const auto& log) {
+                return log.find("[ERROR]") != std::string::npos;
+            }), "empty Vehicle loading diagnostics stay at warning severity");
+            diagnostic_logs.clear();
+        }
     }
 
     // A Vehicle entry whose target does not exist is preview-only data; it
@@ -1379,6 +1442,15 @@ int scenario_route_contract() {
     expect_failure("wrongheader.txt",
                    "BveTs Map 2.02:utf-8\n0;\n",
                    "Invalid file header", "map header rejected by resolver");
+    expect_failure("vehicle-empty-term.txt",
+                   "BveTs Scenario 2.00\nRoute = maps\\map-a.txt\nVehicle = train.txt |\n",
+                   "empty candidate", "empty Vehicle term rejected");
+    expect_failure("vehicle-weight-without-path.txt",
+                   "BveTs Scenario 2.00\nRoute = maps\\map-a.txt\nVehicle = * 1\n",
+                   "empty candidate", "Vehicle weight requires a path");
+    expect_failure("vehicle-zero-weight.txt",
+                   "BveTs Scenario 2.00\nRoute = maps\\map-a.txt\nVehicle = train.txt * 0\n",
+                   "weight", "non-positive Vehicle weight rejected");
 
     // Scenario source-backed editing writes only the requested draft, keeps
     // duplicate/unknown/comment rows intact, and returns a fresh v2 snapshot.
@@ -1613,9 +1685,7 @@ int scenario_route_contract() {
         }
     }
 
-    // Missing scalar fields are inserted only when the draft contains a
-    // non-empty value. Missing Route/Vehicle fields remain outside the
-    // candidate insertion surface.
+    // Missing scalar fields are inserted when the draft supplies a value.
     {
         const std::filesystem::path path = directory / "missing-scalars.txt";
         write_bytes(path,
@@ -1797,6 +1867,108 @@ int scenario_route_contract() {
         std::ifstream file(path, std::ios::binary);
         return std::string((std::istreambuf_iterator<char>(file)), {});
     };
+    struct VehicleEditCase {
+        const char* name;
+        const char* source;
+        bool weighted;
+    };
+    const VehicleEditCase vehicle_edit_cases[]{
+        {"missing-single", "", false},
+        {"missing-weighted", "", true},
+        {"empty", "Vehicle = \t ; keep\n", false},
+        {"duplicate-empty", "Vehicle = old.txt\nVehicle = \t ; keep\n", true},
+    };
+    const std::string vehicle_a = "trains\\train-a.txt";
+    const std::string vehicle_b = "trains\\train-b.txt";
+    const std::string empty_path;
+    for (const auto& test : vehicle_edit_cases) {
+        const auto path = directory / (std::string("vehicle-edit-") + test.name + ".txt");
+        const std::string original =
+            std::string("BveTs Scenario 2.00\nTitle = Before\nRoute = maps\\map-a.txt\n"
+                        "Unknown = untouched\n") + test.source;
+        write_bytes(path, original);
+        const KvScenarioSnapshot* baseline = load_snapshot(path);
+        check(baseline != nullptr, "empty or missing Vehicle edit baseline loads");
+        if (!baseline) continue;
+        const KvScenarioSnapshot* preserved = save_vehicle_draft(path, *baseline, {}, "After");
+        kv_free_scenario_snapshot(baseline);
+        check(preserved != nullptr, "other fields save with empty or missing Vehicle");
+        if (!preserved) continue;
+        std::string expected = original;
+        expected.replace(expected.find("Before"), 6, "After");
+        check(read_bytes(path) == expected,
+              "saving other fields preserves the empty or missing Vehicle source");
+        const std::vector<KvScenarioEditPathRow> invalid_rows{
+            {utf8_view(empty_path), 1.0, 0u, 0u},
+            {utf8_view(vehicle_a), 0.0, 1u, 0u},
+        };
+        for (const auto& row : invalid_rows) {
+            const KvScenarioSnapshot* rejected = save_vehicle_draft(path, *preserved, {row}, "After");
+            check(rejected == nullptr, "invalid new Vehicle candidate rejected");
+            kv_free_scenario_snapshot(rejected);
+            check(read_bytes(path) == expected, "invalid Vehicle draft preserves source bytes");
+        }
+        const KvScenarioSnapshot* mixed = save_vehicle_draft(path, *preserved,
+            {{utf8_view(vehicle_a), 1.0, 0u, 0u}, {utf8_view(empty_path), 1.0, 0u, 0u}}, "After");
+        check(mixed == nullptr, "Vehicle candidate lists require every path");
+        kv_free_scenario_snapshot(mixed);
+        check(read_bytes(path) == expected, "empty Vehicle term preserves source bytes");
+        const std::vector<KvScenarioEditPathRow> vehicles = test.weighted
+            ? std::vector<KvScenarioEditPathRow>{{utf8_view(vehicle_b), 2.5, 1u, 0u},
+                                               {utf8_view(vehicle_a), 1.0, 0u, 0u}}
+            : std::vector<KvScenarioEditPathRow>{{utf8_view(vehicle_a), 1.0, 0u, 0u}};
+        const std::string value = test.weighted ? vehicle_b + " * 2.5 | " + vehicle_a : vehicle_a;
+        const KvScenarioSnapshot* filled = save_vehicle_draft(path, *preserved, vehicles, "After");
+        kv_free_scenario_snapshot(preserved);
+        check(filled && filled->vehicle_count == vehicles.size() &&
+                  (filled->present_fields & KV_SCENARIO_FIELD_VEHICLE) != 0,
+              "Vehicle insertion or fill saves candidate count and presence");
+        if (!filled) continue;
+        for (size_t i = 0; i < vehicles.size(); ++i) {
+            check(scenario_string(*filled, filled->vehicles[i].path) ==
+                      std::string(vehicles[i].path.data, static_cast<size_t>(vehicles[i].path.length)) &&
+                      nearly_equal(filled->vehicles[i].weight, vehicles[i].weight) &&
+                      filled->vehicles[i].has_explicit_weight == vehicles[i].has_explicit_weight,
+                  "inserted Vehicle paths, order and weights round-trip");
+        }
+        const bool missing = std::string_view(test.source).empty();
+        if (missing) {
+            expected += "Vehicle = " + value + "\n";
+        } else {
+            expected.insert(expected.rfind("; keep"), value + " ");
+        }
+        check(read_bytes(path) == expected,
+              "Vehicle insertion preserves comments, unknown rows and earlier duplicate fields");
+        const KvScenarioSnapshot* cleared = save_vehicle_draft(path, *filled, {}, "After");
+        kv_free_scenario_snapshot(filled);
+        check(cleared && cleared->vehicle_count == 0 &&
+                  (cleared->present_fields & KV_SCENARIO_FIELD_VEHICLE) != 0,
+              "clearing Vehicle retains an empty field");
+        kv_free_scenario_snapshot(cleared);
+        expected.erase(expected.rfind(value), value.size());
+        check(read_bytes(path) == expected, "Vehicle clearing preserves surrounding source bytes");
+        const KvScenarioSnapshot* reloaded = load_snapshot(path);
+        check(reloaded && reloaded->vehicle_count == 0 &&
+                  (reloaded->present_fields & KV_SCENARIO_FIELD_VEHICLE) != 0,
+              "cleared Vehicle survives reload");
+        kv_free_scenario_snapshot(reloaded);
+    }
+    {
+        const auto path = directory / "vehicle-empty-eof.txt";
+        write_bytes(path, "BveTs Scenario 2.00\nRoute = maps\\map-a.txt\nVehicle =");
+        const KvScenarioSnapshot* baseline = load_snapshot(path);
+        check(baseline != nullptr, "empty Vehicle at EOF loads");
+        if (baseline) {
+            const KvScenarioSnapshot* saved = save_vehicle_draft(
+                path, *baseline, {{utf8_view(vehicle_a), 1.0, 0u, 0u}}, "Inserted");
+            check(saved != nullptr, "empty final Vehicle and missing scalar save together");
+            kv_free_scenario_snapshot(saved);
+            check(read_bytes(path) == "BveTs Scenario 2.00\nRoute = maps\\map-a.txt\nVehicle =" +
+                      vehicle_a + "\nTitle = Inserted\n",
+                  "EOF insertion keeps the Vehicle value before appended scalar fields");
+            kv_free_scenario_snapshot(baseline);
+        }
+    }
     auto make_scenario_edit = [&](const KvScenarioSnapshot& baseline,
                                   std::string& hash,
                                   std::string& title,
@@ -1978,14 +2150,13 @@ int scenario_route_contract() {
         if (!baseline) continue;
         std::string hash = scenario_string(*baseline, baseline->source_hash);
         std::string title = std::string("After ") + encoding_case.name;
-        std::string original_title_bytes = "Title = Before";
-        std::string replacement_title_bytes = "Title = " + title;
         const std::string_view encoding_name = encoding_case.name;
-        if (encoding_name == "utf16-le" || encoding_name == "utf16-be") {
-            const bool little_endian = encoding_name == "utf16-le";
-            original_title_bytes = utf16_bytes(original_title_bytes, little_endian).substr(2);
-            replacement_title_bytes = utf16_bytes(replacement_title_bytes, little_endian).substr(2);
-        }
+        const auto encode_ascii = [&](const std::string& text) {
+            return encoding_name == "utf16-le" || encoding_name == "utf16-be"
+                ? utf16_bytes(text, encoding_name == "utf16-le").substr(2) : text;
+        };
+        const std::string original_title_bytes = encode_ascii("Title = Before");
+        const std::string replacement_title_bytes = encode_ascii("Title = " + title);
         std::string expected_bytes = encoding_case.bytes;
         const size_t title_offset = expected_bytes.find(original_title_bytes);
         check(title_offset != std::string::npos,
@@ -2024,6 +2195,46 @@ int scenario_route_contract() {
               (std::string(encoding_case.name) +
                " complete encoded document changes only Title, preserving every newline and code unit").c_str());
         kv_free_scenario_snapshot(baseline);
+
+        for (const bool missing : {false, true}) {
+            const auto vehicle_path = directory / (std::string("encoding-vehicle-") +
+                encoding_case.name + (missing ? "-missing.txt" : "-empty.txt"));
+            const std::string vehicle_line = encode_ascii("Vehicle = train.txt") + encoding_case.newline_bytes;
+            const std::string empty_line = encode_ascii("Vehicle = ; keep") + encoding_case.newline_bytes;
+            std::string vehicle_bytes = encoding_case.bytes;
+            vehicle_bytes.replace(vehicle_bytes.find(vehicle_line), vehicle_line.size(),
+                                  missing ? std::string{} : empty_line);
+            write_bytes(vehicle_path, vehicle_bytes);
+            const KvScenarioSnapshot* vehicle_baseline = load_snapshot(vehicle_path);
+            check(vehicle_baseline != nullptr, "encoded empty or missing Vehicle loads");
+            if (!vehicle_baseline) continue;
+            const KvScenarioSnapshot* filled = save_vehicle_draft(
+                vehicle_path, *vehicle_baseline, {vehicle_row}, "Before");
+            kv_free_scenario_snapshot(vehicle_baseline);
+            check(filled && filled->vehicle_count == 1 &&
+                      scenario_string(*filled, filled->vehicles[0].path) == vehicle,
+                  "encoded Vehicle insertion round-trips");
+            if (!filled) continue;
+            if (missing) {
+                vehicle_bytes += vehicle_line;
+            } else {
+                const std::string filled_line = encode_ascii("Vehicle = train.txt ; keep") +
+                    encoding_case.newline_bytes;
+                vehicle_bytes.replace(vehicle_bytes.find(empty_line), empty_line.size(), filled_line);
+            }
+            check(read_bytes(vehicle_path) == vehicle_bytes,
+                  "Vehicle insertion preserves exact encoded bytes, BOM and newlines");
+            const KvScenarioSnapshot* cleared = save_vehicle_draft(vehicle_path, *filled, {}, "Before");
+            kv_free_scenario_snapshot(filled);
+            check(cleared && cleared->vehicle_count == 0 &&
+                      (cleared->present_fields & KV_SCENARIO_FIELD_VEHICLE) != 0,
+                  "encoded Vehicle clearing retains an empty field");
+            kv_free_scenario_snapshot(cleared);
+            const std::string encoded_vehicle = encode_ascii(vehicle);
+            vehicle_bytes.erase(vehicle_bytes.rfind(encoded_vehicle), encoded_vehicle.size());
+            check(read_bytes(vehicle_path) == vehicle_bytes,
+                  "Vehicle clearing preserves exact encoded bytes, BOM and newlines");
+        }
     }
 
     // CP932 cannot represent arbitrary Unicode drafts; writeback rejects the

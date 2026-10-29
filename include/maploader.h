@@ -72,8 +72,9 @@ KV_API void kv_free_scenario_candidates(const KvScenarioRouteCandidate* candidat
 
 /* Parses a BVE Scenario file into an immutable, independently owned typed
    snapshot. Route and Vehicle paths retain their original relative UTF-8
-   source text; this call validates Scenario syntax but does not require Route
-   targets to exist. Pass KV_SCENARIO_SNAPSHOT_VERSION and release a non-NULL
+   source text. An empty Vehicle value emits a warning and retains its presence
+   bit with zero candidates. This call validates Scenario syntax without requiring
+   Route targets to exist. Pass KV_SCENARIO_SNAPSHOT_VERSION and release a non-NULL
    result exactly once with kv_free_scenario_snapshot(). */
 KV_API const KvScenarioSnapshot* kv_load_scenario_snapshot(
     const char* scenario_path, uint32_t version);
@@ -84,9 +85,10 @@ KV_API void kv_free_scenario_snapshot(const KvScenarioSnapshot* snapshot);
 
 /* Writes a Scenario draft directly to scenario_path. The expected source hash
    is compared with the current on-disk bytes before any replacement. Existing
-   Route/Vehicle fields accept one or more candidates (at least one
-   is required), and the supplied order is written back; missing Route/Vehicle
-   fields are not created. Scalar fields may be inserted when a non-empty value
+   Route fields require at least one candidate. Vehicle accepts zero or more
+   candidates in supplied order; zero clears an existing value, and a nonempty
+   array creates a missing Vehicle field. Missing Route fields remain absent.
+   Scalar fields may be inserted when a non-empty value
    is supplied. On success a newly parsed v2 snapshot is returned and must be
    released with kv_free_scenario_snapshot(). On failure NULL is returned and
    kv_get_last_error() contains an English diagnostic. */
