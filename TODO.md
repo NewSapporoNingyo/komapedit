@@ -12,7 +12,7 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 场景文件缺少`Vehicle =`参数时，此参数无法被新建（整个参数输入框直接不可用）
 
 ### Features:
-
+- [ ] 增加韩语UI与文档
 - [ ] 支持通过3D操纵器编辑布景旋转
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
 - [ ] 自定义工作区：保存多种UI布局作为预设，根据不同使用场景切换UI布局
