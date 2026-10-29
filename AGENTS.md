@@ -25,6 +25,42 @@ Keep every skill or distilled memory that applies only to komapedit in these pro
 
 Current implementation status comes from source and `TODO.md`, not from an old memory or an exhaustive list copied into this file.
 
+## Top Prohibition: All Unnecessary Defensive Logic Is Forbidden in Any Part of This Workspace
+
+This workspace rejects all defensive phrasing and defensive code. Every document, prompt, comment, and code implementation must be direct, concise, and definite.
+
+### Constraints for Documentation, Prompts, and In-Program Text
+- **Negative lead-ins and adversarial rhetoric are forbidden**:
+  - **Counterexamples**: "not X, but Y", "it is not that ... but rather ...", "this does not mean that ...", "does not represent ...", "will not ...", "not only ... but even more ...".
+  - **Rule**: State directly what the system is, what it does, and how it works; delete every negative construction that pre-corrects or self-justifies.
+- **Disclaimer boilerplate and hedged modifiers are forbidden**:
+  - **Counterexamples**: "it should be noted that", "it is worth noting that", "it must be emphasized that", "important notice:", "please be sure to remember", "to some extent", "under normal circumstances", "for reference only".
+  - **Rule**: Delete zero-information transitions, emphasis prefixes, and disclaimers; each sentence keeps only facts, rules, or instructions.
+- **Restating a rule in both directions and defensive enumeration are forbidden**:
+  - **Counterexamples**: after defining the positive rule, spending several more sentences listing "what is not accepted, what is not done automatically, what must never be passed in"; repeatedly stacking "never ever" and "otherwise serious consequences will follow" in a `SKILL.md` or prompt; writing a long comment explaining "why a certain approach was not adopted".
+  - **Rule**: Define the same rule once, positively and precisely, in one place; code comments state only the non-obvious business intent or the source of a mathematical or physical formula, and restating the literal logic of the code is forbidden.
+
+### Code Implementation Constraints
+- **No Broad Catch & Silent Fallback**:
+  - **Counterexamples**: swallowing exceptions indiscriminately with `try { ... } catch (const std::exception&) { return {}; }` / `catch (...)` and returning `nullptr`, an empty container, or default values; catching an exception, printing one log line, and continuing execution; multiple layers of nested `try`/`catch`.
+  - **Rule**: Convert exceptions to error codes only at the external boundaries the architecture defines explicitly (such as subprocess communication, timeout control, controlled parse entry points); internal logic follows Fail-Fast and throws directly; fabricating fallback return values to mask an error is forbidden.
+- **No Paranoid Internal Checks**:
+  - **Counterexamples**: between internal functions that already passed the entry schema or AST validation, repeatedly writing `dynamic_cast<T*>` probes, `map.find(k) != map.end()` / `map.contains(k)` presence guards, `value_or(default)` on contract-guaranteed fields, or multiple layers of `if (p != nullptr)` null tests.
+  - **Rule**: Trust the function signature and the entry contract; outside the system's external input boundary, internal calls access required members and fields directly through `obj.member` and `d.at("key")`, and writing a branch for an impossible state outside the contract is forbidden.
+- **No Speculative Fallbacks & Shims**:
+  - **Counterexamples**: `#if __has_include(...)` conditional compilation or `LoadLibrary` + `GetProcAddress` degradation implementations, branches that stay compatible with an older DLL/ABI version, cross-platform or cross-version probing and fallback logic written for a fixed host environment (Windows 10/11).
+  - **Rule**: Write a deterministic implementation for the single target environment; when a dependency is missing or the configuration is wrong, report the error and terminate directly; patchwork degradation paths are forbidden.
+- **No Redundant Wrappers & Sanitization**:
+  - **Counterexamples**: making meaningless deep copies of read-only data, repeating `trim(x)` inside every function layer, writing wrapper functions that only forward parameters, adding a fallback `else` branch that never runs.
+  - **Rule**: Keep the shortest call chain and the smallest data transformation; program reliability is guaranteed by explicitly planned boundary contracts and deterministic logic, and maintaining it by piling up defensive code and adding large amounts of tests and validation is forbidden.
+
+### Other Prohibitions
+- Repeatedly checking file metadata, confirming several times without need whether a file changed. Writing file metadata into documentation or code.
+- After the user explicitly requests the removal of a certain element, adding an explanation of "why that element is not here".
+- Endless repeated testing and log inspection, adding unnecessary junk files to the workspace.
+- Piling up sentences with hard-to-understand meaning, rewriting the user's plain and everyday-language explanations into hard-to-understand content.
+- Ignoring the specific task requirements of the user and the plan document, executing operations that are obviously superfluous to the task.
+
 ## Important Notes in the Various Types of Coding Agents Listed Below (Very Important)
 You should read the following notes related to your current agent. If a note applies to a different agent, you may ignore it.
 ### Pi Agent
