@@ -68,7 +68,8 @@ bool complete_translations(const Translation& translation) {
         {"zh", Language::Zh, &translation.zh},
         {"zh-TW", Language::ZhTw, &translation.zh_tw},
         {"zh-HK", Language::ZhHk, &translation.zh_hk},
-        {"ja", Language::Ja, &translation.ja}
+        {"ja", Language::Ja, &translation.ja},
+        {"ko", Language::Ko, &translation.ko}
     };
     for (const auto& table : tables) {
         if (table.texts->size() != expected_key_count) {
@@ -99,6 +100,13 @@ bool complete_translations(const Translation& translation) {
 int main() {
     const Translation translation;
     bool ok = complete_translations(translation);
+    ok = expect_value(translation.ko, "menu.lang", "언어") && ok;
+    ok = expect_value(translation.ko, "button.save", "저장") && ok;
+    ok = expect_value(translation.ko, "button.apply", "적용") && ok;
+    ok = expect_value(translation.ko, "button.revert", "되돌리기") && ok;
+    ok = expect_value(translation.ko, "button.reset", "초기화") && ok;
+    ok = expect_value(translation.ko, "dialog.element_properties", "속성/편집") && ok;
+    ok = expect_value(translation.ko, "label.track_key", "trackKey") && ok;
     ok = expect_value(translation.zh_hk, "menu.file", "檔案") && ok;
     ok = expect_value(translation.zh_hk, "menu.open", "開啟...") && ok;
     ok = expect_value(translation.zh_hk, "menu.reload", "重新載入") && ok;

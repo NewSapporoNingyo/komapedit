@@ -2953,7 +2953,7 @@ int run_debug_headless_settings_persistence(
         const std::filesystem::path canonical_path = temp_root / L"settings.ini";
         UserSettings canonical;
         canonical.path = canonical_path;
-        canonical.language = Language::En;
+        canonical.language = Language::Ko;
         canonical.font_size = 22.0f;
         canonical.ui_component_size = 125.0f;
         canonical.marker_size_percent = 150.0f;
@@ -2995,7 +2995,9 @@ int run_debug_headless_settings_persistence(
                   std::string::npos,
               "canonical_curve_parameter_marker_keys");
         UserSettings canonical_loaded = load_user_settings(canonical_path);
-        check(canonical_loaded.language == canonical.language, "canonical_language");
+        check(canonical_loaded.language == Language::Ko &&
+                  canonical_text.find("[General]\nlanguage=ko\n") == 0,
+              "canonical_language");
         check(canonical_loaded.font_size == canonical.font_size, "canonical_font_size");
         check(canonical_loaded.ui_component_size == canonical.ui_component_size,
               "canonical_component_size");

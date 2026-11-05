@@ -755,19 +755,19 @@ int main(int, char**) {
     if (app_icon) SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(app_icon));
     if (app_icon_small) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(app_icon_small));
     g_main_hwnd = hwnd;
-    if (!CreateDeviceD3D(hwnd)) {
+    const auto cleanup_main_window = [&] {
         CleanupDeviceD3D();
+        g_main_hwnd = nullptr;
         DestroyWindow(hwnd);
         UnregisterClassW(wc.lpszClassName, wc.hInstance);
         if (app_icon) DestroyIcon(app_icon);
         if (app_icon_small) DestroyIcon(app_icon_small);
-        g_main_hwnd = nullptr;
         CoUninitialize();
+    };
+    if (!CreateDeviceD3D(hwnd)) {
+        cleanup_main_window();
         return 1;
     }
-
-    ShowWindow(hwnd, SW_SHOWDEFAULT);
-    UpdateWindow(hwnd);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -793,20 +793,35 @@ int main(int, char**) {
         "C:/Windows/Fonts/msjh.ttc",
         "C:/Windows/Fonts/segoeui.ttf"
     };
+    const float font_size = k_default_font_size * scale;
     bool font_loaded = false;
     for (const char* font : font_candidates) {
         if (std::filesystem::exists(font)) {
-            io.Fonts->AddFontFromFileTTF(font, k_default_font_size * scale, nullptr,
+            io.Fonts->AddFontFromFileTTF(font, font_size, nullptr,
                                          application_font_glyph_ranges(*io.Fonts));
             font_loaded = true;
             break;
         }
     }
-    if (!font_loaded) io.Fonts->AddFontDefault();
-    merge_required_symbol_glyphs(*io.Fonts, k_default_font_size * scale);
+    if (!font_loaded) {
+        ImFontConfig config;
+        config.SizePixels = font_size;
+        io.Fonts->AddFontDefault(&config);
+    }
+    merge_required_symbol_glyphs(*io.Fonts, font_size);
+    if (!merge_korean_font(*io.Fonts, font_size)) {
+        MessageBoxW(hwnd, L"Unable to load the Windows Malgun Gothic font (malgun.ttf).",
+                    L"komapedit", MB_OK | MB_ICONERROR);
+        ImPlot::DestroyContext();
+        ImGui::DestroyContext();
+        cleanup_main_window();
+        return 1;
+    }
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
+    ShowWindow(hwnd, SW_SHOWDEFAULT);
+    UpdateWindow(hwnd);
 
     {
         App app(g_pd3dDevice, std::move(settings), scale, viewports_enabled, has_saved_layout);
@@ -895,12 +910,6 @@ int main(int, char**) {
     ImPlot::DestroyContext();
     ImGui::DestroyContext();
 
-    CleanupDeviceD3D();
-    g_main_hwnd = nullptr;
-    DestroyWindow(hwnd);
-    UnregisterClassW(wc.lpszClassName, wc.hInstance);
-    if (app_icon) DestroyIcon(app_icon);
-    if (app_icon_small) DestroyIcon(app_icon_small);
-    CoUninitialize();
+    cleanup_main_window();
     return 0;
 }

@@ -995,6 +995,7 @@ void App::render_menu() {
         }
         if (ImGui::MenuItem("English", nullptr, lang_ == Language::En)) set_language(Language::En);
         if (ImGui::MenuItem("日本語", nullptr, lang_ == Language::Ja)) set_language(Language::Ja);
+        if (ImGui::MenuItem("한국어", nullptr, lang_ == Language::Ko)) set_language(Language::Ko);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("menu.help").c_str())) {

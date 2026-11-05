@@ -113,6 +113,9 @@ if(KOMAPEDIT_DEBUG_BUILD AND BUILD_TESTING)
         src/main_window/tests/multilanguage_tests.cpp
     )
     target_compile_features(multilanguage_tests PRIVATE cxx_std_17)
+    if(MSVC)
+        target_compile_options(multilanguage_tests PRIVATE /utf-8)
+    endif()
     target_include_directories(multilanguage_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
@@ -368,6 +371,7 @@ target_compile_definitions(komapedit PRIVATE
     WIN32_LEAN_AND_MEAN
 )
 if(MSVC)
+    target_compile_options(komapedit PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
     target_link_options(komapedit PRIVATE /ENTRY:mainCRTStartup)
 endif()
 target_link_libraries(komapedit PRIVATE

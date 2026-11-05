@@ -114,7 +114,7 @@ Signal markers in the Plan are controlled by the `Show` checkbox in each `Ground
 
 #### Language and Help
 
-- `Language`: Under `中文`, select `简体` for Simplified Chinese, `台湾繁體` for Traditional Chinese (Taiwan), or `香港繁體` for Traditional Chinese (Hong Kong). `English` and `日本語` remain beside the `中文` submenu. A checkmark identifies the active language; the selection is saved for the next launch.
+- In `Language`, choose `English`, `日本語`, or `한국어` directly. The `中文` submenu offers `简体` for Simplified Chinese, `台湾繁體` for Traditional Chinese (Taiwan), and `香港繁體` for Traditional Chinese (Hong Kong). A checkmark identifies the active language. The selection is saved for the next launch.
 - `Help`: Opens the online documentation, issue-reporting page, or About window.
 
 ### 3. Toolbar

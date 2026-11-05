@@ -3038,6 +3038,7 @@ void wake_main_window();
 unsigned char ascii_lower(unsigned char ch) noexcept;
 const ImWchar* application_font_glyph_ranges(ImFontAtlas& fonts);
 void merge_required_symbol_glyphs(ImFontAtlas& fonts, float font_size);
+bool merge_korean_font(ImFontAtlas& fonts, float font_size);
 LogSeverity classify_log_severity(std::string_view text) noexcept;
 ImVec4 main_bar_background_color();
 ImVec4 darkened_theme_color(ImVec4 color) noexcept;

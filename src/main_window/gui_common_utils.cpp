@@ -94,6 +94,20 @@ void merge_required_symbol_glyphs(ImFontAtlas& fonts, float font_size) {
     fonts.AddFontFromFileTTF(symbol_font, font_size, &config, symbol_ranges);
 }
 
+bool merge_korean_font(ImFontAtlas& fonts, float font_size) {
+    wchar_t windows_directory[MAX_PATH];
+    const UINT length = GetSystemWindowsDirectoryW(windows_directory, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return false;
+
+    const auto font_path =
+        (std::filesystem::path(windows_directory) / L"Fonts" / L"malgun.ttf").u8string();
+    ImFontConfig config;
+    config.Flags |= ImFontFlags_NoLoadError;
+    config.MergeMode = true;
+    config.PixelSnapH = true;
+    return fonts.AddFontFromFileTTF(font_path.c_str(), font_size, &config) != nullptr;
+}
+
 unsigned char ascii_lower(unsigned char ch) noexcept {
     return ch >= 'A' && ch <= 'Z' ? static_cast<unsigned char>(ch + ('a' - 'A')) : ch;
 }
