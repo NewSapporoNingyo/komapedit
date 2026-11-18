@@ -398,9 +398,9 @@ Use `Add Coordinate Offsets` or `Remove Coordinate Offsets` to switch between `S
 
 Open `Properties/Edit` and drag a supported object's gizmo to adjust its draft, then apply and save as described above.
 
-- `Structure.Put`, full-form `Signal.Put`, and `Repeater.Begin` use X/Y/Z axes to change coordinates.
+- For `Structure.Put`, full-form `Signal.Put`, and `Repeater.Begin`, right-click a translation arrow and select **Rotate**. Drag the X, Y, or Z ring to adjust `rx`, `ry`, or `rz`. Hold **Shift** to snap in 15° steps from the starting angle. Press **Esc** during a drag to restore the previous draft. Right-click a ring and select **Translate** to return to the arrows.
 - For `Sound3D[soundKey].Put(x, y)`, X/Y adjust the relative position in 0.001 m steps, and Z adjusts mileage in whole meters.
-- `Structure.Put0` and `Repeater.Begin0` use Z to adjust mileage in whole meters. Adding coordinate offsets enables the full coordinate gizmo.
+- `Structure.Put0` and `Repeater.Begin0` use Z to adjust mileage in whole meters. Add coordinate offsets in `Properties/Edit` to enable translation and rotation. For short-form `Signal.Put`, edit an extended field and confirm the full-form conversion to enable rotation.
 - A Repeater with an explicit End provides a Z axis at its end position to adjust the end mileage in whole meters.
 - `Structure.PutBetween` uses a Z axis to change whole-meter mileage and recalculates the deformed model live.
 

@@ -146,6 +146,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Display both endpoint radii and cants in the 3D route overlay while the camera is inside an official `Curve.Interpolate` interval, with curve-direction arrows for nonzero endpoints and a triangular separator; omitted Interpolate arguments retain their evaluated inherited values, while two evaluated zero-radius endpoints use the localized `Straight` label.
 - [x] Show a board styled like the other curve-radius boards at every `Curve.Interpolate` point in the 3D scene, with the evaluated radius, cant, and curve direction, or `Intpl. 0` when the evaluated radius is zero; the boards support picking and the shared blue highlight. Their later source-backed edit/delete support is archived under track geometry above.
 - [x] Edit `Structure.Put`, `Signal.Put`, and `Repeater.Begin` positions along X/Y/Z with live 3D gizmos and configurable gizmo size; Inspector buttons convert `Put`/`Put0` and `Begin`/`Begin0` in either direction, while Put0/Begin0 expose a Z-only whole-metre placement/begin-distance gizmo.
+- [x] Add three-axis rotation gizmos for `Structure.Put`, `Repeater.Begin`, and full-form `Signal.Put` (S1). Right-click the placement gizmo to switch modes. Drag continuously, hold Shift for 15° snapping, or press Esc to restore the starting draft. Apply and Save use the existing source edit flow.
 - [x] Place each `Sound3D.Put` label tip at its fixed X/Y source relative to the own track, and edit X/Y in 0.001 m steps or `distance` in whole metres through the live X/Y/Z gizmo without changing `Put(x, y)` syntax or adding audio playback.
 - [x] Preview all `Structure.PutBetween` Inspector fields with exact live vertex deformation and edit `distance` through a Z-only, whole-metre 3D gizmo.
 - [x] Edit an explicit Repeater EndDistance through a Z-only whole-metre gizmo on its track centerline, with live instance-count updates and own-track-distance scaling on other tracks.
@@ -347,6 +348,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 当相机位于官方 `Curve.Interpolate` 区间内时，在 3D 线路信息叠加层同时显示两个端点的曲线半径与超高，以非零端点方向箭头和三角箭头分隔；省略参数的 Interpolate 保持其求值后的继承值，两端求值半径均为零时使用本地化“直线”标签
 - [x] 在 3D 场景中为每个 `Curve.Interpolate` 插值点显示与其他曲线半径标牌同款的标牌，内容为求值后的半径、超高和曲线方向，求值半径为零时显示 `Intpl. 0`；标牌支持拾取和共享的蓝色高亮。其后续基于源码的编辑/删除功能归档于上方“轨道几何”条目。
 - [x] 通过尺寸可调的实时 3D 操纵器编辑 `Structure.Put`、`Signal.Put` 和 `Repeater.Begin` 的 X/Y/Z 位置；检查器按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，Put0/Begin0 提供仅 Z 轴、整米步进的放置/起始里程操纵器
+- [x] 为 `Structure.Put`、`Repeater.Begin` 和完整式 `Signal.Put` 增加三轴旋转操纵器（S1）。右击放置操纵器可切换模式。支持连续拖动、Shift 15° 吸附和 Esc 恢复起始草稿，沿用现有源码应用与保存流程。
 - [x] 在 3D 场景中将 `Sound3D.Put` 的标签尖端定位到相对自轨道的固定 X/Y 音源；通过实时 X/Y/Z 操纵器编辑 X/Y（0.001 m）或 distance（Z 轴整米），不改变 `Put(x, y)` 语法或音频播放行为
 - [x] 为 `Structure.PutBetween` 的全部检查器字段提供精确的实时顶点变形预览，并通过仅 Z 轴、整米步进的 3D 操纵器编辑 `distance`
 - [x] 通过位于对应轨道中心线上的仅 Z 轴整米操纵器编辑显式 Repeater EndDistance，实时更新实例数量，并在他轨道上按自轨道 distance 比例换算拖动

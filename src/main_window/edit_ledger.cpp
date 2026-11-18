@@ -1817,6 +1817,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
     }
 
     const bool inspector_target_deleted = inspector_.open && row_is_pending_delete(inspector_.edit_id);
+    if (inspector_.scene_rotation_draft) clear_scene_placement_edit_target();
     std::optional<MapElementInspectorRequest> inspector_request;
     if (refresh_inspector && inspector_.open && !inspector_target_deleted) {
         inspector_request = make_inspector_reload_request(inspector_);

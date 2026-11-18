@@ -286,6 +286,7 @@ struct Canvas3D::Impl {
     void debug_record_scene_world(const std::string& path, int object, double distance, const double* world);
     bool debug_check_repeater_cache();
     bool debug_check_scene_fps_counter(std::string& error);
+    bool debug_check_scene_rotation_gizmo();
     Canvas3DSceneRenderContractResult debug_check_scene_render();
 
     Canvas3DSceneLoaderContractResult debug_run_scene_loader_contract(
@@ -671,7 +672,8 @@ struct Canvas3D::Impl {
                                     double rz,
                                     double tilt,
                                     double span,
-                                    canvas3d_detail::StructurePlacementFrame& frame) const;
+                                    canvas3d_detail::StructurePlacementFrame& frame,
+                                    std::array<canvas3d_detail::DVec3, 3>* rotation_axes = nullptr) const;
 
     bool make_track_world(const std::string& track_key,
                           double distance,
@@ -749,6 +751,8 @@ struct Canvas3D::Impl {
 
     static float point_segment_distance_sq(ImVec2 point, ImVec2 a, ImVec2 b);
 
+    canvas3d_detail::Mat4 scene_gizmo_view_projection(int width, int height) const;
+
     bool update_scene_gizmo_projection(canvas3d_detail::SceneGizmoHandle& gizmo,
                                        bool visible,
                                        int width,
@@ -762,6 +766,20 @@ struct Canvas3D::Impl {
         bool canvas_hovered, int width, int height, ImVec2 mouse_local);
 
     bool scene_structure_gizmo_consumes_left_input() const;
+
+    bool scene_placement_rotation_available() const;
+    bool update_scene_rotation_projection(int width, int height);
+    std::optional<canvas3d_detail::DVec3> scene_rotation_radial(
+        ImVec2 mouse_local, int width, int height) const;
+    std::optional<Canvas3DPlacementDragUpdate> begin_scene_rotation_drag(
+        ImVec2 mouse_local, int width, int height, ImVec2 screen_tangent);
+    std::optional<Canvas3DPlacementDragUpdate> update_scene_rotation_drag(
+        ImVec2 mouse_local, int width, int height);
+    bool write_scene_rotation_angle(double angle);
+    bool write_scene_placement_gizmo_preview();
+    Canvas3DPlacementDragUpdate scene_rotation_drag_result(Canvas3DSceneDragPhase phase) const;
+    Canvas3DPlacementDragUpdate cancel_scene_rotation_drag();
+    void draw_scene_rotation_gizmo(ImDrawList* draw, ImVec2 canvas_origin) const;
 
     void draw_scene_gizmo_handle(ImDrawList* draw,
                                  ImVec2 canvas_origin,

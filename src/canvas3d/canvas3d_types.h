@@ -346,10 +346,40 @@ struct SceneGizmoHandle {
     std::array<SceneGizmoAxisProjection, 3> projection{};
 };
 
+struct SceneRotationRing {
+    struct Segment {
+        ImVec2 begin;
+        ImVec2 end;
+    };
+
+    std::array<Segment, 64> segments{};
+    size_t segment_count = 0;
+    bool edge_on = false;
+    float radius_px = 0.0f;
+};
+
+struct SceneRotationGizmo {
+    DVec3 origin;
+    std::array<DVec3, 3> axes{};
+    std::array<SceneRotationRing, 3> rings{};
+};
+
+struct SceneRotationDrag {
+    DVec3 previous_radial;
+    double radians = 0.0;
+    ImVec2 screen_tangent;
+    double screen_radius_px = 0.0;
+    bool radial_valid = false;
+
+    void sample_radial(DVec3 normal, std::optional<DVec3> radial);
+    double angle_degrees(double start_degrees, bool snap) const;
+};
+
 enum class SceneGizmoTarget {
     None,
     Placement,
     RepeaterEndDistance,
+    Rotation,
 };
 
 struct SceneStructureEditState {
@@ -365,6 +395,11 @@ struct SceneStructureEditState {
     std::uint64_t preview_sequence = 0;
     SceneGizmoHandle placement_gizmo;
     SceneGizmoHandle repeater_end_gizmo;
+    SceneRotationGizmo rotation_gizmo;
+    SceneRotationDrag rotation_drag;
+    bool rotation_mode = false;
+    bool gizmo_popup_open = false;
+    bool rotation_waiting_for_release = false;
     SceneGizmoTarget hovered_gizmo = SceneGizmoTarget::None;
     SceneGizmoTarget dragging_gizmo = SceneGizmoTarget::None;
     Canvas3DSceneDragAxis hovered_axis = Canvas3DSceneDragAxis::None;

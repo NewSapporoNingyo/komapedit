@@ -398,9 +398,9 @@ FPS 显示场景画布的刷新频率，空闲时保留上次统计值。
 
 打开“属性/编辑”后，可拖动受支持对象的操纵器调整草稿，再按上述流程应用、保存。
 
-- `Structure.Put`、完整式 `Signal.Put` 和 `Repeater.Begin` 可使用 X/Y/Z 轴调整坐标。
+- 对于 `Structure.Put`、完整式 `Signal.Put` 和 `Repeater.Begin`，右键单击平移箭头并选择「旋转」。拖动 X、Y 或 Z 环可调整 `rx`、`ry` 或 `rz`。按住 **Shift** 时相对起始角每 15° 吸附。拖动中按 **Esc** 恢复手势开始前的草稿。右键单击旋转环并选择「平移」可切回箭头。
 - `Sound3D[soundKey].Put(x, y)` 的 X/Y 轴以 0.001 m 调整相对位置，Z 轴以整米调整里程。
-- `Structure.Put0` 和 `Repeater.Begin0` 使用 Z 轴调整整米里程；添加坐标偏移后可使用完整坐标操纵器。
+- `Structure.Put0` 和 `Repeater.Begin0` 使用 Z 轴调整整米里程。在「属性/编辑」中添加坐标偏移即可使用平移和旋转。短式 `Signal.Put` 可通过编辑扩展字段并确认转换启用旋转。
 - 带显式 End 的 Repeater 可在结束位置通过 Z 轴调整整米结束里程。
 - `Structure.PutBetween` 使用 Z 轴调整整米里程，并实时重新计算变形后的模型。
 

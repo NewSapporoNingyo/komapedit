@@ -86,6 +86,7 @@ void App::start_scene_preview() {
 }
 
 void App::stop_scene_preview() {
+    restore_scene_rotation_draft();
     scene_preview_started_ = false;
     scene_preview_dirty_ = true;
     scene_preview_preserve_models_on_rebuild_ = false;
@@ -103,6 +104,7 @@ double App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_cam
         pending_scene_preview_started_at_.reset();
         return 0.0;
     }
+    restore_scene_rotation_draft();
     if (!has_model_ || model_.own.empty()) {
         scene_preview_canvas_->clear_scene();
         scene_preview_dirty_ = true;
@@ -310,6 +312,7 @@ void App::render_scene_preview_window() {
     drain_scene_preview_logs();
     finish_pending_scene_preview_load_timing();
     if (!show_scene_preview_window_) {
+        if (inspector_.scene_rotation_draft) clear_scene_placement_edit_target();
         edit_timing_wait_scene_frame_ = false;
         return;
     }
@@ -370,6 +373,8 @@ void App::render_scene_preview_window() {
         Canvas3DSceneUiText scene_ui_text;
         scene_ui_text.mileage = tr("info.mileage").c_str();
         scene_ui_text.unit_m = tr("unit.m").c_str();
+        scene_ui_text.gizmo_translate = tr("menu.scene_gizmo_translate").c_str();
+        scene_ui_text.gizmo_rotate = tr("menu.scene_gizmo_rotate").c_str();
         scene_ui_text.add_map_element_at_mileage =
             tr("menu.add_map_element_at_current_mileage").c_str();
         scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect").c_str();
@@ -478,6 +483,7 @@ void App::render_scene_preview_window() {
         drain_scene_preview_logs();
     } else {
         // No scene frame can render while collapsed; do not time the user's wait.
+        if (inspector_.scene_rotation_draft) clear_scene_placement_edit_target();
         edit_timing_wait_scene_frame_ = false;
     }
     focus_scene_preview_next_ = false;

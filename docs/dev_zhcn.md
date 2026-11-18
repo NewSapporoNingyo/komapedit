@@ -477,6 +477,8 @@ ctest --test-dir build --output-on-failure
 
 操纵器按编辑目标生成 `Canvas3DPlacementDragUpdate`：普通放置坐标截断到毫米；Sound3D 的 X/Y 更新音源偏移，Z 以整米更新里程；显式 Repeater End 的 Z 更新段尾。`Structure.PutBetween` 使用沿自轨前向的 Z 轴，将里程吸附到整米；worker 合并最新目标、按模型纵向 slice 复用轨道采样，再将结果发布到可复用动态顶点缓冲。
 
+旋转操纵器由 `make_track_placement_frame()` 提供中心和按 X → Z → Y 顺序组合的欧拉参数轴。拖动累积所选环平面内的有符号角差，侧视时使用屏幕切线位移。局部预览将编辑 ID、轴、角度和手势阶段交给 `apply_scene_placement_drag_update()`。检查器保存手势开始时的字段文本供取消恢复。Apply 在内存中重解析类型化编辑批次，Save 提交验证后的工作副本。3D 场景 headless 契约覆盖参数轴变换、连续转圈、15° 吸附以及预览和草稿恢复。
+
 #### 帧率与阶段计时
 
 画面 FPS 表示场景渲染调用速率。`canvas3d_scene_ui.cpp` 累计不超过 `0.1` 秒的正间隔，活动时间达到 `0.2` 秒后发布 `interval_count / active_seconds`。长间隔丢弃未完成窗口并保留上次读数；reset 清空锚点、累计值和读数。主循环的 Present 与渲染唤醒由 `win32_dx11_bootstrap.cpp` 负责。

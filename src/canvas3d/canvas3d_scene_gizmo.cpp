@@ -55,6 +55,40 @@ constexpr float k_scene_gizmo_origin_gap_px = 9.0f;
 namespace canvas3d_detail {
 
 constexpr float k_scene_gizmo_length_px = 72.0f;
+constexpr std::array<ImU32, 3> k_scene_gizmo_colors = {
+    IM_COL32(235, 67, 67, 255),
+    IM_COL32(73, 205, 91, 255),
+    IM_COL32(65, 126, 245, 255)
+};
+constexpr std::array<ImU32, 3> k_scene_gizmo_active_colors = {
+    IM_COL32(255, 142, 142, 255),
+    IM_COL32(153, 255, 164, 255),
+    IM_COL32(151, 190, 255, 255)
+};
+
+constexpr double k_scene_rotation_pi = 3.14159265358979323846;
+constexpr std::array<double Canvas3DPlacementEditTarget::*, 3> k_scene_rotation_fields = {
+    &Canvas3DPlacementEditTarget::rx, &Canvas3DPlacementEditTarget::ry, &Canvas3DPlacementEditTarget::rz
+};
+
+void SceneRotationDrag::sample_radial(DVec3 normal, std::optional<DVec3> radial) {
+    if (radial) {
+        if (radial_valid) {
+            radians += std::atan2(dot(normal, cross(previous_radial, *radial)),
+                                  dot(previous_radial, *radial));
+        }
+        previous_radial = *radial;
+    }
+    radial_valid = radial.has_value();
+}
+
+double SceneRotationDrag::angle_degrees(double start_degrees, bool snap) const {
+    constexpr double snap_step_degrees = 15.0;
+    const double delta = radians * (180.0 / k_scene_rotation_pi);
+    const double candidate = start_degrees +
+        (snap ? std::round(delta / snap_step_degrees) * snap_step_degrees : delta);
+    return candidate == start_degrees ? start_degrees : truncate_gui_thousandths(candidate);
+}
 
 } // namespace canvas3d_detail
 
@@ -244,6 +278,15 @@ float Canvas3D::Impl::point_segment_distance_sq(ImVec2 point, ImVec2 a, ImVec2 b
     return dx * dx + dy * dy;
 }
 
+Mat4 Canvas3D::Impl::scene_gizmo_view_projection(int width, int height) const {
+    const Mat4 view = look_to_bve({0.0f, 0.0f, 0.0f}, scene_forward(), {0.0f, 1.0f, 0.0f});
+    const float aspect = static_cast<float>(width) / static_cast<float>(height);
+    const Mat4 projection = perspective_fov_lh_reverse_z(
+        k_scene_camera_fov_y, aspect, k_scene_near_z,
+        scene_far_z(effective_scene_window_forward_m()));
+    return multiply(view, projection);
+}
+
 bool Canvas3D::Impl::update_scene_gizmo_projection(SceneGizmoHandle& gizmo,
                                    bool visible,
                                    int width,
@@ -260,14 +303,7 @@ bool Canvas3D::Impl::update_scene_gizmo_projection(SceneGizmoHandle& gizmo,
     const double depth = dot(relative_origin, camera_forward);
     if (!std::isfinite(depth) || depth <= static_cast<double>(k_scene_near_z)) return false;
 
-    Vec3 forward = scene_forward();
-    Mat4 view = look_to_bve({0.0f, 0.0f, 0.0f}, forward, {0.0f, 1.0f, 0.0f});
-    const float aspect = static_cast<float>(width) /
-        std::max(1.0f, static_cast<float>(height));
-    Mat4 proj = perspective_fov_lh_reverse_z(k_scene_camera_fov_y, aspect,
-                                             k_scene_near_z,
-                                             scene_far_z(effective_scene_window_forward_m()));
-    Mat4 view_proj = multiply(view, proj);
+    const Mat4 view_proj = scene_gizmo_view_projection(width, height);
     ImVec2 origin_screen;
     if (!project_scene_point(relative_origin, view_proj, width, height, origin_screen) ||
         origin_screen.x < 0.0f || origin_screen.y < 0.0f ||
@@ -331,20 +367,90 @@ bool Canvas3D::Impl::update_scene_gizmo_projection(SceneGizmoHandle& gizmo,
     return any;
 }
 
+bool Canvas3D::Impl::scene_placement_rotation_available() const {
+    return scene_structure_edit.active && scene_structure_edit.show_gizmo &&
+        scene_structure_edit.current.placement_rotation_gizmo;
+}
+
+bool Canvas3D::Impl::update_scene_rotation_projection(int width, int height) {
+    SceneRotationGizmo& gizmo = scene_structure_edit.rotation_gizmo;
+    for (SceneRotationRing& ring : gizmo.rings) ring.segment_count = 0;
+    if (width <= 0 || height <= 0) return false;
+
+    const DVec3 relative_origin = gizmo.origin - scene_camera_pos;
+    const DVec3 camera_forward = dvec3_from_vec3(scene_forward());
+    const double depth = dot(relative_origin, camera_forward);
+    if (depth <= k_scene_near_z) return false;
+
+    const Mat4 view_proj = scene_gizmo_view_projection(width, height);
+    ImVec2 center;
+    if (!project_scene_point(relative_origin, view_proj, width, height, center) ||
+        center.x < 0.0f || center.y < 0.0f ||
+        center.x > static_cast<float>(width) || center.y > static_cast<float>(height)) {
+        return false;
+    }
+
+    const double units_per_pixel = 2.0 * depth * std::tan(k_scene_camera_fov_y * 0.5) / height;
+    const DVec3 view_direction = normalize(relative_origin);
+    constexpr std::array<float, 3> radii_px = {{54.0f, 72.0f, 90.0f}};
+    constexpr size_t sample_count = std::tuple_size<decltype(SceneRotationRing::segments)>::value;
+    static const auto circle = [] {
+        std::array<std::array<double, 2>, sample_count> samples{};
+        for (size_t i = 0; i < samples.size(); ++i) {
+            const double angle = 2.0 * k_scene_rotation_pi * static_cast<double>(i) / sample_count;
+            samples[i] = {std::cos(angle), std::sin(angle)};
+        }
+        return samples;
+    }();
+
+    bool any = false;
+    for (size_t axis = 0; axis < gizmo.rings.size(); ++axis) {
+        SceneRotationRing& ring = gizmo.rings[axis];
+        const DVec3 normal = gizmo.axes[axis];
+        const DVec3 reference = std::abs(normal.y) < 0.9 ? DVec3{0.0, 1.0, 0.0}
+                                                        : DVec3{1.0, 0.0, 0.0};
+        const DVec3 u = normalize(cross(reference, normal));
+        const DVec3 v = cross(normal, u);
+        ring.radius_px = radii_px[axis] * scene_edit_component_scale;
+        ring.edge_on = std::abs(dot(normal, view_direction)) < 0.15;
+        const double radius = units_per_pixel * ring.radius_px;
+        std::array<ImVec2, sample_count> points{};
+        std::array<double, sample_count> depths{};
+        std::array<bool, sample_count> projected{};
+        for (size_t i = 0; i < points.size(); ++i) {
+            const DVec3 point = relative_origin + (u * circle[i][0] + v * circle[i][1]) * radius;
+            depths[i] = dot(point, camera_forward);
+            projected[i] = depths[i] > k_scene_near_z &&
+                project_scene_point(point, view_proj, width, height, points[i]);
+        }
+        for (size_t i = 0; i < points.size(); ++i) {
+            const size_t next = (i + 1) % points.size();
+            if (!projected[i] || !projected[next]) continue;
+            if (ring.edge_on && depths[i] + depths[next] > 2.0 * depth) continue;
+            ring.segments[ring.segment_count++] = {points[i], points[next]};
+        }
+        any = any || ring.segment_count != 0;
+    }
+    return any;
+}
+
 bool Canvas3D::Impl::update_scene_structure_gizmo_projections(int width, int height) {
     const bool placement_visible =
         scene_structure_edit.active && scene_structure_edit.show_gizmo;
+    const bool rotation_visible = scene_structure_edit.rotation_mode &&
+        scene_placement_rotation_available();
     const bool repeater_end_visible =
         scene_structure_edit.active &&
         scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater &&
         scene_structure_edit.current.has_repeater_end_distance;
     const bool placement = update_scene_gizmo_projection(
         scene_structure_edit.placement_gizmo,
-        placement_visible, width, height);
+        placement_visible && !rotation_visible, width, height);
     const bool repeater_end = update_scene_gizmo_projection(
         scene_structure_edit.repeater_end_gizmo,
         repeater_end_visible, width, height);
-    return placement || repeater_end;
+    const bool rotation = rotation_visible && update_scene_rotation_projection(width, height);
+    return placement || repeater_end || rotation;
 }
 
 SceneGizmoHandle* Canvas3D::Impl::scene_gizmo_handle(SceneGizmoTarget target) {
@@ -357,8 +463,133 @@ SceneGizmoHandle* Canvas3D::Impl::scene_gizmo_handle(SceneGizmoTarget target) {
     return nullptr;
 }
 
+std::optional<DVec3> Canvas3D::Impl::scene_rotation_radial(ImVec2 mouse_local,
+                                                        int width, int height) const {
+    DVec3 ray_origin;
+    DVec3 ray_direction;
+    if (!scene_camera_ray(mouse_local, width, height, ray_origin, ray_direction)) return std::nullopt;
+    const DVec3 normal = scene_structure_edit.drag_axis_direction;
+    const DVec3 center_from_eye = scene_structure_edit.drag_axis_origin - ray_origin;
+    const double denominator = dot(normal, ray_direction);
+    if (std::abs(denominator) < 1e-5) return std::nullopt;
+    const double distance = dot(normal, center_from_eye) / denominator;
+    if (distance <= k_scene_near_z) return std::nullopt;
+    const DVec3 radial = ray_direction * distance - center_from_eye;
+    const double center_dead_zone_sq = dot(center_from_eye, center_from_eye) * 1e-6;
+    if (dot(radial, radial) <= center_dead_zone_sq) return std::nullopt;
+    return normalize(radial);
+}
+
+std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::begin_scene_rotation_drag(
+    ImVec2 mouse_local, int width, int height, ImVec2 screen_tangent) {
+    SceneStructureEditState& edit = scene_structure_edit;
+    const size_t index = static_cast<size_t>(structure_drag_axis_index(edit.hovered_axis));
+    const SceneRotationRing& ring = edit.rotation_gizmo.rings[index];
+    edit.drag_axis_origin = edit.rotation_gizmo.origin;
+    edit.drag_axis_direction = edit.rotation_gizmo.axes[index];
+    edit.drag_start_mouse = mouse_local;
+    edit.drag_start_value = edit.current.*k_scene_rotation_fields[index];
+    edit.rotation_drag = {};
+    if (ring.edge_on) {
+        const float length = std::hypot(screen_tangent.x, screen_tangent.y);
+        edit.rotation_drag.screen_tangent = {screen_tangent.x / length, screen_tangent.y / length};
+        edit.rotation_drag.screen_radius_px = ring.radius_px;
+    } else {
+        edit.rotation_drag.sample_radial(edit.drag_axis_direction,
+                                         scene_rotation_radial(mouse_local, width, height));
+        if (!edit.rotation_drag.radial_valid) return std::nullopt;
+    }
+    edit.dragging_gizmo = SceneGizmoTarget::Rotation;
+    edit.dragging_axis = edit.hovered_axis;
+    return scene_rotation_drag_result(Canvas3DSceneDragPhase::Begin);
+}
+
+bool Canvas3D::Impl::write_scene_placement_gizmo_preview() {
+    const SceneStructureEditState& edit = scene_structure_edit;
+    if (edit.kind == Canvas3DSceneEditKind::Repeater) {
+        return write_scene_repeater_segment(edit.edit_id,
+            repeater_segment_from_target(edit.current, edit.baseline_repeater));
+    }
+    return write_scene_placement_instance(edit.edit_id,
+        placement_instance_from_target(edit.current, edit.baseline_instance));
+}
+
+bool Canvas3D::Impl::write_scene_rotation_angle(double angle) {
+    SceneStructureEditState& edit = scene_structure_edit;
+    const size_t index = static_cast<size_t>(structure_drag_axis_index(edit.dragging_axis));
+    double& current = edit.current.*k_scene_rotation_fields[index];
+    if (current == angle) return false;
+    const double previous = current;
+    current = angle;
+    if (write_scene_placement_gizmo_preview()) return true;
+    current = previous;
+    return false;
+}
+
+Canvas3DPlacementDragUpdate Canvas3D::Impl::scene_rotation_drag_result(
+    Canvas3DSceneDragPhase phase) const {
+    const SceneStructureEditState& edit = scene_structure_edit;
+    const size_t index = static_cast<size_t>(structure_drag_axis_index(edit.dragging_axis));
+    Canvas3DPlacementDragUpdate result;
+    result.kind = edit.kind;
+    result.edit_id = edit.edit_id;
+    result.target = Canvas3DSceneDragTarget::PlacementRotation;
+    result.axis = edit.dragging_axis;
+    result.angle_degrees = edit.current.*k_scene_rotation_fields[index];
+    result.phase = phase;
+    return result;
+}
+
+Canvas3DPlacementDragUpdate Canvas3D::Impl::cancel_scene_rotation_drag() {
+    SceneStructureEditState& edit = scene_structure_edit;
+    if (scene_placement_rotation_available()) write_scene_rotation_angle(edit.drag_start_value);
+    auto result = scene_rotation_drag_result(Canvas3DSceneDragPhase::Cancel);
+    cancel_scene_gizmo_interaction(SceneGizmoTarget::Rotation);
+    edit.rotation_waiting_for_release = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    return result;
+}
+
+std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::update_scene_rotation_drag(
+    ImVec2 mouse_local, int width, int height) {
+    SceneStructureEditState& edit = scene_structure_edit;
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool released = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    if (!scene_placement_rotation_available() || io.AppFocusLost ||
+        !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+        (!released && !ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
+        return cancel_scene_rotation_drag();
+    }
+
+    SceneRotationDrag& drag = edit.rotation_drag;
+    if (drag.screen_radius_px == 0.0) {
+        drag.sample_radial(edit.drag_axis_direction, ImGui::IsMousePosValid()
+            ? scene_rotation_radial(mouse_local, width, height) : std::nullopt);
+    } else if (ImGui::IsMousePosValid()) {
+        const double dx = static_cast<double>(mouse_local.x) - edit.drag_start_mouse.x;
+        const double dy = static_cast<double>(mouse_local.y) - edit.drag_start_mouse.y;
+        drag.radians = (dx * drag.screen_tangent.x + dy * drag.screen_tangent.y) / drag.screen_radius_px;
+    }
+    const bool changed = write_scene_rotation_angle(drag.angle_degrees(edit.drag_start_value, io.KeyShift));
+    if (released) {
+        auto result = scene_rotation_drag_result(Canvas3DSceneDragPhase::Finish);
+        cancel_scene_gizmo_interaction(SceneGizmoTarget::Rotation);
+        return result;
+    }
+    if (changed) return scene_rotation_drag_result(Canvas3DSceneDragPhase::Update);
+    return std::nullopt;
+}
+
 std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structure_gizmo_input(
     bool canvas_hovered, int width, int height, ImVec2 mouse_local) {
+    if (scene_structure_edit.dragging_gizmo == SceneGizmoTarget::Rotation) {
+        return update_scene_rotation_drag(mouse_local, width, height);
+    }
+    if (scene_structure_edit.rotation_waiting_for_release) {
+        scene_structure_edit.rotation_waiting_for_release = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        if (scene_structure_edit.rotation_waiting_for_release) return std::nullopt;
+    }
+    if (!scene_placement_rotation_available()) scene_structure_edit.rotation_mode = false;
     if (!update_scene_structure_gizmo_projections(width, height)) {
         scene_structure_edit.hovered_gizmo = SceneGizmoTarget::None;
         scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
@@ -372,6 +603,7 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structur
     if (scene_structure_edit.dragging_gizmo == SceneGizmoTarget::None) {
         scene_structure_edit.hovered_gizmo = SceneGizmoTarget::None;
         scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
+        ImVec2 rotation_tangent;
         if (canvas_hovered) {
             const float hit_radius = k_scene_gizmo_hit_radius_px * scene_edit_component_scale;
             float best_distance_sq = hit_radius * hit_radius;
@@ -392,6 +624,26 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structur
             };
             consider(SceneGizmoTarget::Placement,
                      scene_structure_edit.placement_gizmo);
+            if (scene_structure_edit.rotation_mode) {
+                const auto& rings = scene_structure_edit.rotation_gizmo.rings;
+                for (size_t i = 0; i < rings.size(); ++i) {
+                    const SceneRotationRing& ring = rings[i];
+                    for (size_t j = 0; j < ring.segment_count; ++j) {
+                        const auto& segment = ring.segments[j];
+                        const float dx = segment.end.x - segment.begin.x;
+                        const float dy = segment.end.y - segment.begin.y;
+                        if (dx * dx + dy * dy < 0.25f) continue;
+                        const float distance_sq = point_segment_distance_sq(
+                            mouse_local, segment.begin, segment.end);
+                        if (distance_sq < best_distance_sq) {
+                            best_distance_sq = distance_sq;
+                            scene_structure_edit.hovered_gizmo = SceneGizmoTarget::Rotation;
+                            scene_structure_edit.hovered_axis = structure_drag_axis_from_index(i);
+                            rotation_tangent = {dx, dy};
+                        }
+                    }
+                }
+            }
             // Check the EndDistance handle last so an exact overlap selects
             // the endpoint and a zero-length Repeater can still be extended.
             consider(SceneGizmoTarget::RepeaterEndDistance,
@@ -401,6 +653,9 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structur
         if (scene_structure_edit.hovered_gizmo != SceneGizmoTarget::None &&
             scene_structure_edit.hovered_axis != Canvas3DSceneDragAxis::None &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (scene_structure_edit.hovered_gizmo == SceneGizmoTarget::Rotation) {
+                return begin_scene_rotation_drag(mouse_local, width, height, rotation_tangent);
+            }
             const int axis_index = structure_drag_axis_index(scene_structure_edit.hovered_axis);
             SceneGizmoHandle* gizmo =
                 scene_gizmo_handle(scene_structure_edit.hovered_gizmo);
@@ -528,10 +783,6 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structur
             scene_structure_edit.current);
         wrote = sequence != 0;
         if (wrote) scene_structure_edit.preview_sequence = sequence;
-    } else if (scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater) {
-        Canvas3DRepeaterSegment desired = repeater_segment_from_target(
-            scene_structure_edit.current, scene_structure_edit.baseline_repeater);
-        wrote = write_scene_repeater_segment(scene_structure_edit.edit_id, std::move(desired));
     } else if (scene_structure_edit.kind == Canvas3DSceneEditKind::Sound3D) {
         SceneGizmoHandle gizmo;
         wrote = sound3d_gizmo_frame(scene_structure_edit.current, gizmo) &&
@@ -542,9 +793,7 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structur
                 scene_structure_edit.current.y);
         if (wrote) scene_structure_edit.placement_gizmo = gizmo;
     } else {
-        Canvas3DModelInstance desired = placement_instance_from_target(
-            scene_structure_edit.current, scene_structure_edit.baseline_instance);
-        wrote = write_scene_placement_instance(scene_structure_edit.edit_id, std::move(desired));
+        wrote = write_scene_placement_gizmo_preview();
     }
     if (!wrote) {
         *current_value = previous_value;
@@ -573,23 +822,14 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structur
 
 bool Canvas3D::Impl::scene_structure_gizmo_consumes_left_input() const {
     return scene_structure_edit.dragging_gizmo != SceneGizmoTarget::None ||
-        scene_structure_edit.hovered_gizmo != SceneGizmoTarget::None;
+        scene_structure_edit.hovered_gizmo != SceneGizmoTarget::None ||
+        scene_structure_edit.rotation_waiting_for_release;
 }
 
 void Canvas3D::Impl::draw_scene_gizmo_handle(ImDrawList* draw,
                              ImVec2 canvas_origin,
                              const SceneGizmoHandle& gizmo,
                              SceneGizmoTarget target) {
-    static constexpr std::array<ImU32, 3> colors = {
-        IM_COL32(235, 67, 67, 255),
-        IM_COL32(73, 205, 91, 255),
-        IM_COL32(65, 126, 245, 255)
-    };
-    static constexpr std::array<ImU32, 3> active_colors = {
-        IM_COL32(255, 142, 142, 255),
-        IM_COL32(153, 255, 164, 255),
-        IM_COL32(151, 190, 255, 255)
-    };
     const float gizmo_scale = scene_edit_component_scale;
     for (size_t i = 0; i < gizmo.projection.size(); ++i) {
         const SceneGizmoAxisProjection& projection = gizmo.projection[i];
@@ -600,7 +840,7 @@ void Canvas3D::Impl::draw_scene_gizmo_handle(ImDrawList* draw,
              scene_structure_edit.dragging_axis == axis) ||
             (scene_structure_edit.hovered_gizmo == target &&
              scene_structure_edit.hovered_axis == axis);
-        const ImU32 color = active ? active_colors[i] : colors[i];
+        const ImU32 color = active ? k_scene_gizmo_active_colors[i] : k_scene_gizmo_colors[i];
         ImVec2 begin(canvas_origin.x + projection.begin.x,
                      canvas_origin.y + projection.begin.y);
         ImVec2 end(canvas_origin.x + projection.end.x,
@@ -640,27 +880,39 @@ void Canvas3D::Impl::draw_scene_gizmo_handle(ImDrawList* draw,
     }
 }
 
+void Canvas3D::Impl::draw_scene_rotation_gizmo(ImDrawList* draw, ImVec2 canvas_origin) const {
+    const SceneStructureEditState& edit = scene_structure_edit;
+    for (size_t i = 0; i < edit.rotation_gizmo.rings.size(); ++i) {
+        const SceneRotationRing& ring = edit.rotation_gizmo.rings[i];
+        const Canvas3DSceneDragAxis axis = structure_drag_axis_from_index(i);
+        const bool active = (edit.dragging_gizmo == SceneGizmoTarget::Rotation &&
+                             edit.dragging_axis == axis) ||
+                            (edit.hovered_gizmo == SceneGizmoTarget::Rotation &&
+                             edit.hovered_axis == axis);
+        const ImU32 color = active ? k_scene_gizmo_active_colors[i] : k_scene_gizmo_colors[i];
+        const float thickness = (active ? 4.5f : 3.0f) * scene_edit_component_scale;
+        for (size_t j = 0; j < ring.segment_count; ++j) {
+            const auto& segment = ring.segments[j];
+            draw->AddLine({canvas_origin.x + segment.begin.x, canvas_origin.y + segment.begin.y},
+                          {canvas_origin.x + segment.end.x, canvas_origin.y + segment.end.y},
+                          color, thickness);
+        }
+    }
+}
+
 void Canvas3D::Impl::draw_scene_structure_gizmo(ImDrawList* draw, ImVec2 canvas_origin,
                                 int width, int height) {
-    if (!draw) return;
-    const bool placement = update_scene_gizmo_projection(
-        scene_structure_edit.placement_gizmo,
-        scene_structure_edit.active && scene_structure_edit.show_gizmo,
-        width, height);
-    const bool repeater_end = update_scene_gizmo_projection(
-        scene_structure_edit.repeater_end_gizmo,
-        scene_structure_edit.active &&
-            scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater &&
-            scene_structure_edit.current.has_repeater_end_distance,
-        width, height);
-    if (placement) {
+    if (!draw || !update_scene_structure_gizmo_projections(width, height)) return;
+    if (scene_structure_edit.rotation_mode && scene_placement_rotation_available()) {
+        draw->PushClipRect(canvas_origin, {canvas_origin.x + static_cast<float>(width),
+                                         canvas_origin.y + static_cast<float>(height)}, true);
+        draw_scene_rotation_gizmo(draw, canvas_origin);
+        draw->PopClipRect();
+    } else {
         draw_scene_gizmo_handle(draw, canvas_origin,
                                 scene_structure_edit.placement_gizmo,
                                 SceneGizmoTarget::Placement);
     }
-    if (repeater_end) {
-        draw_scene_gizmo_handle(draw, canvas_origin,
-                                scene_structure_edit.repeater_end_gizmo,
-                                SceneGizmoTarget::RepeaterEndDistance);
-    }
+    draw_scene_gizmo_handle(draw, canvas_origin, scene_structure_edit.repeater_end_gizmo,
+                            SceneGizmoTarget::RepeaterEndDistance);
 }

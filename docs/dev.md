@@ -477,6 +477,8 @@ This section describes the main responsibilities of files in `include/` and `src
 
 Gizmos generate `Canvas3DPlacementDragUpdate` for each edit target: ordinary placement coordinates are truncated to millimeters; Sound3D X/Y update source offsets while Z updates distance in whole meters; explicit Repeater End Z updates the segment end. `Structure.PutBetween` uses a Z axis along the own track's forward direction and snaps distance to whole meters. Its worker coalesces the latest target, reuses track samples by longitudinal model slice, and publishes results to reusable dynamic vertex buffers.
 
+The rotation gizmo takes its center and X → Z → Y Euler axes from `make_track_placement_frame()`. Dragging accumulates signed angles on the selected ring plane or uses its screen tangent for edge-on views. Rotation events carry the edit ID, axis, angle, and gesture phase from the local scene preview to `apply_scene_placement_drag_update()`. The Inspector keeps the starting field text for cancellation. Apply reparses the typed batch in memory, and Save commits the validated working copy. The 3D scene headless contract covers the axis transforms, multiple turns, 15° snapping, and preview and draft restoration.
+
 #### Frame rate and stage timing
 
 The displayed FPS measures scene-render call frequency. `canvas3d_scene_ui.cpp` accumulates positive intervals of at most `0.1` seconds and publishes `interval_count / active_seconds` after active time reaches `0.2` seconds. Long gaps discard the unfinished window and retain the last reading; reset clears the anchor, accumulators, and reading. `win32_dx11_bootstrap.cpp` owns the main loop's Present and render wakeups.

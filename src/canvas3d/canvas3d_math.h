@@ -289,23 +289,27 @@ inline void store_world(double out[16], DVec3 right, DVec3 up, DVec3 forward, DV
 }
 
 inline void apply_euler(DVec3& right, DVec3& up, DVec3& forward,
-                 double rx_deg, double ry_deg, double rz_deg) {
+                 double rx_deg, double ry_deg, double rz_deg,
+                 std::array<DVec3, 3>* rotation_axes = nullptr) {
     constexpr double deg_to_rad = 0.01745329251994329577;
     double rx = rx_deg * deg_to_rad;
     double ry = ry_deg * deg_to_rad;
     double rz = rz_deg * deg_to_rad;
+    const DVec3 x_axis = right * -1.0;
     if (std::abs(rx) > 1e-6) {
         up = rotate_axis(up, right, -rx);
         forward = rotate_axis(forward, right, -rx);
     }
+    const DVec3 z_axis = forward * -1.0;
     if (std::abs(rz) > 1e-6) {
-        right = rotate_axis(right, forward * -1.0, rz);
-        up = rotate_axis(up, forward * -1.0, rz);
+        right = rotate_axis(right, z_axis, rz);
+        up = rotate_axis(up, z_axis, rz);
     }
     if (std::abs(ry) > 1e-6) {
         right = rotate_axis(right, up, -ry);
         forward = rotate_axis(forward, up, -ry);
     }
+    if (rotation_axes) *rotation_axes = {x_axis, up * -1.0, z_axis};
 }
 
 } // namespace canvas3d_detail

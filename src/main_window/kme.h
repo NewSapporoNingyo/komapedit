@@ -1374,6 +1374,12 @@ struct MapElementInspectorSessionState {
     std::map<std::string, RepeaterInspectorDraft> repeater_drafts;
 };
 
+struct SceneRotationDraft {
+    std::string field_key;
+    std::string start_text;
+    double start_degrees = 0.0;
+};
+
 struct MapElementInspectorState {
     bool open = false;
     std::string edit_id;
@@ -1412,6 +1418,7 @@ struct MapElementInspectorState {
     bool signal_full_form_prompt_requested = false;
     std::string pending_signal_full_form_field;
     std::string pending_signal_full_form_value;
+    std::optional<SceneRotationDraft> scene_rotation_draft;
     std::vector<MapElementEditFieldState> fields;
     std::vector<std::string> owned_edit_ids;
     std::vector<std::string> repeater_chain_edit_ids;
@@ -2726,6 +2733,7 @@ private:
     bool update_scene_placement_instance_from_model(const std::string& edit_id,
                                                     const std::string& row_kind);
     bool update_scene_repeater_segment_from_model(const std::string& edit_id);
+    void restore_scene_rotation_draft();
     void clear_scene_placement_edit_target();
     bool save_pending_edits(bool refresh_inspector = true);
     bool save_pending_document_changes(bool refresh_inspector = true);

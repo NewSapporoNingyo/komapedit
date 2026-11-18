@@ -295,6 +295,7 @@ struct Canvas3DSceneRenderContractResult {
     bool picking = true;
     bool cache_budget = true;
     bool fps_counter = true;
+    bool rotation_gizmo = true;
     size_t cases = 0;
     size_t peak_cached_worlds = 0;
     size_t peak_cache_bytes = 0;
@@ -366,6 +367,8 @@ struct Canvas3DSceneMapRefreshOptions {
 struct Canvas3DSceneUiText {
     const char* mileage = "Mileage";
     const char* unit_m = "m";
+    const char* gizmo_translate = "Translate";
+    const char* gizmo_rotate = "Rotate";
     const char* add_map_element_at_mileage = "Add Map Element at Current Mileage";
     const char* switch_signal_aspect = "Switch Signal Aspect";
     const char* element_properties = "Properties/Edit";
@@ -452,6 +455,7 @@ struct Canvas3DPlacementEditTarget {
     int put_between_flag = 0;
     double distance = 0.0;
     bool placement_distance_gizmo = false;
+    bool placement_rotation_gizmo = false;
     bool has_repeater_end_distance = false;
     double repeater_end_distance = 0.0;
     double x = 0.0;
@@ -476,6 +480,14 @@ enum class Canvas3DSceneDragTarget {
     PlacementDistance,
     PutBetweenDistance,
     RepeaterEndDistance,
+    PlacementRotation,
+};
+
+enum class Canvas3DSceneDragPhase {
+    Update,
+    Begin,
+    Finish,
+    Cancel,
 };
 
 struct Canvas3DPlacementDragUpdate {
@@ -488,6 +500,8 @@ struct Canvas3DPlacementDragUpdate {
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;
+    double angle_degrees = 0.0;
+    Canvas3DSceneDragPhase phase = Canvas3DSceneDragPhase::Update;
 };
 
 struct Canvas3DSceneFrameResult {

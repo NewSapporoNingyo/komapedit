@@ -12761,6 +12761,7 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         out->flush();
 
         bool inspector_cache_checks_ok = true;
+        bool rotation_draft_ok = true;
         if (!app.model_.structures.empty()) {
             std::string saved_edit_id = std::move(app.model_.structures.front().edit_id);
             app.model_.structures.front().edit_id = "debug:inspector-row-cache";
@@ -12775,6 +12776,27 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
             app.sync_scene_placement_edit_from_inspector();
             inspector_cache_checks_ok = app.inspector_.model_row_cache_scans == 1 &&
                 app.inspector_.model_row_source_revision == app.plan_data_source_revision_;
+
+            auto& rotation_field = app.inspector_.fields.emplace_back();
+            rotation_field.key = "ry";
+            set_edit_field_buffer(rotation_field, "179.2500");
+            Canvas3DPlacementDragUpdate rotation;
+            rotation.edit_id = app.inspector_.edit_id;
+            rotation.target = Canvas3DSceneDragTarget::PlacementRotation;
+            rotation.axis = Canvas3DSceneDragAxis::Y;
+            rotation.angle_degrees = 179.25;
+            rotation.phase = Canvas3DSceneDragPhase::Begin;
+            app.apply_scene_placement_drag_update(rotation);
+            rotation.phase = Canvas3DSceneDragPhase::Update;
+            rotation.angle_degrees = 194.25;
+            app.apply_scene_placement_drag_update(rotation);
+            rotation_draft_ok = edit_field_buffer_text(rotation_field) == "194.25";
+            rotation.phase = Canvas3DSceneDragPhase::Cancel;
+            app.apply_scene_placement_drag_update(rotation);
+            rotation_draft_ok = rotation_draft_ok && !app.inspector_.scene_rotation_draft &&
+                edit_field_buffer_text(rotation_field) == "179.2500";
+            *out << "scene3d_rotation_draft result=" << (rotation_draft_ok ? "PASS" : "FAIL") << "\n";
+
             app.model_.structures.front().edit_id = std::move(saved_edit_id);
             app.inspector_ = {};
             app.clear_scene_placement_edit_target();
@@ -12842,13 +12864,15 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         ImGui::EndFrame();
         const bool render_pass = render_contract.error.empty() && render_contract.cases > 0 &&
             render_contract.instances && render_contract.pixels && render_contract.picking &&
-            render_contract.cache_budget && render_contract.fps_counter;
+            render_contract.cache_budget && render_contract.fps_counter &&
+            render_contract.rotation_gizmo && rotation_draft_ok;
         pass = pass && render_pass;
         *out << "scene3d_signature value=" << render_contract.signature << "\n"
              << "scene3d_render_contract cases=" << render_contract.cases
              << " instances=" << render_contract.instances << " pixels=" << render_contract.pixels
              << " picking=" << render_contract.picking << " cache_budget=" << render_contract.cache_budget
              << " fps_counter=" << render_contract.fps_counter
+             << " rotation_gizmo=" << render_contract.rotation_gizmo
              << " peak_cached_worlds=" << render_contract.peak_cached_worlds
              << " peak_cache_bytes=" << render_contract.peak_cache_bytes
              << " picked_cases=" << render_contract.picked_cases

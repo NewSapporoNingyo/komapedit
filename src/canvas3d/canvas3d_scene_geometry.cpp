@@ -474,7 +474,8 @@ bool Canvas3D::Impl::make_track_placement_frame(const std::string& track_key,
                                 double rz,
                                 double tilt,
                                 double span,
-                                StructurePlacementFrame& frame) const {
+                                StructurePlacementFrame& frame,
+                                std::array<DVec3, 3>* rotation_axes) const {
     const Canvas3DTrackPath* path = placement_track_path_for_key(track_key);
     if (!path) return false;
     const auto sample = [&](double sample_distance, Canvas3DTrackPoint& output) {
@@ -538,7 +539,7 @@ bool Canvas3D::Impl::make_track_placement_frame(const std::string& track_key,
     frame.parameter_axes[0] = normalize(offset_right);
     frame.parameter_axes[1] = normalize(offset_up);
     frame.parameter_axes[2] = normalize(forward);
-    apply_euler(right, up, forward, rx, ry, rz);
+    apply_euler(right, up, forward, rx, ry, rz, rotation_axes);
     frame.model_right = right;
     frame.model_up = up;
     frame.model_forward = forward;

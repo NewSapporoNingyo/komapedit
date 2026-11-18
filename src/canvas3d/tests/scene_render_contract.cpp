@@ -469,10 +469,104 @@ bool Canvas3D::Impl::debug_check_scene_fps_counter(std::string& error) {
     return true;
 }
 
+bool Canvas3D::Impl::debug_check_scene_rotation_gizmo() {
+    constexpr double radians_per_degree = 0.01745329251994329577;
+    const auto vector_near = [](DVec3 a, DVec3 b) {
+        return dot(a - b, a - b) < 1e-18;
+    };
+
+    Impl fixture(device, nullptr);
+    fixture.scene_active = true;
+    fixture.scene_data.max_distance = 100.0;
+    Canvas3DTrackPath track;
+    track.key = "0";
+    Canvas3DTrackPoint point;
+    point.cant_angle = 0.08;
+    point.gradient = 30.0;
+    track.points.push_back(point);
+    point.distance = 100.0;
+    point.y = 3.0;
+    point.z = -100.0;
+    track.points.push_back(point);
+    fixture.scene_data.tracks.push_back(std::move(track));
+    fixture.scene_placement_tracks.rebuild(fixture.scene_data);
+
+    Canvas3DSceneObject object;
+    object.kind = Canvas3DSceneObjectKind::Structure;
+    object.edit_id = "rotation-contract";
+    fixture.scene_data.objects.push_back(object);
+    Canvas3DModelInstance instance;
+    instance.model_path = "rotation-contract.x";
+    instance.object_index = 0;
+    instance.follow_track = true;
+    instance.track_key = "0";
+    instance.distance = 40.0;
+    fixture.scene_data.instances.push_back(instance);
+    std::string error;
+    if (!fixture.build_scene_chunks(error)) return false;
+
+    Canvas3DPlacementEditTarget target;
+    target.edit_id = object.edit_id;
+    target.track_key = "0";
+    target.distance = instance.distance;
+    target.x = 0.5;
+    target.y = 0.8;
+    target.z = 1.2;
+    target.rx = 12.0;
+    target.ry = 179.25;
+    target.rz = 23.0;
+    target.tilt = 3.0;
+    target.span = 8.0;
+    target.placement_rotation_gizmo = true;
+    if (!fixture.set_scene_placement_edit_target(target, true)) return false;
+
+    constexpr std::array<double Canvas3DPlacementEditTarget::*, 3> angle_fields = {
+        &Canvas3DPlacementEditTarget::rx, &Canvas3DPlacementEditTarget::ry, &Canvas3DPlacementEditTarget::rz
+    };
+    constexpr double delta = 17.0;
+    const auto baseline = fixture.scene_data.instances.front();
+    const auto axes = fixture.scene_structure_edit.rotation_gizmo.axes;
+    const DVec3 pivot = fixture.scene_structure_edit.rotation_gizmo.origin;
+    for (size_t i = 0; i < axes.size(); ++i) {
+        fixture.scene_structure_edit.dragging_gizmo = SceneGizmoTarget::Rotation;
+        fixture.scene_structure_edit.dragging_axis = structure_drag_axis_from_index(i);
+        fixture.scene_structure_edit.drag_start_value = target.*angle_fields[i];
+        Canvas3DPlacementEditTarget expected = target;
+        expected.*angle_fields[i] += delta;
+        if (!fixture.write_scene_rotation_angle(expected.*angle_fields[i]) ||
+            !fixture.debug_check_scene_edit_target(expected)) return false;
+        const auto& preview = fixture.scene_data.instances.front();
+        for (size_t component : {0u, 4u, 8u}) {
+            const DVec3 before = {baseline.world[component], baseline.world[component + 1], baseline.world[component + 2]};
+            const DVec3 after = {preview.world[component], preview.world[component + 1], preview.world[component + 2]};
+            if (!vector_near(rotate_axis(before, axes[i], delta * radians_per_degree), after)) return false;
+        }
+        if (!vector_near(pivot, fixture.scene_structure_edit.rotation_gizmo.origin)) return false;
+        const auto canceled = fixture.cancel_scene_rotation_drag();
+        if (canceled.phase != Canvas3DSceneDragPhase::Cancel || canceled.edit_id != target.edit_id ||
+            canceled.angle_degrees != target.*angle_fields[i] ||
+            !fixture.debug_check_scene_edit_target(target)) return false;
+    }
+
+    const DVec3 normal{0.0, 0.0, 1.0};
+    const auto radial = [](double degrees) {
+        const double radians = degrees * radians_per_degree;
+        return DVec3{std::cos(radians), std::sin(radians), 0.0};
+    };
+    SceneRotationDrag drag;
+    for (double degrees : {175.0, -174.0, -85.0, 5.0, 95.0, 180.0, -174.0}) {
+        drag.sample_radial(normal, radial(degrees));
+    }
+    return drag.angle_degrees(target.ry, false) == 550.25 &&
+           drag.angle_degrees(target.ry, true) == 554.25 &&
+           drag.angle_degrees(target.ry, false) == 550.25;
+}
+
 Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
     Canvas3DSceneRenderContractResult result;
     std::string fps_error;
     result.fps_counter = debug_check_scene_fps_counter(fps_error);
+    result.rotation_gizmo = debug_check_scene_rotation_gizmo();
     const DVec3 saved_position = scene_camera_pos;
     const double saved_distance = scene_camera_distance;
     const float saved_yaw = scene_camera_yaw, saved_pitch = scene_camera_pitch;

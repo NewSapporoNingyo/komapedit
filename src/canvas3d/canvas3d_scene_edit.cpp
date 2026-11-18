@@ -37,6 +37,7 @@ bool Canvas3D::Impl::same_placement_edit_target(const Canvas3DPlacementEditTarge
         a.put_between_flag == b.put_between_flag &&
         a.distance == b.distance &&
         a.placement_distance_gizmo == b.placement_distance_gizmo &&
+        a.placement_rotation_gizmo == b.placement_rotation_gizmo &&
         a.has_repeater_end_distance == b.has_repeater_end_distance &&
         a.repeater_end_distance == b.repeater_end_distance &&
         a.x == b.x && a.y == b.y && a.z == b.z &&
@@ -197,11 +198,14 @@ bool Canvas3D::Impl::write_scene_placement_instance(const std::string& edit_id,
                                     Canvas3DModelInstance desired) {
     const std::string placement_track_key = desired.track_key;
     const double placement_distance = desired.distance;
+    const bool editing = scene_structure_edit.active && scene_structure_edit.edit_id == edit_id;
+    std::array<DVec3, 3> rotation_axes;
     StructurePlacementFrame frame;
     if (!make_track_placement_frame(desired.track_key, desired.distance,
                                     desired.x, desired.y, desired.z,
                                     desired.rx, desired.ry, desired.rz,
-                                    desired.tilt, desired.span, frame)) {
+                                    desired.tilt, desired.span, frame,
+                                    editing ? &rotation_axes : nullptr)) {
         return false;
     }
     store_world(desired.world, frame.model_right, frame.model_up,
@@ -212,7 +216,9 @@ bool Canvas3D::Impl::write_scene_placement_instance(const std::string& edit_id,
             edit_id, std::move(desired), render_model_path)) {
         return false;
     }
-    if (scene_structure_edit.active && scene_structure_edit.edit_id == edit_id) {
+    if (editing) {
+        scene_structure_edit.rotation_gizmo.origin = frame.origin;
+        scene_structure_edit.rotation_gizmo.axes = rotation_axes;
         if (scene_structure_edit.current.placement_distance_gizmo) {
             track_distance_gizmo_frame(
                 placement_track_key, placement_distance,
@@ -529,11 +535,16 @@ bool Canvas3D::Impl::write_scene_repeater_segment(const std::string& edit_id,
     }
     const size_t repeater_index = location_it->second;
     const Canvas3DRepeaterSegment& current = scene_data.repeaters[repeater_index];
+    const bool editing = scene_structure_edit.active &&
+        scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater &&
+        scene_structure_edit.edit_id == edit_id;
+    std::array<DVec3, 3> rotation_axes;
     StructurePlacementFrame frame;
     if (!make_track_placement_frame(desired.track_key, desired.begin_distance,
                                     desired.x, desired.y, desired.z,
                                     desired.rx, desired.ry, desired.rz,
-                                    desired.tilt, desired.span, frame)) {
+                                    desired.tilt, desired.span, frame,
+                                    editing ? &rotation_axes : nullptr)) {
         return false;
     }
     const std::optional<std::pair<size_t, size_t>> old_range =
@@ -556,9 +567,9 @@ bool Canvas3D::Impl::write_scene_repeater_segment(const std::string& edit_id,
     } else {
         scene_stats_value.instance_count = count_scene_instances();
     }
-    if (scene_structure_edit.active &&
-        scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater &&
-        scene_structure_edit.edit_id == edit_id) {
+    if (editing) {
+        scene_structure_edit.rotation_gizmo.origin = frame.origin;
+        scene_structure_edit.rotation_gizmo.axes = rotation_axes;
         const Canvas3DRepeaterSegment& updated =
             scene_data.repeaters[repeater_index];
         if (scene_structure_edit.current.placement_distance_gizmo) {

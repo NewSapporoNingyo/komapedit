@@ -21,7 +21,7 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 
 - **界面**：可拖动、停靠的多窗口布局，提供数据表格搜索，以及表格、二维图和三维场景之间的定位跳转。
 - **预览**：显示线路平面图、纵断面图、辅助标记、布景模型和三维场景；支持背景图对齐、测量和轨道几何 CSV 导出。
-- **编辑**：通过属性窗口、资源列表和新建向导修改、删除或添加受支持的地图元素，使用三维操纵器调整部分元素的位置；支持子地图管理，以及地图、Scenario 和资源列表文件的创建与编辑。
+- **编辑**支持通过属性窗口、资源列表和新建向导修改、删除或添加受支持的地图元素。三维操纵器可平移和旋转受支持的对象。支持子地图管理，以及地图、Scenario 和资源列表文件的创建与编辑。[三维编辑操作](user-manual_zhcn.md#在-3d-场景中实时调整)
 - **界面语言**包括简体中文、繁体中文、英语、日语和韩语。`中文` 子菜单提供 `简体`、`台湾繁體` 和 `香港繁體`。
 
 ## 安装与启动
@@ -94,10 +94,10 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 | `Track[trackKey].Cant.End()`                                                                                                                                                                |   √   |    △     |    √     |     ✕      | 可编辑里程或删除；key 改名范围同 X.Interpolate |
 | `Track[trackKey].Cant.Interpolate(cant)` / `Track[trackKey].Cant.Interpolate()` / `[旧式] Track[trackKey].Cant(cant)`                                                                       | √ | △ | △ | ✕ | 新建使用 Interpolate 的 0/1 参数形式；已有语句可编辑数值、里程或删除，保留参数个数；key 改名范围同 X.Interpolate |
 | `Structure.Load(filePath)`                                                                                                                                                                  | √ | √ | √ | - | 可更换列表路径、新建或导入列表并添加 Load 引用；表格支持编辑、增删和排序 key/path 行，包括空列表第一行；兼容列表版本 1.00+ |
-| `Structure[structureKey].Put(trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                                                                                    |   √   |    √     |    √     |     △      | 全部字段可编辑；3D 操纵器调整 X/Y/Z |
+| `Structure[structureKey].Put(trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                                                                                    |   √   |    √     |    √     |     △      | 全部字段可编辑。3D 操纵器调整 X/Y/Z 偏移及各轴旋转 |
 | `Structure[structureKey].Put0(trackKey, tilt, span)`                                                                                                                                        |   √   |    √     |    √     |     △      | 属性窗口可在 Put0/Put 间转换；Put0 的 Z 轴操纵器按整米调整里程 |
 | `Structure[structureKey].PutBetween(trackKey1, trackKey2, flag)` / `Structure[structureKey].PutBetween(trackKey1, trackKey2)`                                                               | √ | √ | △ | △ | 两种形式均可编辑，新建使用 3 参数形式；属性草稿实时更新 3D 形状，Z 轴操纵器按整米调整里程 |
-| `Repeater[repeaterKey].Begin(trackKey, x, y, z, rx, ry, rz, tilt, span, interval, structureKey1, ...)` / `Repeater[repeaterKey].Begin0(trackKey, tilt, span, interval, structureKey1, ...)` | √ | √ | √ | △ | 可编辑全部参数、结构键列表及整链 key；支持 Begin/Begin0 转换、变化点、关联删除和位置操纵器；可单独或与 End 成对新建，同名成对区间须避免重叠 |
+| `Repeater[repeaterKey].Begin(trackKey, x, y, z, rx, ry, rz, tilt, span, interval, structureKey1, ...)` / `Repeater[repeaterKey].Begin0(trackKey, tilt, span, interval, structureKey1, ...)` | √ | √ | √ | △ | 可编辑全部参数、结构键列表及整链 key。支持 Begin/Begin0 转换、变化点和关联删除。Begin 提供平移和旋转操纵器。可单独或与 End 成对新建，同名成对区间须避免重叠 |
 | `Repeater[repeaterKey].End()`                                                                                                                                                               |   √   |    △     |    √     |     △      | 通过所属 Begin 编辑结束里程或使用 End 操纵器；可单独或成对新建，孤立 End 无独立属性窗口；同名闭合区间内禁止重复添加 End |
 | `Background.Change(structureKey)`                                                                                                                                                           |   √   |    √     |    √     |     ✕      | 编辑里程与 key；在场景中预览背景 |
 | `Station.Load(filePath)`                                                                                                                                                                    | √ | √ | √ | - | 可更换列表路径、新建或导入列表并添加 Load 引用；表格支持编辑 13 个字段、增删和排序车站行，包括空列表第一行；兼容列表版本 0.04+ |
@@ -105,7 +105,7 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 | `Section.Begin(...)` / `[旧式] Section.BeginNew(...)`                                                                                                                                       |   √   |    √     |    √     |     ✕      | 编辑里程与信号索引列表；2D/3D 显示标记 |
 | `Section.SetSpeedLimit(...)` / `[旧式] Signal.SpeedLimit(...)`                                                                                                                              |   √   |    √     |    √     |     ✕      | 编辑里程与限速列表；生效值显示在 3D 信号摘要中 |
 | `Signal.Load(filePath)`                                                                                                                                                                     | √ | △ | √ | - | 可更换、新建或导入现示列表并添加 Load 引用，也可新增主行、眩光行及列；最多显示 509 个结构键列；保留多条眩光行时须维持合并字段数 |
-| `Signal[signalAspectKey].Put(section, trackKey, x, y)` / `Signal[signalAspectKey].Put(section, trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                  | √ | √ | △ | △ | 两种形式均可编辑，新建使用完整式；短式扩展需确认转换；3D 操纵器调整 X/Y/Z |
+| `Signal[signalAspectKey].Put(section, trackKey, x, y)` / `Signal[signalAspectKey].Put(section, trackKey, x, y, z, rx, ry, rz, tilt, span)`                                                  | √ | √ | △ | △ | 两种形式均可编辑。新建使用完整式，提供 X/Y/Z 平移和旋转。短式扩展需确认转换 |
 | `Beacon.Put(type, section, sendData)`                                                                                                                                                       |   √   |    √     |    √     |     ✕      | 编辑里程与全部参数 |
 | `SpeedLimit.Begin(v)` / `SpeedLimit.End()`                                                                                                                                                  |   √   |    √     |    √     |     ✕      | Begin/End 分别编辑、新建和删除 |
 | `PreTrain.Pass(time)` / `PreTrain.Pass(second)` | √ | √ | √ | ✕ | 通过 2D/3D 标记编辑里程、通行时间或删除；在“信号”向导中新建。时间输入为 hh:mm:ss 或秒数，悬停 `passTime` 可查看格式提示 |

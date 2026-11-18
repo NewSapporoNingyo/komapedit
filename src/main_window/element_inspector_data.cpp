@@ -1789,6 +1789,7 @@ bool App::navigate_repeater_inspector(bool toward_next) {
         : inspector_.repeater_previous_begin_edit_id;
     if (target_edit_id.empty()) return false;
 
+    restore_scene_rotation_draft();
     capture_repeater_inspector_draft(inspector_);
     MapElementInspectorRequest request{target_edit_id, "repeater"};
     request.inspector_session = inspector_.session;
@@ -1800,7 +1801,15 @@ bool App::navigate_repeater_inspector(bool toward_next) {
     return true;
 }
 
+void App::restore_scene_rotation_draft() {
+    if (!inspector_.scene_rotation_draft) return;
+    const SceneRotationDraft& draft = *inspector_.scene_rotation_draft;
+    set_edit_field_buffer(*find_inspector_field(inspector_, draft.field_key), draft.start_text);
+    inspector_.scene_rotation_draft.reset();
+}
+
 void App::clear_scene_placement_edit_target() {
+    restore_scene_rotation_draft();
     if (scene_preview_canvas_) scene_preview_canvas_->clear_scene_placement_edit_target();
 }
 
@@ -1919,6 +1928,10 @@ void App::sync_scene_placement_edit_from_inspector() {
     const bool coordinate_offset_target = structure_target || repeater_target;
     target.placement_distance_gizmo =
         coordinate_offset_target && !inspector_.coordinate_offsets_enabled;
+    target.placement_rotation_gizmo =
+        (coordinate_offset_target && inspector_.coordinate_offsets_enabled) ||
+        (signal_target && (!inspector_.source_signal_short_form ||
+                           inspector_.signal_full_form_conversion_draft));
     if (repeater_target && !target.placement_distance_gizmo &&
         std::fabs(target.distance - model_distance) > 1e-9) {
         clear_scene_placement_edit_target();
@@ -1942,6 +1955,26 @@ void App::apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& u
          inspector_.row_kind == "mapSound3D.put");
     if (!inspector_.open || !matching_kind ||
         inspector_.edit_id != update.edit_id) {
+        return;
+    }
+    if (update.target == Canvas3DSceneDragTarget::PlacementRotation) {
+        if (update.phase == Canvas3DSceneDragPhase::Begin) {
+            const char* key = update.axis == Canvas3DSceneDragAxis::X ? "rx"
+                : update.axis == Canvas3DSceneDragAxis::Y ? "ry" : "rz";
+            const auto& field = *find_inspector_field(inspector_, key);
+            inspector_.scene_rotation_draft = SceneRotationDraft{
+                key, edit_field_buffer_text(field), update.angle_degrees};
+        } else if (inspector_.scene_rotation_draft) {
+            if (update.phase == Canvas3DSceneDragPhase::Cancel) {
+                restore_scene_rotation_draft();
+                return;
+            }
+            const SceneRotationDraft& draft = *inspector_.scene_rotation_draft;
+            auto& field = *find_inspector_field(inspector_, draft.field_key);
+            set_edit_field_buffer(field, update.angle_degrees == draft.start_degrees
+                ? draft.start_text : format_gui_transform_number(update.angle_degrees));
+            if (update.phase == Canvas3DSceneDragPhase::Finish) inspector_.scene_rotation_draft.reset();
+        }
         return;
     }
     const char* field_key = nullptr;
@@ -1989,6 +2022,7 @@ void App::apply_inspector_changes() {
     GuiTiming::Stage timing("inspector.prepare_apply");
     if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
+    if (inspector_.scene_rotation_draft) clear_scene_placement_edit_target();
     const bool repeater_inspector = inspector_.row_kind == "repeater";
     const std::string repeater_draft_edit_id = inspector_.edit_id;
     if (distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
