@@ -67,6 +67,12 @@ constexpr std::array<ImU32, 3> k_scene_gizmo_active_colors = {
 };
 
 constexpr double k_scene_rotation_pi = 3.14159265358979323846;
+constexpr float k_scene_rotation_radius_px = 90.0f;
+constexpr float k_scene_rotation_line_width_px = 6.0f;
+constexpr float k_scene_rotation_active_width_px = 9.0f;
+constexpr float k_scene_rotation_hit_padding_px = 6.5f;
+constexpr float k_scene_rotation_hover_tie_px = 1.0f;
+constexpr double k_scene_rotation_rear_radius_fraction = 0.05;
 constexpr std::array<double Canvas3DPlacementEditTarget::*, 3> k_scene_rotation_fields = {
     &Canvas3DPlacementEditTarget::rx, &Canvas3DPlacementEditTarget::ry, &Canvas3DPlacementEditTarget::rz
 };
@@ -264,7 +270,8 @@ bool Canvas3D::Impl::closest_axis_parameter(DVec3 axis_origin, DVec3 axis_direct
     return std::isfinite(parameter);
 }
 
-float Canvas3D::Impl::point_segment_distance_sq(ImVec2 point, ImVec2 a, ImVec2 b) {
+float Canvas3D::Impl::point_segment_distance_sq(ImVec2 point, ImVec2 a, ImVec2 b,
+                                               float* segment_fraction) {
     const float vx = b.x - a.x;
     const float vy = b.y - a.y;
     const float length_sq = vx * vx + vy * vy;
@@ -273,6 +280,7 @@ float Canvas3D::Impl::point_segment_distance_sq(ImVec2 point, ImVec2 a, ImVec2 b
         t = std::clamp(((point.x - a.x) * vx + (point.y - a.y) * vy) / length_sq,
                        0.0f, 1.0f);
     }
+    if (segment_fraction) *segment_fraction = t;
     const float dx = point.x - (a.x + vx * t);
     const float dy = point.y - (a.y + vy * t);
     return dx * dx + dy * dy;
@@ -374,7 +382,10 @@ bool Canvas3D::Impl::scene_placement_rotation_available() const {
 
 bool Canvas3D::Impl::update_scene_rotation_projection(int width, int height) {
     SceneRotationGizmo& gizmo = scene_structure_edit.rotation_gizmo;
-    for (SceneRotationRing& ring : gizmo.rings) ring.segment_count = 0;
+    for (SceneRotationRing& ring : gizmo.rings) {
+        ring.point_count = 0;
+        ring.closed = false;
+    }
     if (width <= 0 || height <= 0) return false;
 
     const DVec3 relative_origin = gizmo.origin - scene_camera_pos;
@@ -391,47 +402,120 @@ bool Canvas3D::Impl::update_scene_rotation_projection(int width, int height) {
     }
 
     const double units_per_pixel = 2.0 * depth * std::tan(k_scene_camera_fov_y * 0.5) / height;
+    gizmo.radius_px = k_scene_rotation_radius_px * scene_edit_component_scale;
+    const double radius = units_per_pixel * gizmo.radius_px;
     const DVec3 view_direction = normalize(relative_origin);
-    constexpr std::array<float, 3> radii_px = {{54.0f, 72.0f, 90.0f}};
-    constexpr size_t sample_count = std::tuple_size<decltype(SceneRotationRing::segments)>::value;
-    static const auto circle = [] {
-        std::array<std::array<double, 2>, sample_count> samples{};
-        for (size_t i = 0; i < samples.size(); ++i) {
-            const double angle = 2.0 * k_scene_rotation_pi * static_cast<double>(i) / sample_count;
-            samples[i] = {std::cos(angle), std::sin(angle)};
-        }
-        return samples;
-    }();
+    const DVec3 xy_cross = cross(gizmo.axes[0], gizmo.axes[1]);
+    const bool split_xy = dot(xy_cross, xy_cross) <= 1e-12;
 
     bool any = false;
     for (size_t axis = 0; axis < gizmo.rings.size(); ++axis) {
         SceneRotationRing& ring = gizmo.rings[axis];
         const DVec3 normal = gizmo.axes[axis];
-        const DVec3 reference = std::abs(normal.y) < 0.9 ? DVec3{0.0, 1.0, 0.0}
-                                                        : DVec3{1.0, 0.0, 0.0};
-        const DVec3 u = normalize(cross(reference, normal));
-        const DVec3 v = cross(normal, u);
-        ring.radius_px = radii_px[axis] * scene_edit_component_scale;
+        const bool split = split_xy && axis < 2;
+        const DVec3 circle_normal = split ? gizmo.axes[0] : normal;
+        const DVec3 reference = std::abs(circle_normal.y) < 0.9 ? DVec3{0.0, 1.0, 0.0}
+                                                               : DVec3{1.0, 0.0, 0.0};
+        const DVec3 u = normalize(cross(reference, circle_normal));
+        const DVec3 v = cross(circle_normal, u);
         ring.edge_on = std::abs(dot(normal, view_direction)) < 0.15;
-        const double radius = units_per_pixel * ring.radius_px;
-        std::array<ImVec2, sample_count> points{};
-        std::array<double, sample_count> depths{};
-        std::array<bool, sample_count> projected{};
-        for (size_t i = 0; i < points.size(); ++i) {
-            const DVec3 point = relative_origin + (u * circle[i][0] + v * circle[i][1]) * radius;
-            depths[i] = dot(point, camera_forward);
-            projected[i] = depths[i] > k_scene_near_z &&
-                project_scene_point(point, view_proj, width, height, points[i]);
+
+        // View depth around the ring is sinusoidal, with its minimum at the arc midpoint.
+        const double depth_u = dot(u, camera_forward);
+        const double depth_v = dot(v, camera_forward);
+        const double depth_amplitude = std::hypot(depth_u, depth_v);
+        const bool full_ring = depth_amplitude <= k_scene_rotation_rear_radius_fraction;
+        const double middle = depth_amplitude > 1e-12 ? std::atan2(-depth_v, -depth_u) : 0.0;
+        const double half_arc = full_ring ? k_scene_rotation_pi
+            : std::acos(-k_scene_rotation_rear_radius_fraction / depth_amplitude);
+        double start = split && axis == 1 ? middle : middle - half_arc;
+        double end = split && axis == 0 ? middle : middle + half_arc;
+        if (split && dot(circle_normal, normal) < 0.0) std::swap(start, end);
+
+        const size_t segment_count = (ring.points.size() - 1) / (split ? 2 : 1);
+        ring.point_count = segment_count + 1;
+        ring.closed = full_ring && !split;
+        const double step = (end - start) / static_cast<double>(segment_count);
+        const double step_cos = std::cos(step);
+        const double step_sin = std::sin(step);
+        double angle_cos = std::cos(start);
+        double angle_sin = std::sin(start);
+        bool previous_visible = false;
+        for (size_t i = 0; i < ring.point_count; ++i) {
+            SceneRotationRing::Point& projected = ring.points[i];
+            const DVec3 point = relative_origin + (u * angle_cos + v * angle_sin) * radius;
+            const double point_depth = dot(point, camera_forward);
+            const bool visible = point_depth > k_scene_near_z &&
+                project_scene_point(point, view_proj, width, height, projected.screen);
+            projected.inverse_depth = visible ? 1.0 / point_depth : 0.0;
+            any = any || (previous_visible && visible);
+            previous_visible = visible;
+            ring.closed = ring.closed && visible;
+            const double next_cos = angle_cos * step_cos - angle_sin * step_sin;
+            angle_sin = angle_sin * step_cos + angle_cos * step_sin;
+            angle_cos = next_cos;
         }
-        for (size_t i = 0; i < points.size(); ++i) {
-            const size_t next = (i + 1) % points.size();
-            if (!projected[i] || !projected[next]) continue;
-            if (ring.edge_on && depths[i] + depths[next] > 2.0 * depth) continue;
-            ring.segments[ring.segment_count++] = {points[i], points[next]};
-        }
-        any = any || ring.segment_count != 0;
+        if (ring.closed) ring.points[segment_count] = ring.points[0];
     }
     return any;
+}
+
+std::optional<Canvas3D::Impl::SceneRotationHit> Canvas3D::Impl::pick_scene_rotation_ring(
+    ImVec2 mouse_local, Canvas3DSceneDragAxis previous_axis) const {
+    const auto& rings = scene_structure_edit.rotation_gizmo.rings;
+    const float hit_radius = (k_scene_rotation_line_width_px * 0.5f +
+                              k_scene_rotation_hit_padding_px) * scene_edit_component_scale;
+    const float hit_radius_sq = hit_radius * hit_radius;
+    struct Candidate {
+        float distance_sq = std::numeric_limits<float>::infinity();
+        double inverse_depth = 0.0;
+        ImVec2 tangent;
+    };
+    std::array<Candidate, 3> candidates;
+    float nearest_distance_sq = std::numeric_limits<float>::infinity();
+    for (size_t axis = 0; axis < rings.size(); ++axis) {
+        const SceneRotationRing& ring = rings[axis];
+        Candidate& nearest = candidates[axis];
+        for (size_t i = 1; i < ring.point_count; ++i) {
+            const auto& begin = ring.points[i - 1];
+            const auto& end = ring.points[i];
+            if (begin.inverse_depth == 0.0 || end.inverse_depth == 0.0) continue;
+            const ImVec2 tangent{end.screen.x - begin.screen.x, end.screen.y - begin.screen.y};
+            if (tangent.x * tangent.x + tangent.y * tangent.y <= 1e-6f) continue;
+            float fraction;
+            const float distance_sq = point_segment_distance_sq(mouse_local, begin.screen, end.screen,
+                                                                &fraction);
+            if (distance_sq > hit_radius_sq || distance_sq > nearest.distance_sq) continue;
+            // Reciprocal depth interpolates linearly along the projected segment.
+            const double inverse_depth = begin.inverse_depth +
+                (end.inverse_depth - begin.inverse_depth) * fraction;
+            if (distance_sq < nearest.distance_sq || inverse_depth > nearest.inverse_depth) {
+                nearest = {distance_sq, inverse_depth, tangent};
+            }
+        }
+        nearest_distance_sq = std::min(nearest_distance_sq, nearest.distance_sq);
+    }
+    if (!std::isfinite(nearest_distance_sq)) return std::nullopt;
+
+    const float tie_distance = std::sqrt(nearest_distance_sq) + k_scene_rotation_hover_tie_px;
+    const float tie_distance_sq = tie_distance * tie_distance;
+    const int previous_index = structure_drag_axis_index(previous_axis);
+    if (previous_index >= 0 && candidates[static_cast<size_t>(previous_index)].distance_sq <= tie_distance_sq) {
+        return SceneRotationHit{previous_axis, nearest_distance_sq,
+                                candidates[static_cast<size_t>(previous_index)].tangent};
+    }
+
+    size_t winner = 0;
+    double nearest_inverse_depth = 0.0;
+    for (size_t axis = 0; axis < candidates.size(); ++axis) {
+        const Candidate& candidate = candidates[axis];
+        if (candidate.distance_sq <= tie_distance_sq && candidate.inverse_depth > nearest_inverse_depth) {
+            winner = axis;
+            nearest_inverse_depth = candidate.inverse_depth;
+        }
+    }
+    return SceneRotationHit{structure_drag_axis_from_index(winner), nearest_distance_sq,
+                            candidates[winner].tangent};
 }
 
 bool Canvas3D::Impl::update_scene_structure_gizmo_projections(int width, int height) {
@@ -493,7 +577,7 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::begin_scene_rotation_
     if (ring.edge_on) {
         const float length = std::hypot(screen_tangent.x, screen_tangent.y);
         edit.rotation_drag.screen_tangent = {screen_tangent.x / length, screen_tangent.y / length};
-        edit.rotation_drag.screen_radius_px = ring.radius_px;
+        edit.rotation_drag.screen_radius_px = edit.rotation_gizmo.radius_px;
     } else {
         edit.rotation_drag.sample_radial(edit.drag_axis_direction,
                                          scene_rotation_radial(mouse_local, width, height));
@@ -601,12 +685,16 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structur
     }
 
     if (scene_structure_edit.dragging_gizmo == SceneGizmoTarget::None) {
+        const Canvas3DSceneDragAxis previous_rotation_axis =
+            scene_structure_edit.hovered_gizmo == SceneGizmoTarget::Rotation
+                ? scene_structure_edit.hovered_axis : Canvas3DSceneDragAxis::None;
         scene_structure_edit.hovered_gizmo = SceneGizmoTarget::None;
         scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
         ImVec2 rotation_tangent;
         if (canvas_hovered) {
             const float hit_radius = k_scene_gizmo_hit_radius_px * scene_edit_component_scale;
-            float best_distance_sq = hit_radius * hit_radius;
+            const float translation_hit_distance_sq = hit_radius * hit_radius;
+            float best_distance_sq = translation_hit_distance_sq;
             const auto consider = [&](SceneGizmoTarget target,
                                       const SceneGizmoHandle& gizmo) {
                 for (size_t i = 0; i < gizmo.projection.size(); ++i) {
@@ -614,7 +702,7 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structur
                     if (!projection.valid) continue;
                     const float distance_sq = point_segment_distance_sq(
                         mouse_local, projection.begin, projection.end);
-                    if (distance_sq <= best_distance_sq) {
+                    if (distance_sq <= std::min(best_distance_sq, translation_hit_distance_sq)) {
                         best_distance_sq = distance_sq;
                         scene_structure_edit.hovered_gizmo = target;
                         scene_structure_edit.hovered_axis =
@@ -625,23 +713,11 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structur
             consider(SceneGizmoTarget::Placement,
                      scene_structure_edit.placement_gizmo);
             if (scene_structure_edit.rotation_mode) {
-                const auto& rings = scene_structure_edit.rotation_gizmo.rings;
-                for (size_t i = 0; i < rings.size(); ++i) {
-                    const SceneRotationRing& ring = rings[i];
-                    for (size_t j = 0; j < ring.segment_count; ++j) {
-                        const auto& segment = ring.segments[j];
-                        const float dx = segment.end.x - segment.begin.x;
-                        const float dy = segment.end.y - segment.begin.y;
-                        if (dx * dx + dy * dy < 0.25f) continue;
-                        const float distance_sq = point_segment_distance_sq(
-                            mouse_local, segment.begin, segment.end);
-                        if (distance_sq < best_distance_sq) {
-                            best_distance_sq = distance_sq;
-                            scene_structure_edit.hovered_gizmo = SceneGizmoTarget::Rotation;
-                            scene_structure_edit.hovered_axis = structure_drag_axis_from_index(i);
-                            rotation_tangent = {dx, dy};
-                        }
-                    }
+                if (const auto hit = pick_scene_rotation_ring(mouse_local, previous_rotation_axis)) {
+                    best_distance_sq = hit->nearest_distance_sq;
+                    scene_structure_edit.hovered_gizmo = SceneGizmoTarget::Rotation;
+                    scene_structure_edit.hovered_axis = hit->axis;
+                    rotation_tangent = hit->tangent;
                 }
             }
             // Check the EndDistance handle last so an exact overlap selects
@@ -882,22 +958,44 @@ void Canvas3D::Impl::draw_scene_gizmo_handle(ImDrawList* draw,
 
 void Canvas3D::Impl::draw_scene_rotation_gizmo(ImDrawList* draw, ImVec2 canvas_origin) const {
     const SceneStructureEditState& edit = scene_structure_edit;
-    for (size_t i = 0; i < edit.rotation_gizmo.rings.size(); ++i) {
-        const SceneRotationRing& ring = edit.rotation_gizmo.rings[i];
-        const Canvas3DSceneDragAxis axis = structure_drag_axis_from_index(i);
-        const bool active = (edit.dragging_gizmo == SceneGizmoTarget::Rotation &&
-                             edit.dragging_axis == axis) ||
-                            (edit.hovered_gizmo == SceneGizmoTarget::Rotation &&
-                             edit.hovered_axis == axis);
+    const auto& rings = edit.rotation_gizmo.rings;
+    const Canvas3DSceneDragAxis active_axis = edit.dragging_gizmo == SceneGizmoTarget::Rotation
+        ? edit.dragging_axis : edit.hovered_gizmo == SceneGizmoTarget::Rotation
+        ? edit.hovered_axis : Canvas3DSceneDragAxis::None;
+    const int active_index = structure_drag_axis_index(active_axis);
+    const auto draw_ring = [&](size_t i, bool active) {
+        const SceneRotationRing& ring = rings[i];
         const ImU32 color = active ? k_scene_gizmo_active_colors[i] : k_scene_gizmo_colors[i];
-        const float thickness = (active ? 4.5f : 3.0f) * scene_edit_component_scale;
-        for (size_t j = 0; j < ring.segment_count; ++j) {
-            const auto& segment = ring.segments[j];
-            draw->AddLine({canvas_origin.x + segment.begin.x, canvas_origin.y + segment.begin.y},
-                          {canvas_origin.x + segment.end.x, canvas_origin.y + segment.end.y},
-                          color, thickness);
+        const float thickness = (active ? k_scene_rotation_active_width_px :
+            k_scene_rotation_line_width_px) * scene_edit_component_scale;
+        const size_t point_count = ring.point_count - (ring.closed ? 1 : 0);
+        for (size_t j = 0; j < point_count; ++j) {
+            const auto& point = ring.points[j];
+            if (point.inverse_depth == 0.0) {
+                draw->PathStroke(color, thickness);
+                continue;
+            }
+            if (ring.edge_on && j >= 2) {
+                const auto& before = ring.points[j - 2];
+                const auto& join = ring.points[j - 1];
+                const float turn = (join.screen.x - before.screen.x) * (point.screen.x - join.screen.x) +
+                    (join.screen.y - before.screen.y) * (point.screen.y - join.screen.y);
+                if (before.inverse_depth != 0.0 && join.inverse_depth != 0.0 && turn < 0.0f) {
+                    // A round join keeps the stroke width at a projected fold.
+                    const ImVec2 center{canvas_origin.x + join.screen.x, canvas_origin.y + join.screen.y};
+                    draw->PathStroke(color, thickness);
+                    draw->AddCircleFilled(center, thickness * 0.5f, color);
+                    draw->PathLineTo(center);
+                }
+            }
+            draw->PathLineTo({canvas_origin.x + point.screen.x, canvas_origin.y + point.screen.y});
         }
+        draw->PathStroke(color, thickness, ring.closed ? ImDrawFlags_Closed : ImDrawFlags_None);
+    };
+    for (size_t i = rings.size(); i-- > 0;) {
+        if (static_cast<int>(i) != active_index) draw_ring(i, false);
     }
+    if (active_index >= 0) draw_ring(static_cast<size_t>(active_index), true);
 }
 
 void Canvas3D::Impl::draw_scene_structure_gizmo(ImDrawList* draw, ImVec2 canvas_origin,

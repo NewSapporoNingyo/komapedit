@@ -347,21 +347,22 @@ struct SceneGizmoHandle {
 };
 
 struct SceneRotationRing {
-    struct Segment {
-        ImVec2 begin;
-        ImVec2 end;
+    struct Point {
+        ImVec2 screen;
+        double inverse_depth = 0.0;
     };
 
-    std::array<Segment, 64> segments{};
-    size_t segment_count = 0;
+    std::array<Point, 65> points{};
+    size_t point_count = 0;
+    bool closed = false;
     bool edge_on = false;
-    float radius_px = 0.0f;
 };
 
 struct SceneRotationGizmo {
     DVec3 origin;
     std::array<DVec3, 3> axes{};
     std::array<SceneRotationRing, 3> rings{};
+    float radius_px = 0.0f;
 };
 
 struct SceneRotationDrag {

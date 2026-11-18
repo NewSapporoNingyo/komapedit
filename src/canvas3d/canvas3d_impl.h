@@ -287,6 +287,7 @@ struct Canvas3D::Impl {
     bool debug_check_repeater_cache();
     bool debug_check_scene_fps_counter(std::string& error);
     bool debug_check_scene_rotation_gizmo();
+    bool debug_check_scene_rotation_rings();
     Canvas3DSceneRenderContractResult debug_check_scene_render();
 
     Canvas3DSceneLoaderContractResult debug_run_scene_loader_contract(
@@ -749,7 +750,8 @@ struct Canvas3D::Impl {
                                        canvas3d_detail::DVec3 ray_origin, canvas3d_detail::DVec3 ray_direction,
                                        double& parameter);
 
-    static float point_segment_distance_sq(ImVec2 point, ImVec2 a, ImVec2 b);
+    static float point_segment_distance_sq(ImVec2 point, ImVec2 a, ImVec2 b,
+                                           float* segment_fraction = nullptr);
 
     canvas3d_detail::Mat4 scene_gizmo_view_projection(int width, int height) const;
 
@@ -769,6 +771,13 @@ struct Canvas3D::Impl {
 
     bool scene_placement_rotation_available() const;
     bool update_scene_rotation_projection(int width, int height);
+    struct SceneRotationHit {
+        Canvas3DSceneDragAxis axis;
+        float nearest_distance_sq;
+        ImVec2 tangent;
+    };
+    std::optional<SceneRotationHit> pick_scene_rotation_ring(
+        ImVec2 mouse_local, Canvas3DSceneDragAxis previous_axis) const;
     std::optional<canvas3d_detail::DVec3> scene_rotation_radial(
         ImVec2 mouse_local, int width, int height) const;
     std::optional<Canvas3DPlacementDragUpdate> begin_scene_rotation_drag(

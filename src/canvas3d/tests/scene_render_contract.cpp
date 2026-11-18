@@ -469,7 +469,110 @@ bool Canvas3D::Impl::debug_check_scene_fps_counter(std::string& error) {
     return true;
 }
 
+bool Canvas3D::Impl::debug_check_scene_rotation_rings() {
+    using Axis = Canvas3DSceneDragAxis;
+    constexpr int width = 800;
+    constexpr int height = 600;
+    constexpr double depth = 10.0;
+    const ImVec2 center{width * 0.5f, height * 0.5f};
+    const std::array<DVec3, 3> axes = {{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+    Impl fixture(device, nullptr);
+    auto& gizmo = fixture.scene_structure_edit.rotation_gizmo;
+    gizmo.origin = {0.0, 0.0, -depth};
+
+    const auto hit_axis = [&](ImVec2 point, Axis previous = Axis::None) {
+        const auto hit = fixture.pick_scene_rotation_ring(point, previous);
+        return hit ? hit->axis : Axis::None;
+    };
+
+    for (float scale : {1.0f, 1.5f}) {
+        fixture.set_scene_edit_component_scale(scale);
+        gizmo.axes = axes;
+        for (size_t i = 0; i < axes.size(); ++i) {
+            std::swap(gizmo.axes[i], gizmo.axes[2]);
+            if (!fixture.update_scene_rotation_projection(width, height)) return false;
+            const auto& ring = gizmo.rings[i];
+            if (!ring.closed || ring.point_count != ring.points.size()) return false;
+            for (size_t j = 0; j + 1 < ring.point_count; ++j) {
+                const ImVec2 p = ring.points[j].screen;
+                if (std::abs(std::hypot(p.x - center.x, p.y - center.y) - 90.0f * scale) > 0.001f) {
+                    return false;
+                }
+            }
+            std::swap(gizmo.axes[i], gizmo.axes[2]);
+        }
+    }
+
+    fixture.set_scene_edit_component_scale(1.0f);
+    constexpr double diagonal = 0.7071067811865475;
+    gizmo.axes = {{{diagonal, 0.0, diagonal}, axes[1], {-diagonal, 0.0, diagonal}}};
+    if (!fixture.update_scene_rotation_projection(width, height) || gizmo.rings[0].closed) return false;
+    const auto& oblique = gizmo.rings[0];
+    const double radius = 2.0 * depth * std::tan(k_scene_camera_fov_y * 0.5) / height * 90.0;
+    const double cut_depth = depth + 0.05 * radius;
+    for (size_t i : {size_t{0}, oblique.point_count - 1}) {
+        if (std::abs(1.0 / oblique.points[i].inverse_depth - cut_depth) > 1e-9) return false;
+    }
+    gizmo.rings[1].point_count = gizmo.rings[2].point_count = 0;
+    ImVec2 rear;
+    const DVec3 rear_point = gizmo.origin + DVec3{diagonal, 0.0, -diagonal} * radius;
+    if (!fixture.project_scene_point(rear_point, fixture.scene_gizmo_view_projection(width, height),
+                                     width, height, rear) || hit_axis(rear) != Axis::None ||
+        hit_axis(oblique.points[oblique.point_count / 2].screen) != Axis::X) return false;
+
+    auto& x = gizmo.rings[0];
+    auto& y = gizmo.rings[1];
+    x.point_count = y.point_count = 2;
+    x.points[0] = {{100.0f, 100.0f}, 0.125};
+    x.points[1] = {{180.0f, 100.0f}, 0.25};
+    y.points[0] = {{120.0f, 80.0f}, 0.171875};
+    y.points[1] = {{120.0f, 140.0f}, 0.171875};
+    const ImVec2 intersection{120.0f, 100.0f};
+    if (hit_axis(intersection) != Axis::Y || hit_axis(intersection, Axis::X) != Axis::X ||
+        hit_axis({120.75f, 100.0f}, Axis::Y) != Axis::Y ||
+        hit_axis({122.0f, 100.0f}, Axis::Y) != Axis::X) return false;
+    y.points[0].inverse_depth = y.points[1].inverse_depth = 0.15625;
+    if (hit_axis(intersection) != Axis::X) return false;
+
+    y.point_count = 0;
+    if (hit_axis({140.0f, 109.5f}) != Axis::X || hit_axis({140.0f, 109.6f}) != Axis::None) return false;
+    fixture.set_scene_edit_component_scale(1.5f);
+    if (hit_axis({140.0f, 114.25f}) != Axis::X || hit_axis({140.0f, 114.4f}) != Axis::None) return false;
+
+    fixture.set_scene_edit_component_scale(1.0f);
+    for (double rz : {90.0, -90.0}) {
+        auto [right, up, forward] = axes;
+        apply_euler(right, up, forward, 0.0, 0.0, rz, &gizmo.axes);
+        if (!fixture.update_scene_rotation_projection(width, height) ||
+            x.closed || y.closed || !x.edge_on || !y.edge_on ||
+            x.point_count != (x.points.size() + 1) / 2 || x.point_count != y.point_count) return false;
+        const bool same_direction = dot(gizmo.axes[0], gizmo.axes[1]) > 0.0;
+        const ImVec2 x_join = x.points[x.point_count - 1].screen;
+        const ImVec2 y_join = y.points[same_direction ? 0 : y.point_count - 1].screen;
+        if (std::hypot(x_join.x - y_join.x, x_join.y - y_join.y) > 0.001f) return false;
+        const auto x_hit = fixture.pick_scene_rotation_ring(x.points[x.point_count / 2].screen, Axis::None);
+        const auto y_hit = fixture.pick_scene_rotation_ring(y.points[y.point_count / 2].screen, Axis::None);
+        if (!x_hit || x_hit->axis != Axis::X || !y_hit || y_hit->axis != Axis::Y ||
+            ((x_hit->tangent.y * y_hit->tangent.y > 0.0f) != same_direction)) return false;
+    }
+    // The projected arc doubles back at its edge-on tip.
+    gizmo.rings = {};
+    x.edge_on = true;
+    x.points[0] = {{100.0f, 130.0f}, 0.1};
+    x.points[1] = {{100.0f, 100.0f}, 0.1};
+    x.points[2] = {{100.125f, 102.0f}, 0.1};
+    x.point_count = 3;
+    ImDrawList draw(ImGui::GetDrawListSharedData());
+    draw._ResetForNewFrame();
+    fixture.draw_scene_rotation_gizmo(&draw, {0.0f, 0.0f});
+    return !draw.VtxBuffer.empty() &&
+        std::all_of(draw.VtxBuffer.begin(), draw.VtxBuffer.end(), [](const ImDrawVert& vertex) {
+            return vertex.pos.y >= 96.0f;
+        });
+}
+
 bool Canvas3D::Impl::debug_check_scene_rotation_gizmo() {
+    if (!debug_check_scene_rotation_rings()) return false;
     constexpr double radians_per_degree = 0.01745329251994329577;
     const auto vector_near = [](DVec3 a, DVec3 b) {
         return dot(a - b, a - b) < 1e-18;

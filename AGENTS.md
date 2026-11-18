@@ -70,6 +70,7 @@ You should read the following notes related to your current agent. If a note app
 ### Codex
 - If the `apply_patch` tool is rejected multiple times while modifying a file, you may retry up to three times. If it is rejected a fourth time, stop the current task immediately and report the issue. **Never use alternative methods (such as patches in Git) to modify the file, as this could lead to serious incidents, such as “the entire source code file being wiped.”**
 - The Codex UI can escape `_` in a user-entered Windows path as `\_`. If a literal path is missing, verify the candidate with that escape removed; if interpretation remains ambiguous, ask the user instead of treating the escape as a directory separator.
+- Take a full-screen screenshot only after verifying that the komapedit window is maximized and has foreground focus.
 
 ## Non-negotiable project constraints
 

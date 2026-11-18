@@ -399,6 +399,7 @@ Use `Add Coordinate Offsets` or `Remove Coordinate Offsets` to switch between `S
 Open `Properties/Edit` and drag a supported object's gizmo to adjust its draft, then apply and save as described above.
 
 - For `Structure.Put`, full-form `Signal.Put`, and `Repeater.Begin`, right-click a translation arrow and select **Rotate**. Drag the X, Y, or Z ring to adjust `rx`, `ry`, or `rz`. Hold **Shift** to snap in 15° steps from the starting angle. Press **Esc** during a drag to restore the previous draft. Right-click a ring and select **Translate** to return to the arrows.
+  The three rings share a radius. A tilted ring shows its near arc, and a ring facing the camera shows the full circle. At a crossing, the highlighted arc is the one the mouse will drag. If the red and green rings coincide, each occupies half of the visible arc.
 - For `Sound3D[soundKey].Put(x, y)`, X/Y adjust the relative position in 0.001 m steps, and Z adjusts mileage in whole meters.
 - `Structure.Put0` and `Repeater.Begin0` use Z to adjust mileage in whole meters. Add coordinate offsets in `Properties/Edit` to enable translation and rotation. For short-form `Signal.Put`, edit an extended field and confirm the full-form conversion to enable rotation.
 - A Repeater with an explicit End provides a Z axis at its end position to adjust the end mileage in whole meters.
