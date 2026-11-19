@@ -698,43 +698,59 @@ struct MapModel {
     bool has_cp_arb = false;
 };
 
+struct EditMetadataTableRows {
+    const char* label;
+    std::vector<TableRow> MapModel::* member;
+    bool editable = true;
+};
+
+inline constexpr std::array<EditMetadataTableRows, 38> k_edit_metadata_table_rows = {{
+    {"curve", &MapModel::curve_rows},
+    {"gradient", &MapModel::gradient_rows},
+    {"otherTrack.change", &MapModel::other_track_changes},
+    {"station.put", &MapModel::station_list_rows},
+    {"station.list", &MapModel::station_definition_rows},
+    {"structure.put", &MapModel::structures},
+    {"structure.between", &MapModel::structures_between},
+    {"structure.model", &MapModel::structure_models},
+    {"otherTrain.definition", &MapModel::other_trains, false},
+    {"otherTrain.stop", &MapModel::other_train_stops, false},
+    {"otherTrain.structureKey", &MapModel::other_train_structure_keys, false},
+    {"otherTrain.sound3DKey", &MapModel::other_train_sound_3d_keys, false},
+    {"signal.aspect", &MapModel::signal_aspects},
+    {"signal.put", &MapModel::signals},
+    {"beacon.put", &MapModel::beacons},
+    {"preTrain.pass", &MapModel::pretrains},
+    {"sound.list", &MapModel::sound_list},
+    {"sound3D.list", &MapModel::sound_3d_list},
+    {"repeater", &MapModel::repeaters},
+    {"irregularity.change", &MapModel::irregularities},
+    {"mapSound.play", &MapModel::map_sounds},
+    {"mapSound3D.put", &MapModel::map_sound_3d},
+    {"rollingNoise.change", &MapModel::rolling_noises},
+    {"flangeNoise.change", &MapModel::flange_noises},
+    {"jointNoise.play", &MapModel::joint_noises},
+    {"background.change", &MapModel::backgrounds},
+    {"adhesion.change", &MapModel::adhesions},
+    {"cabIlluminance.change", &MapModel::cab_illuminance},
+    {"fog.change", &MapModel::fogs},
+    {"legacyFog.change", &MapModel::legacy_fogs},
+    {"light.ambient", &MapModel::light_ambient},
+    {"light.diffuse", &MapModel::light_diffuse},
+    {"light.direction", &MapModel::light_direction},
+    {"drawDistance.change", &MapModel::draw_distances},
+    {"speedlimit", &MapModel::speed_limit_rows},
+    {"section.begin", &MapModel::section_begins},
+    {"section.speedLimit", &MapModel::section_speed_limits},
+    {"creator.message", &MapModel::creator_messages},
+}};
+
 template <typename Model>
-auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
+auto inspector_rows_for_kind(Model& model, std::string_view row_kind)
     -> decltype(&model.structure_models) {
-    if (row_kind == "structure.model") return &model.structure_models;
-    if (row_kind == "structure.put") return &model.structures;
-    if (row_kind == "structure.between") return &model.structures_between;
-    if (row_kind == "station.put") return &model.station_list_rows;
-    if (row_kind == "station.list") return &model.station_definition_rows;
-    if (row_kind == "sound.list") return &model.sound_list;
-    if (row_kind == "sound3D.list") return &model.sound_3d_list;
-    if (row_kind == "repeater") return &model.repeaters;
-    if (row_kind == "signal.put") return &model.signals;
-    if (row_kind == "signal.aspect") return &model.signal_aspects;
-    if (row_kind == "irregularity.change") return &model.irregularities;
-    if (row_kind == "beacon.put") return &model.beacons;
-    if (row_kind == "preTrain.pass") return &model.pretrains;
-    if (row_kind == "mapSound.play") return &model.map_sounds;
-    if (row_kind == "mapSound3D.put") return &model.map_sound_3d;
-    if (row_kind == "rollingNoise.change") return &model.rolling_noises;
-    if (row_kind == "flangeNoise.change") return &model.flange_noises;
-    if (row_kind == "jointNoise.play") return &model.joint_noises;
-    if (row_kind == "background.change") return &model.backgrounds;
-    if (row_kind == "adhesion.change") return &model.adhesions;
-    if (row_kind == "cabIlluminance.change") return &model.cab_illuminance;
-    if (row_kind == "fog.change") return &model.fogs;
-    if (row_kind == "legacyFog.change") return &model.legacy_fogs;
-    if (row_kind == "light.ambient") return &model.light_ambient;
-    if (row_kind == "light.diffuse") return &model.light_diffuse;
-    if (row_kind == "light.direction") return &model.light_direction;
-    if (row_kind == "drawDistance.change") return &model.draw_distances;
-    if (row_kind == "speedlimit") return &model.speed_limit_rows;
-    if (row_kind == "section.begin") return &model.section_begins;
-    if (row_kind == "section.speedLimit") return &model.section_speed_limits;
-    if (row_kind == "curve") return &model.curve_rows;
-    if (row_kind == "gradient") return &model.gradient_rows;
-    if (row_kind == "otherTrack.change") return &model.other_track_changes;
-    if (row_kind == "creator.message") return &model.creator_messages;
+    for (const auto& rows : k_edit_metadata_table_rows) {
+        if (rows.editable && row_kind == rows.label) return &(model.*rows.member);
+    }
     return nullptr;
 }
 
@@ -799,9 +815,7 @@ struct PlanMarker {
     size_t row_index = 0;
 };
 
-struct PlanCurveParameterMarker : PlanMarker {
-    std::string value_label;
-};
+using PlanCurveParameterMarker = PlanMarker;
 
 struct OtherTrackChangeMarker : PlanMarker {
     size_t track_index = 0;
@@ -2454,7 +2468,6 @@ private:
     struct MeasureHitTestCache {
         std::uint64_t plan_generation = std::numeric_limits<std::uint64_t>::max();
         double scale = 0.0;
-        double cell_size = 0.0;
         std::unordered_map<MeasureHitTestCell, std::vector<size_t>,
                            MeasureHitTestCellHash> cells;
         std::vector<size_t> unindexed_points;
@@ -2572,6 +2585,7 @@ private:
     static void log_callback(const char* message);
 
     void stop_loader();
+    std::optional<LoadResult> take_pending_load_result();
     void discard_pending_load_result();
     void publish_load_result(LoadResult result);
     MapViewRestoreState capture_map_view_state() const;

@@ -149,32 +149,8 @@ bool Canvas3D::Impl::load_scene(Canvas3DScene scene, std::string& error, bool pr
         std::chrono::steady_clock::now() - track_gpu_setup_started_at).count();
 
     const auto model_queue_started_at = std::chrono::steady_clock::now();
-    std::map<std::string, SceneModelLoadRequest> requests = collect_scene_model_load_requests();
-    std::vector<SceneModelLoadRequest> requests_to_load;
-    requests_to_load.reserve(requests.size());
-    if (preserve_loaded_models) {
-        for (auto it = scene_models.begin(); it != scene_models.end();) {
-            if (requests.find(it->first) == requests.end()) {
-                release_scene_model(it->second);
-                it = scene_models.erase(it);
-            } else {
-                ++it;
-            }
-        }
-        for (const auto& entry : requests) {
-            auto [it, inserted] = scene_models.try_emplace(entry.first);
-            if (inserted || it->second.state == SceneModelGpu::State::Pending) {
-                release_scene_model(it->second);
-                it->second = SceneModelGpu{};
-                requests_to_load.push_back(entry.second);
-            }
-        }
-    } else {
-        for (const auto& entry : requests) {
-            scene_models[entry.first] = SceneModelGpu{};
-            requests_to_load.push_back(entry.second);
-        }
-    }
+    auto requests = collect_scene_model_load_requests();
+    auto requests_to_load = reconcile_scene_model_requests(requests);
     scene_stats_value.model_path_count = requests.size();
     scene_stats_value.instance_count = count_scene_instances();
     scene_stats_value.chunk_count = scene_chunks.size();
@@ -188,20 +164,16 @@ bool Canvas3D::Impl::load_scene(Canvas3DScene scene, std::string& error, bool pr
     return true;
 }
 
-std::vector<SceneModelLoadRequest> Canvas3D::Impl::reconcile_dynamic_scene_model_requests(
-    const std::map<std::string, SceneModelLoadRequest>& requests) {
-    const bool request_set_changed = requests.size() != scene_models.size() ||
-        std::any_of(scene_models.begin(), scene_models.end(),
-                    [&](const auto& entry) {
-                        return requests.find(entry.first) == requests.end();
-                    });
-    if (request_set_changed && scene_worker.joinable()) {
+std::vector<SceneModelLoadRequest> Canvas3D::Impl::reconcile_scene_model_requests(
+    std::map<std::string, SceneModelLoadRequest>& requests) {
+    if (scene_worker.joinable() &&
+        (requests.size() != scene_models.size() ||
+         std::any_of(scene_models.begin(), scene_models.end(), [&](const auto& entry) {
+             return requests.find(entry.first) == requests.end();
+         }))) {
         stop_scene_loader();
         clear_pending_scene_model_uploads();
     }
-
-    std::vector<SceneModelLoadRequest> requests_to_load;
-    requests_to_load.reserve(requests.size());
     for (auto it = scene_models.begin(); it != scene_models.end();) {
         if (requests.find(it->first) == requests.end()) {
             release_scene_model(it->second);
@@ -210,12 +182,13 @@ std::vector<SceneModelLoadRequest> Canvas3D::Impl::reconcile_dynamic_scene_model
             ++it;
         }
     }
-    for (const auto& entry : requests) {
-        auto [it, inserted] = scene_models.try_emplace(entry.first);
-        if (inserted || it->second.state == SceneModelGpu::State::Pending) {
-            release_scene_model(it->second);
-            it->second = SceneModelGpu{};
-            requests_to_load.push_back(entry.second);
+
+    std::vector<SceneModelLoadRequest> requests_to_load;
+    requests_to_load.reserve(requests.size());
+    for (auto& entry : requests) {
+        auto& model = scene_models.try_emplace(entry.first).first->second;
+        if (model.state == SceneModelGpu::State::Pending) {
+            requests_to_load.push_back(std::move(entry.second));
         }
     }
     return requests_to_load;
@@ -311,7 +284,7 @@ bool Canvas3D::Impl::refresh_scene_dynamic_content(const MapModel& model, int st
 
     std::map<std::string, SceneModelLoadRequest> requests = collect_scene_model_load_requests();
     std::vector<SceneModelLoadRequest> requests_to_load =
-        reconcile_dynamic_scene_model_requests(requests);
+        reconcile_scene_model_requests(requests);
 
     scene_stats_value.model_path_count = requests.size();
     scene_stats_value.instance_count = count_scene_instances();

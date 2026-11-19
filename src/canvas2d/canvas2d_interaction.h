@@ -37,10 +37,6 @@ std::optional<PlanMarkerHit> nearest_marker_hit(
     const PlanScreenTransform& transform, ImVec2 mouse,
     ImVec2 origin, ImVec2 size, float canvas_margin, bool enabled);
 std::optional<PlanMarkerHit> nearest_marker_hit(
-    const std::vector<PlanCurveParameterMarker>& markers,
-    const PlanScreenTransform& transform, ImVec2 mouse,
-    ImVec2 origin, ImVec2 size, float canvas_margin, bool enabled);
-std::optional<PlanMarkerHit> nearest_marker_hit(
     const std::vector<PlanCurveInterpolateMarker>& markers,
     const PlanScreenTransform& transform, ImVec2 mouse,
     ImVec2 origin, ImVec2 size, float canvas_margin, bool enabled);

@@ -482,46 +482,27 @@ void Canvas3D::Impl::update_scene_repeater_chunk_membership(
     size_t repeater_index,
     const std::optional<std::pair<size_t, size_t>>& old_range,
     const std::optional<std::pair<size_t, size_t>>& new_range) {
-    const auto contains = [](const std::optional<std::pair<size_t, size_t>>& range,
-                             size_t index) {
+    const auto contains = [](const auto& range, size_t index) {
         return range && index >= range->first && index <= range->second;
     };
-    const auto visit_range = [&](const std::pair<size_t, size_t>& range,
-                                 const auto& visitor) {
-        for (size_t index = range.first;; ++index) {
-            visitor(index);
-            if (index == range.second) break;
-        }
-    };
     if (old_range) {
-        visit_range(*old_range, [&](size_t chunk_index) {
-            if (chunk_index < scene_chunks.size()) invalidate_scene_repeater_cache(scene_chunks[chunk_index]);
-            if (contains(new_range, chunk_index) ||
-                chunk_index >= scene_chunks.size()) {
-                return;
-            }
-            std::vector<size_t>& indices = scene_chunks[chunk_index].repeater_indices;
-            const auto found = std::lower_bound(
-                indices.begin(), indices.end(), repeater_index);
-            if (found != indices.end() && *found == repeater_index) {
-                indices.erase(found);
-            }
-        });
+        for (size_t i = old_range->first; i <= old_range->second; ++i) {
+            SceneChunk& chunk = scene_chunks[i];
+            invalidate_scene_repeater_cache(chunk);
+            if (contains(new_range, i)) continue;
+            auto& indices = chunk.repeater_indices;
+            indices.erase(std::lower_bound(indices.begin(), indices.end(), repeater_index));
+        }
     }
     if (new_range) {
-        visit_range(*new_range, [&](size_t chunk_index) {
-            if (chunk_index < scene_chunks.size()) invalidate_scene_repeater_cache(scene_chunks[chunk_index]);
-            if (contains(old_range, chunk_index) ||
-                chunk_index >= scene_chunks.size()) {
-                return;
-            }
-            std::vector<size_t>& indices = scene_chunks[chunk_index].repeater_indices;
-            const auto insertion = std::lower_bound(
-                indices.begin(), indices.end(), repeater_index);
-            if (insertion == indices.end() || *insertion != repeater_index) {
-                indices.insert(insertion, repeater_index);
-            }
-        });
+        for (size_t i = new_range->first; i <= new_range->second; ++i) {
+            if (contains(old_range, i)) continue;
+            SceneChunk& chunk = scene_chunks[i];
+            invalidate_scene_repeater_cache(chunk);
+            auto& indices = chunk.repeater_indices;
+            indices.insert(std::lower_bound(indices.begin(), indices.end(), repeater_index),
+                           repeater_index);
+        }
     }
 }
 

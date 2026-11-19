@@ -270,19 +270,15 @@ void App::ensure_table_cache() {
         cache.other_train_stop_rows.push_back(std::move(cached));
     }
     cache.other_train_stop_groups.reserve(stop_groups.size());
-    std::unordered_set<std::string> appended_stop_group_keys;
     for (const auto& definition_key : definition_train_keys) {
-        auto group_it = stop_group_index_by_train_key.find(definition_key.first);
+        const auto group_it = stop_group_index_by_train_key.find(definition_key.first);
         if (group_it == stop_group_index_by_train_key.end()) continue;
-        CachedOtherTrainStopGroup group = stop_groups[group_it->second];
+        auto& group = stop_groups[group_it->second];
         group.train_key = definition_key.second;
-        cache.other_train_stop_groups.push_back(std::move(group));
-        appended_stop_group_keys.insert(definition_key.first);
+        cache.other_train_stop_groups.push_back(std::exchange(group, {}));
     }
     for (auto& group : stop_groups) {
-        std::string normalized_train_key = normalize_train_lookup_key(group.train_key);
-        if (appended_stop_group_keys.find(normalized_train_key) != appended_stop_group_keys.end()) continue;
-        cache.other_train_stop_groups.push_back(std::move(group));
+        if (!group.row_indices.empty()) cache.other_train_stop_groups.push_back(std::move(group));
     }
 
     auto append_section_rows = [&](const std::vector<TableRow>& rows,

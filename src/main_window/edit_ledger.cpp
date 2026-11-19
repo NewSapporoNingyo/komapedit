@@ -1091,13 +1091,16 @@ TypedEditBatchStorage typed_edit_batch(
     return storage;
 }
 
-std::string edit_report_string(const KvEditReportSnapshot& report, KvStringRef ref) {
+static std::string_view edit_report_text(const KvEditReportSnapshot& report, KvStringRef ref) {
     if (!report.string_data || ref.offset > report.string_size ||
         ref.length > report.string_size - ref.offset) {
         return {};
     }
-    return std::string(report.string_data + static_cast<size_t>(ref.offset),
-                       static_cast<size_t>(ref.length));
+    return {report.string_data + ref.offset, static_cast<size_t>(ref.length)};
+}
+
+std::string edit_report_string(const KvEditReportSnapshot& report, KvStringRef ref) {
+    return std::string(edit_report_text(report, ref));
 }
 
 bool App::validate_resource_list_file_change_candidate(
@@ -1196,141 +1199,101 @@ DistanceResolutionRequest distance_resolution_request_from_typed(
     return request;
 }
 
-struct CommittedEditFileState {
-    std::string file_path;
-    std::string source_hash;
-    size_t byte_length = 0;
-};
-
-struct CommittedEditRowState {
-    std::string row_kind;
-    size_t row_index = 0;
-    std::string edit_id;
-    EditSourceInfo source;
-};
-
 bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& report,
                                 std::string& error) {
     if (report.committed_file_count == 0) return true;
-    if (!report.committed_files) {
-        error = "edit commit report has a null committed-file array";
+    if (!report.committed_files || (report.committed_row_count != 0 && !report.committed_rows)) {
+        error = "edit commit report is missing committed metadata";
         return false;
     }
 
-    std::vector<CommittedEditFileState> file_states;
-    file_states.reserve(static_cast<size_t>(report.committed_file_count));
-    for (std::uint64_t i = 0; i < report.committed_file_count; ++i) {
-        const KvEditCommittedFileRow& item = report.committed_files[i];
-        CommittedEditFileState state;
-        state.file_path = edit_report_string(report, item.file_path);
-        state.source_hash = edit_report_string(report, item.source_hash);
-        state.byte_length = static_cast<size_t>(item.byte_length);
-        file_states.push_back(std::move(state));
-    }
-
-    if (report.committed_row_count != 0 && !report.committed_rows) {
-        error = "edit commit report is missing committed row metadata";
-        return false;
-    }
-    std::map<std::string, std::vector<CommittedEditRowState>> rows_by_kind;
-    for (std::uint64_t i = 0; i < report.committed_row_count; ++i) {
-        const KvEditCommittedRow& item = report.committed_rows[i];
-        CommittedEditRowState state;
-        state.row_kind = edit_report_string(report, item.row_kind);
-        if (item.row_index > static_cast<std::uint64_t>(std::numeric_limits<size_t>::max())) {
-            error = "edit commit report contains an invalid row index";
-            return false;
-        }
-        state.row_index = static_cast<size_t>(item.row_index);
-        state.edit_id = edit_report_string(report, item.edit_id);
-        state.source.file_path = edit_report_string(report, item.file_path);
-        state.source.line = item.line;
-        state.source.column = item.column;
-        state.source.raw_text_preview = edit_report_string(report, item.raw_text_preview);
-        if (inspector_rows_for_kind(model, state.row_kind)) {
-            rows_by_kind[state.row_kind].push_back(std::move(state));
-        }
-    }
-
-    static constexpr std::array<const char*, 33> k_committed_row_kinds = {
-        "curve", "gradient", "structure.model", "structure.put", "structure.between", "station.put",
-        "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
-        "signal.aspect", "irregularity.change",
-        "beacon.put", "mapSound.play", "mapSound3D.put",
-        "rollingNoise.change", "flangeNoise.change", "jointNoise.play",
-        "background.change", "adhesion.change", "cabIlluminance.change",
-        "fog.change", "light.ambient", "light.diffuse", "light.direction",
-        "legacyFog.change",
-        "drawDistance.change", "speedlimit",
-        "section.begin", "section.speedLimit", "otherTrack.change",
-        "creator.message",
+    struct RowIndex {
+        std::vector<const KvEditCommittedRow*> by_position;
+        std::unordered_map<std::string_view, const KvEditCommittedRow*> by_id;
+        size_t count = 0;
     };
-    std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
-        states_by_edit_id;
-    for (const char* row_kind : k_committed_row_kinds) {
-        std::vector<TableRow>* target_rows = inspector_rows_for_kind(model, row_kind);
-        const std::vector<CommittedEditRowState>& states = rows_by_kind[row_kind];
-        if (!target_rows || states.size() != target_rows->size()) {
-            error = std::string("edit commit row count mismatch for ") + row_kind;
+    std::unordered_map<std::string_view, RowIndex> indices;
+    size_t row_count = 0;
+    for (const auto& family : k_edit_metadata_table_rows) {
+        if (!family.editable) continue;
+        const size_t count = (model.*family.member).size();
+        indices[family.label].by_position.resize(count);
+        row_count += count;
+    }
+    for (std::uint64_t i = 0; i < report.committed_row_count; ++i) {
+        const auto& item = report.committed_rows[i];
+        const auto kind = edit_report_text(report, item.row_kind);
+        const auto found = indices.find(kind);
+        if (found == indices.end()) continue;
+        RowIndex& index = found->second;
+        if (item.row_index >= index.by_position.size() || index.by_position[item.row_index]) {
+            error = "edit commit row mapping is invalid for " + std::string(kind);
             return false;
         }
-        std::vector<bool> seen(target_rows->size(), false);
-        for (const CommittedEditRowState& state : states) {
-            if (state.row_index >= target_rows->size() || seen[state.row_index]) {
-                error = std::string("edit commit row mapping is invalid for ") + row_kind;
-                return false;
-            }
-            seen[state.row_index] = true;
-            if (!state.edit_id.empty()) {
-                auto inserted = states_by_edit_id[row_kind].emplace(state.edit_id, &state);
-                if (!inserted.second) {
-                    error = std::string("edit commit contains a duplicate editId for ") +
-                        row_kind + ": " + state.edit_id;
+        index.by_position[item.row_index] = &item;
+        ++index.count;
+        const auto id = edit_report_text(report, item.edit_id);
+        if (!id.empty() && !index.by_id.emplace(id, &item).second) {
+            error = "edit commit contains a duplicate editId for " + std::string(kind) + ": " +
+                std::string(id);
+            return false;
+        }
+    }
+
+    std::vector<std::pair<TableRow*, EditSourceInfo>> row_updates;
+    row_updates.reserve(row_count);
+    for (const auto& family : k_edit_metadata_table_rows) {
+        if (!family.editable) continue;
+        auto& rows = model.*family.member;
+        const RowIndex& index = indices.at(family.label);
+        if (index.count != rows.size()) {
+            error = std::string("edit commit row count mismatch for ") + family.label;
+            return false;
+        }
+        for (size_t i = 0; i < rows.size(); ++i) {
+            TableRow& row = rows[i];
+            const KvEditCommittedRow* item = index.by_position[i];
+            if (!row.edit_id.empty()) {
+                const auto found = index.by_id.find(row.edit_id);
+                if (found == index.by_id.end()) {
+                    error = std::string("edit commit lost stable row identity for ") +
+                        family.label + ": " + row.edit_id;
                     return false;
                 }
-            }
-        }
-        for (const TableRow& row : *target_rows) {
-            if (row.edit_id.empty()) continue;
-            if (states_by_edit_id[row_kind].find(row.edit_id) ==
-                states_by_edit_id[row_kind].end()) {
-                error = std::string("edit commit lost stable row identity for ") +
-                    row_kind + ": " + row.edit_id;
+                item = found->second;
+            } else if (!edit_report_text(report, item->edit_id).empty()) {
+                error = std::string("edit commit could not bind row metadata for ") + family.label;
                 return false;
             }
+            row_updates.emplace_back(&row, EditSourceInfo{
+                edit_report_string(report, item->file_path), item->line, item->column,
+                edit_report_string(report, item->raw_text_preview)});
         }
     }
 
-    for (const CommittedEditFileState& state : file_states) {
-        auto file = std::find_if(model.edit_files.begin(), model.edit_files.end(),
-                                 [&](const EditSourceFileInfo& candidate) {
-                                     return candidate.file_path == state.file_path;
-                                 });
-        if (file == model.edit_files.end()) continue;
-        file->source_hash = state.source_hash;
-        file->byte_length = state.byte_length;
-    }
-    for (const char* row_kind : k_committed_row_kinds) {
-        std::vector<TableRow>* target_rows = inspector_rows_for_kind(model, row_kind);
-        for (size_t row_index = 0; row_index < target_rows->size(); ++row_index) {
-            TableRow& row = (*target_rows)[row_index];
-            const CommittedEditRowState* state = nullptr;
-            if (!row.edit_id.empty()) {
-                state = states_by_edit_id[row_kind].at(row.edit_id);
-            } else {
-                const std::vector<CommittedEditRowState>& states = rows_by_kind[row_kind];
-                auto fallback = std::find_if(
-                    states.begin(), states.end(), [&](const CommittedEditRowState& candidate) {
-                        return candidate.row_index == row_index && candidate.edit_id.empty();
-                    });
-                if (fallback != states.end()) state = &*fallback;
-            }
-            if (!state) {
-                error = std::string("edit commit could not bind row metadata for ") + row_kind;
-                return false;
-            }
-            row.source = state->source;
+    std::unordered_map<std::string_view, EditSourceFileInfo*> files;
+    files.reserve(model.edit_files.size());
+    for (auto& file : model.edit_files) files.emplace(file.file_path, &file);
+    struct FileUpdate {
+        EditSourceFileInfo* file;
+        std::string source_hash;
+        size_t byte_length;
+    };
+    std::vector<FileUpdate> file_updates;
+    file_updates.reserve(files.size());
+    for (std::uint64_t i = 0; i < report.committed_file_count; ++i) {
+        const auto& item = report.committed_files[i];
+        const auto found = files.find(edit_report_text(report, item.file_path));
+        if (found != files.end()) {
+            file_updates.push_back({found->second, edit_report_string(report, item.source_hash),
+                                    static_cast<size_t>(item.byte_length)});
         }
+    }
+
+    for (auto& update : row_updates) update.first->source = std::move(update.second);
+    for (auto& update : file_updates) {
+        update.file->source_hash = std::move(update.source_hash);
+        update.file->byte_length = update.byte_length;
     }
     return true;
 }

@@ -468,7 +468,7 @@ This section describes the main responsibilities of files in `include/` and `src
 
 - **Track sampling:** `scene_track_sampling.cpp/.h` provides ordinary track sampling, camera extrapolation before the track start, and camera distance bounds. Extrapolation before the start is specific to the camera.
 - **Scene data:** Vector, matrix, and bounding-box functions build world transforms; CPU/GPU records manage models, materials, textures, chunk instances, markers, pick targets, and reverse navigation.
-- **Model loading:** `ModelLoaderClient` loads the v2 API from `bin/model_loader.dll` and pairs allocations with their frees. Workers copy CPU model data; the main thread creates D3D resources through `upload_pending_scene_models()`. The lifecycle module coordinates cancellation, joining, wakeups, and uploads.
+- `ModelLoaderClient` shares one successful v2 binding to `bin/model_loader.dll` across previews and pairs DLL allocations with their frees. Workers publish one result group per source model. `upload_pending_scene_models()` runs on the main thread and uploads the base mesh before any derived PutBetween meshes.
 - **Resource and scene lifetimes:** `load_model()`, `upload_model()`, and `reload_model()` manage single-model preview; `load_scene()`, dynamic/map/station refresh, and `clear_scene()` manage scene replacement and refresh. Pipelines are created on demand, textures reuse caches, instance buffers grow as needed, and matching release functions free resources.
 - **Chunks and placement:** `build_scene_chunks()` organizes Structure, Signal, Repeater, and track geometry by distance. Track sampling, cant frames, `make_track_placement_frame()`, and `make_track_world()` convert BVE placement parameters to world matrices. Scenes use camera-relative coordinates and reversed-Z depth.
 - **Markers and picking:** Shared 2D icon recipes generate 3D billboards; visibility changes rebuild marker indices. The pick pass writes object/marker IDs and reads back one pixel; highlight masks and outline compositing draw hovered and selected outlines.
@@ -635,6 +635,8 @@ maploader owns sources and edit identity; the GUI operates on working copies thr
 | GUI Reload | Reread disk after confirming unsaved changes |
 
 `sourceHash` identifies the working copy; `expectedSourceHash` remains the disk concurrency baseline across repeated Apply/Delete operations. Before Apply or Save, a full reparse checks each target value, non-target elements, and final variable bindings. A valid edit may change the final `distance`.
+
+After Save, the GUI validates all committed row bindings before updating source locations, hashes, and file sizes. It matches rows by stable edit ID and uses row indices for rows without an ID.
 
 #### Distance planning and source patches
 

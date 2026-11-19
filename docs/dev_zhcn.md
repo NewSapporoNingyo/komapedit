@@ -468,7 +468,7 @@ ctest --test-dir build --output-on-failure
 
 - **轨道采样**：`scene_track_sampling.cpp/.h` 提供普通轨道采样、相机起点前外推和相机里程边界；起点前外推专供相机使用。
 - **场景数据**：向量、矩阵和包围盒函数构建世界变换；CPU/GPU 记录分别管理模型、材质、纹理、分块实例、标记、拾取目标和反向定位。
-- **模型加载**：`ModelLoaderClient` 从 `bin/model_loader.dll` 加载 v2 API，并配对分配与释放。worker 复制 CPU 模型数据，主线程通过 `upload_pending_scene_models()` 创建 D3D 资源；取消、join、唤醒和上传由生命周期模块协调。
+- 各预览共用 `ModelLoaderClient` 一次成功绑定的 `bin/model_loader.dll` v2 API，DLL 分配和释放成对执行。工作线程按模型源整组发布结果。主线程通过 `upload_pending_scene_models()` 先上传基础网格，再上传派生的 PutBetween 网格。
 - **资源与场景生命周期**：`load_model()`、`upload_model()`、`reload_model()` 管理单模型预览；`load_scene()`、dynamic/map/station refresh 和 `clear_scene()` 管理场景替换与刷新。管线按需创建，纹理复用缓存，实例缓冲按需扩容，资源由对应 release 函数释放。
 - **分块与放置**：`build_scene_chunks()` 按里程组织 Structure、Signal、Repeater 和轨道几何；轨道采样、超高坐标系及 `make_track_placement_frame()`、`make_track_world()` 将 BVE 放置参数转换为世界矩阵。场景使用相机相对坐标和 reversed-Z 深度。
 - **标记与拾取**：共享 2D 图标配方生成 3D billboard；可见性变化重建标记索引。pick pass 写入对象/标记 ID 并回读单像素，highlight mask 和 outline composite 绘制悬停与选择轮廓。
@@ -635,6 +635,8 @@ maploader 持有源码及编辑身份，GUI 通过类型化请求操作工作副
 | GUI“重新加载” | 确认未保存更改后重新读取磁盘 |
 
 `sourceHash` 标识工作副本；`expectedSourceHash` 在多次 Apply/Delete 期间保持为磁盘并发基线。应用或保存前完整重解析，校验每个目标值、非目标元素及最终变量绑定；合法编辑可改变最终 `distance`。
+
+保存后，GUI 验证提交报告中的所有行绑定，再更新源码位置、散列和文件长度。有稳定 edit ID 的行按 ID 匹配，无 ID 的行按行索引匹配。
 
 #### 距离规划与源码补丁
 

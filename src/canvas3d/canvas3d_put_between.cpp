@@ -291,7 +291,6 @@ void Canvas3D::Impl::start_scene_put_between_preview_worker() {
                 }
             };
             try {
-                ModelLoaderClient preview_loader;
                 std::unordered_map<std::string, ScenePutBetweenPreparedSource> source_cache;
                 for (;;) {
                     ScenePutBetweenPreviewJob job;
@@ -319,11 +318,9 @@ void Canvas3D::Impl::start_scene_put_between_preview_worker() {
                             prepared.source->path = job.request.source_path;
                             prepared.source->scene_key = job.request.source_path;
                             MlMeshData data = {};
-                            ModelDataGuard data_guard(preview_loader, data);
                             std::string load_error;
-                            if (preview_loader.load(
-                                    job.request.source_path, data, load_error)) {
-                                data_guard.mark_loaded();
+                            if (ModelLoaderClient::load(job.request.source_path, data, load_error)) {
+                                ModelDataGuard data_guard(data);
                                 *prepared.source =
                                     copy_cpu_model(job.request.source_path, data);
                             } else {
@@ -538,9 +535,7 @@ void Canvas3D::Impl::apply_scene_put_between_preview_result() {
 
     auto [shared_it, inserted] = scene_models.try_emplace(result.source->path);
     if (inserted || shared_it->second.state != SceneModelGpu::State::Ready) {
-        CpuModelData source = *result.source;
-        source.scene_key = source.path;
-        source.shared_model_key.clear();
+        const CpuModelData& source = *result.source;
         std::string source_error;
         if (!upload_scene_model(source, source_error) ||
             shared_it->second.state != SceneModelGpu::State::Ready) {

@@ -1436,7 +1436,6 @@ private:
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
             dispatch_station(fn, args, function.raw_arguments);
         } else if (first == "track") {
-            if (!objects.front().has_key) throw std::runtime_error("Track key is required");
             dispatch_track(objects.front().key, labels, fn, function.args,
                            function.explicit_argument_count);
         } else if (first == "speedlimit") {
@@ -1471,9 +1470,7 @@ private:
         } else if (first == "jointnoise") {
             dispatch_joint_noise(fn, function.args);
         } else if (first == "repeater") {
-            std::vector<Value> args = function.args;
-            if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
-            dispatch_repeater(fn, args);
+            dispatch_repeater(fn, objects.front().key, function.args);
         } else if (first == "irregularity") {
             dispatch_irregularity(fn, function.args);
         } else if (first == "background") {
@@ -1827,9 +1824,7 @@ private:
             row.distance = ctx_.distance;
             row.track_key = track_key;
             row.method = method;
-            row.parameters.assign(
-                a.begin(), a.begin() + static_cast<std::ptrdiff_t>(
-                    std::min(explicit_argument_count, a.size())));
+            row.parameters.assign(a.begin(), a.begin() + explicit_argument_count);
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             attach_active_edit_ref(ctx_, row);
@@ -1852,7 +1847,7 @@ private:
         }
         if (labels.size() >= 2 && (labels[1] == "x" || labels[1] == "y") && fn == "interpolate") {
             add_change(labels[1] == "x" ? "Track.X.Interpolate" : "Track.Y.Interpolate");
-            setposition_interpolate(track_key, labels[1], a);
+            put_track_position(track_key, labels[1], a[0], arg_or_null(a, 1));
             return;
         }
         if (labels.size() >= 2 && labels[1] == "cant") {
@@ -1874,30 +1869,20 @@ private:
         }
     }
 
-    void setposition_interpolate(const Value& track_key, const std::string& dim, const std::vector<Value>& a) {
-        if (a.empty()) {
-            put_other(ctx_, track_key, dim + ".position", Value::null());
-            put_other(ctx_, track_key, dim + ".radius", Value::null());
-        } else if (a.size() == 1) {
-            put_other(ctx_, track_key, dim + ".position", a.at(0));
-            put_other(ctx_, track_key, dim + ".radius", Value::null());
-        } else {
-            put_other(ctx_, track_key, dim + ".position", a.at(0));
-            put_other(ctx_, track_key, dim + ".radius", a.at(1));
-        }
+    void put_track_position(const Value& track_key, const std::string& axis,
+                            const Value& position, const Value& radius) {
+        put_other(ctx_, track_key, axis + ".position", position);
+        put_other(ctx_, track_key, axis + ".radius", radius);
     }
 
     void track_position(const Value& track_key, const std::vector<Value>& a) {
-        if (a.size() == 2) {
-            setposition_interpolate(track_key, "x", {a[0].is_null() ? Value::num(0.0) : a[0], Value::num(0.0)});
-            setposition_interpolate(track_key, "y", {a[1].is_null() ? Value::num(0.0) : a[1], Value::num(0.0)});
-        } else if (a.size() == 3) {
-            setposition_interpolate(track_key, "x", {a[0].is_null() ? Value::num(0.0) : a[0], a[2].is_null() ? Value::num(0.0) : a[2]});
-            setposition_interpolate(track_key, "y", {a[1].is_null() ? Value::num(0.0) : a[1], Value::num(0.0)});
-        } else if (a.size() >= 4) {
-            setposition_interpolate(track_key, "x", {a[0].is_null() ? Value::num(0.0) : a[0], a[2].is_null() ? Value::num(0.0) : a[2]});
-            setposition_interpolate(track_key, "y", {a[1].is_null() ? Value::num(0.0) : a[1], a[3].is_null() ? Value::num(0.0) : a[3]});
-        }
+        const Value zero = Value::num(0.0);
+        const auto or_zero = [&](size_t index) -> const Value& {
+            const Value& value = arg_or_null(a, index);
+            return value.is_null() ? zero : value;
+        };
+        put_track_position(track_key, "x", or_zero(0), or_zero(2));
+        put_track_position(track_key, "y", or_zero(1), or_zero(3));
     }
 
     void dispatch_speedlimit(const std::string& fn, const std::vector<Value>& a) {
@@ -2198,42 +2183,32 @@ private:
         ctx_.joint_noises.push_back(std::move(row));
     }
 
-    void dispatch_repeater(const std::string& fn, const std::vector<Value>& a) {
-        if (fn == "begin" && a.size() >= 11) {
-            RepeaterEvent row;
-            row.distance = ctx_.distance;
-            row.method = "Begin";
-            row.repeater_key = a[0]; row.track_key = a[1];
-            row.x = as_number(a[2]); row.y = as_number(a[3]); row.z = as_number(a[4]);
-            row.rx = as_number(a[5]); row.ry = as_number(a[6]); row.rz = as_number(a[7]);
-            row.tilt = as_number(a[8]); row.span = as_number(a[9]); row.interval = as_number(a[10]);
-            row.structure_keys.assign(a.begin() + 11, a.end());
-            row.file_path = ctx_.current_file_path;
-            row.order = ctx_.next_parse_order();
-            attach_active_edit_ref(ctx_, row);
-            ctx_.repeaters.push_back(row);
-        } else if (fn == "begin0" && a.size() >= 5) {
-            RepeaterEvent row;
-            row.distance = ctx_.distance;
-            row.method = "Begin0";
-            row.repeater_key = a[0]; row.track_key = a[1];
-            row.tilt = as_number(a[2]); row.span = as_number(a[3]); row.interval = as_number(a[4]);
-            row.structure_keys.assign(a.begin() + 5, a.end());
-            row.file_path = ctx_.current_file_path;
-            row.order = ctx_.next_parse_order();
-            attach_active_edit_ref(ctx_, row);
-            ctx_.repeaters.push_back(row);
-        } else if (fn == "end" && !a.empty()) {
-            RepeaterEvent row;
-            row.distance = ctx_.distance;
+    void dispatch_repeater(const std::string& fn, const Value& key,
+                           const std::vector<Value>& a) {
+        RepeaterEvent row;
+        row.distance = ctx_.distance;
+        row.repeater_key = key;
+        if (fn == "end") {
             row.method = "End";
-            row.repeater_key = a[0];
             row.track_key = Value::str("");
-            row.file_path = ctx_.current_file_path;
-            row.order = ctx_.next_parse_order();
-            attach_active_edit_ref(ctx_, row);
-            ctx_.repeaters.push_back(row);
+        } else {
+            const bool full = fn == "begin";
+            row.method = full ? "Begin" : "Begin0";
+            row.track_key = a[0];
+            if (full) {
+                row.x = as_number(a[1]); row.y = as_number(a[2]); row.z = as_number(a[3]);
+                row.rx = as_number(a[4]); row.ry = as_number(a[5]); row.rz = as_number(a[6]);
+            }
+            const size_t first_common = full ? 7 : 1;
+            row.tilt = as_number(a[first_common]);
+            row.span = as_number(a[first_common + 1]);
+            row.interval = as_number(a[first_common + 2]);
+            row.structure_keys.assign(a.begin() + first_common + 3, a.end());
         }
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
+        ctx_.repeaters.push_back(std::move(row));
     }
 
     void dispatch_irregularity(const std::string& fn, const std::vector<Value>& a) {

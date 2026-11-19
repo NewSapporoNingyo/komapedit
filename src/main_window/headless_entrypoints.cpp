@@ -5099,7 +5099,7 @@ int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOp
                         return target.load_state_.debug_pause_after_publish.load() &&
                             !target.load_state_.running && target.load_state_.worker.joinable() &&
                             pending.ok && pending.handle && !pending.edit_metadata_only &&
-                            same_path(pending.path, expected_map) && !target.handle_ && !target.has_model_;
+                            same_path(pending.path, expected_map);
                     }
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -5116,7 +5116,8 @@ int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOp
             exit_app.load_state_.debug_pause_after_publish = true;
             exit_app.open_document(utf8(single_scenario), false);
             require("unconsumed_result_before_exit",
-                wait_for_unconsumed_result(exit_app, utf8(map_path)));
+                wait_for_unconsumed_result(exit_app, utf8(map_path)) &&
+                !exit_app.handle_ && !exit_app.has_model_);
         }
         require("unconsumed_result_exit_completed", g_app == nullptr);
         {
@@ -5276,7 +5277,8 @@ int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOp
             app.open_document(utf8(single_scenario), false);
             const bool unconsumed_before_reset = wait_for_unconsumed_result(app, utf8(map_path));
             app.load_state_.debug_pause_after_publish = false;
-            require("unconsumed_result_before_reset", unconsumed_before_reset);
+            require("unconsumed_result_before_reset",
+                unconsumed_before_reset && !app.handle_ && !app.has_model_);
             app.reset_document_for_open();
             bool pending_cleared = false;
             {
@@ -5286,6 +5288,45 @@ int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOp
             require("unconsumed_result_reset_clears_document", pending_cleared &&
                 !app.load_state_.running && !app.load_state_.worker.joinable() &&
                 !app.handle_ && !app.has_model_ && app.current_document_entry_path().empty());
+
+            const std::string fixture_map = utf8(map_path);
+            app.edit_mode_enabled_ = false;
+            app.open_document(fixture_map, false);
+            require("direct_map_ready", wait_for_map(std::nullopt) && !app.edit_registry_loaded_);
+            const auto publish_unconsumed_map = [&] {
+                app.load_state_.debug_pause_after_publish = true;
+                app.begin_map_load(fixture_map, false, false, std::nullopt);
+                const bool published = wait_for_unconsumed_result(app, fixture_map);
+                app.load_state_.debug_pause_after_publish = false;
+                return published;
+            };
+            require("unconsumed_result_before_same_file_reload", publish_unconsumed_map());
+            app.reload_current_map_geometry();
+            bool pending_reload_is_current;
+            {
+                std::lock_guard<std::mutex> lock(app.load_state_.result_mutex);
+                const auto& pending = app.load_state_.pending_result;
+                pending_reload_is_current = !pending || pending->preserve_settings;
+            }
+            require("same_file_reload_discards_old_result",
+                pending_reload_is_current && wait_for_map(true) && same_path(app.file_path_, fixture_map));
+
+            require("unconsumed_result_before_edit_metadata", publish_unconsumed_map());
+            void* const preview_handle = app.handle_;
+            app.edit_mode_enabled_ = true;
+            app.begin_edit_metadata_load();
+            bool pending_metadata_is_current;
+            {
+                std::lock_guard<std::mutex> lock(app.load_state_.result_mutex);
+                const auto& pending = app.load_state_.pending_result;
+                pending_metadata_is_current = !pending || pending->edit_metadata_only;
+            }
+            require("edit_metadata_discards_old_result", pending_metadata_is_current);
+            app.stop_loader();
+            app.poll_loader();
+            require("edit_metadata_promotes_preview", app.edit_registry_loaded_ &&
+                app.handle_ != preview_handle && same_path(app.file_path_, fixture_map));
+
             app.open_document(utf8(single_scenario), false);
             select_route(0);
             require("unconsumed_result_reset_allows_reopen", wait_for_map(std::nullopt) &&

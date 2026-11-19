@@ -179,15 +179,6 @@ struct SourceTextOverride {
 using SourceTextOverrides = std::map<std::string, SourceTextOverride>;
 
 std::string detect_newline(const std::string& text);
-LoadedText make_loaded_header_text(const std::filesystem::path& path,
-                                   std::string text,
-                                   std::string encoding,
-                                   std::string newline,
-                                   std::string source_hash,
-                                   size_t byte_length,
-                                   const std::string& head_str,
-                                   double min_version,
-                                   bool collect_source_metadata);
 LoadedText load_header_text(const std::filesystem::path& path,
                             const std::string& head_str,
                             double min_version,

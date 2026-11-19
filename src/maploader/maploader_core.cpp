@@ -210,7 +210,9 @@ bool parse_creator_message_comment(std::string_view comment, std::string& conten
     return true;
 }
 
-LoadedText make_loaded_header_text(const std::filesystem::path& path,
+static LoadedText make_loaded_header_text(const std::filesystem::path& path,
+                                   std::string normalized_path,
+                                   std::string normalized_key,
                                    std::string text,
                                    std::string encoding,
                                    std::string newline,
@@ -235,12 +237,11 @@ LoadedText make_loaded_header_text(const std::filesystem::path& path,
     }
     const size_t body_offset = has_header_terminator ? first_line.next_begin : text.size();
     std::string body = has_header_terminator ? text.substr(body_offset) : std::string();
-    std::string normalized_path = normalized_source_path(path);
-    std::string normalized_key = normalized_source_key(normalized_path);
     std::vector<size_t> line_starts;
     if (collect_source_metadata) line_starts = build_line_starts(body);
-    return {std::move(body), path, std::filesystem::absolute(path).parent_path(), normalized_path,
-            normalized_key, std::move(encoding), std::move(newline), std::move(source_hash),
+    return {std::move(body), path, std::filesystem::absolute(path).parent_path(),
+            std::move(normalized_path), std::move(normalized_key),
+            std::move(encoding), std::move(newline), std::move(source_hash),
             std::move(line_starts),
             byte_length, body_offset, has_header_terminator ? 2 : 1};
 }
@@ -260,7 +261,8 @@ LoadedText load_header_text(const std::filesystem::path& path,
             const SourceTextOverride& source = override_it->second;
             if (full_text) *full_text = source.text;
             if (utf8_bom) *utf8_bom = source.utf8_bom;
-            return make_loaded_header_text(path, source.text, source.encoding, source.newline,
+            return make_loaded_header_text(path, std::move(normalized_path), std::move(normalized_key),
+                                           source.text, source.encoding, source.newline,
                                            collect_source_metadata ? source.current_hash : std::string{},
                                            source.byte_length,
                                            head_str, min_version,
@@ -295,7 +297,7 @@ LoadedText load_header_text(const std::filesystem::path& path,
             } else {
                 text = decode_codepage(bytes, CP_UTF8, true);
             }
-        } catch (...) {
+        } catch (const std::runtime_error&) {
             std::string retry = ascii_lower(encoding) == "utf-8" ? "cp932" : "utf-8";
             KME_MAPLOADER_LOG_WARN(path_to_utf8(path.filename()) + " cannot be decoded with " + encoding +
                                     ". Komapedit tries to decode with " + retry + ".");
@@ -313,7 +315,8 @@ LoadedText load_header_text(const std::filesystem::path& path,
     if (collect_source_metadata) source_hash = hex64(stable_hash64(bytes));
     if (full_text) *full_text = text;
     if (utf8_bom) *utf8_bom = has_utf8_bom(bytes);
-    return make_loaded_header_text(path, std::move(text), std::move(encoding), std::move(newline),
+    return make_loaded_header_text(path, std::move(normalized_path), std::move(normalized_key),
+                                   std::move(text), std::move(encoding), std::move(newline),
                                    std::move(source_hash), bytes.size(),
                                    head_str, min_version,
                                    collect_source_metadata);

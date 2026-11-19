@@ -176,6 +176,7 @@ std::string decode_codepage(const std::string& bytes, unsigned int codepage, boo
     if (wide_len <= 0) {
         throw std::runtime_error("text decode failed");
     }
+    if (flags == MB_ERR_INVALID_CHARS) return bytes;
     std::wstring wide(wide_len, L'\0');
     MultiByteToWideChar(codepage, flags, bytes.data(), static_cast<int>(bytes.size()),
                         wide.data(), wide_len);

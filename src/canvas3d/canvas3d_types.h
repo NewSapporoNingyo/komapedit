@@ -12,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <map>
 #include <memory>
@@ -221,6 +222,13 @@ struct SceneModelLoadRequest {
     std::string key;
     std::string source_path;
     ScenePutBetweenDeformation put_between;
+};
+
+struct SceneModelLoadGroup {
+    std::vector<SceneModelLoadRequest> requests;
+    std::vector<CpuModelData> outputs;
+    std::string error;
+    std::exception_ptr exception;
 };
 
 struct ScenePutBetweenPreviewJob {

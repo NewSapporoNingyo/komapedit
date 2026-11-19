@@ -24,9 +24,8 @@ using namespace canvas3d_detail;
 bool Canvas3D::Impl::load_model(const std::string& path, std::string& error) {
     model_load_warnings.clear();
     MlMeshData data = {};
-    ModelDataGuard data_guard(loader, data);
-    if (!loader.load(path, data, error)) return false;
-    data_guard.mark_loaded();
+    if (!ModelLoaderClient::load(path, data, error)) return false;
+    ModelDataGuard data_guard(data);
 
     return upload_model(data, path, error);
 }
@@ -56,10 +55,6 @@ bool Canvas3D::Impl::reload_model(std::string& error) {
 bool Canvas3D::Impl::upload_model(const MlMeshData& data, const std::string& path, std::string& error) {
     if (!device || !context) {
         error = "Direct3D device is not available";
-        return false;
-    }
-    if (data.vertex_count == 0 || data.index_count == 0 || !data.vertices || !data.indices) {
-        error = "model contains no renderable data";
         return false;
     }
     if (data.vertex_count > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(GpuVertex)) ||
@@ -104,38 +99,28 @@ bool Canvas3D::Impl::upload_model(const MlMeshData& data, const std::string& pat
         return false;
     }
 
-    parts.clear();
-    if (data.parts && data.part_count > 0) {
-        parts.reserve(data.part_count);
-        for (size_t i = 0; i < data.part_count; ++i) {
-            parts.push_back({data.parts[i].start_index, data.parts[i].index_count, data.parts[i].material_index});
-        }
-    } else {
-        parts.push_back({0, static_cast<UINT>(data.index_count), 0});
+    parts.reserve(data.part_count);
+    for (size_t i = 0; i < data.part_count; ++i) {
+        const MlMeshPart& part = data.parts[i];
+        parts.push_back({part.start_index, part.index_count, part.material_index});
     }
 
-    materials.clear();
-    const size_t material_count = std::max<size_t>(data.material_count, 1);
-    materials.resize(material_count);
-    for (size_t i = 0; i < material_count; ++i) {
-        const MlMaterial* src = data.materials && i < data.material_count ? &data.materials[i] : nullptr;
-        if (src) {
-            materials[i].diffuse[0] = src->diffuse[0];
-            materials[i].diffuse[1] = src->diffuse[1];
-            materials[i].diffuse[2] = src->diffuse[2];
-            materials[i].diffuse[3] = normalize_material_alpha(src->diffuse[3]);
-            if (src->texture_path && *src->texture_path) {
-                bool texture_has_alpha = false;
-                std::string texture_error;
-                if (!load_texture(src->texture_path, &materials[i].texture,
-                                  texture_error, &texture_has_alpha)) {
-                    model_load_warnings.push_back(
-                        "[WARN]canvas3D.cpp: model preview texture warning: model=" +
-                        path + "; " + texture_error);
-                } else {
-                    materials[i].has_texture = true;
-                    materials[i].texture_has_alpha = texture_has_alpha;
-                }
+    materials.resize(data.material_count);
+    for (size_t i = 0; i < data.material_count; ++i) {
+        const MlMaterial& src = data.materials[i];
+        auto& dest = materials[i];
+        std::copy_n(src.diffuse, 3, dest.diffuse);
+        dest.diffuse[3] = normalize_material_alpha(src.diffuse[3]);
+        if (src.texture_path && *src.texture_path) {
+            bool texture_has_alpha = false;
+            std::string texture_error;
+            if (!load_texture(src.texture_path, &dest.texture, texture_error, &texture_has_alpha)) {
+                model_load_warnings.push_back(
+                    "[WARN]canvas3D.cpp: model preview texture warning: model=" +
+                    path + "; " + texture_error);
+            } else {
+                dest.has_texture = true;
+                dest.texture_has_alpha = texture_has_alpha;
             }
         }
     }
@@ -144,7 +129,7 @@ bool Canvas3D::Impl::upload_model(const MlMeshData& data, const std::string& pat
     bounds_min = {data.bounds_min[0], data.bounds_min[1], data.bounds_min[2]};
     bounds_max = {data.bounds_max[0], data.bounds_max[1], data.bounds_max[2]};
     center = {data.center[0], data.center[1], data.center[2]};
-    radius = std::max(data.radius, 0.001f);
+    radius = data.radius;
     model_path_value = path;
     yaw = 0.0f;
     pitch = 0.0f;

@@ -77,19 +77,20 @@ void App::stop_loader() {
     if (load_state_.worker.joinable()) load_state_.worker.join();
 }
 
-void App::discard_pending_load_result() {
+std::optional<App::LoadResult> App::take_pending_load_result() {
     std::lock_guard<std::mutex> lock(load_state_.result_mutex);
-    if (load_state_.pending_result && load_state_.pending_result->handle) {
-        kv_free(load_state_.pending_result->handle);
-    }
-    load_state_.pending_result.reset();
+    return std::exchange(load_state_.pending_result, std::nullopt);
+}
+
+void App::discard_pending_load_result() {
+    if (auto result = take_pending_load_result()) kv_free(result->handle);
 }
 
 void App::publish_load_result(LoadResult result) {
     {
         std::lock_guard<std::mutex> lock(load_state_.result_mutex);
-        load_state_.running = false;
         load_state_.pending_result = std::move(result);
+        load_state_.running = false;
     }
 #ifndef NDEBUG
     while (load_state_.debug_pause_after_publish.load()) std::this_thread::yield();
@@ -120,15 +121,7 @@ void App::handle_loader_start_failure(const std::string& error) {
 }
 
 void App::poll_loader() {
-    std::optional<LoadResult> result;
-    {
-        std::lock_guard<std::mutex> lock(load_state_.result_mutex);
-        if (load_state_.pending_result) {
-            result = std::move(load_state_.pending_result);
-            load_state_.pending_result.reset();
-        }
-    }
-    if (result) apply_load_result(std::move(*result));
+    if (auto result = take_pending_load_result()) apply_load_result(std::move(*result));
 }
 
 bool App::on_frame_presented() {
@@ -331,6 +324,7 @@ void App::begin_map_load(std::string path, bool preserve_settings, bool record_h
     if (preserve_settings && !view_to_restore) view_to_restore = capture_map_view_state();
 
     stop_loader();
+    discard_pending_load_result();
     {
         std::lock_guard<std::mutex> lock(log_mutex_);
         logs_.clear();
@@ -394,6 +388,7 @@ void App::begin_edit_metadata_load() {
     const double cp2 = has_cp ? model_.cp_arb[2] : 25.0;
 
     stop_loader();
+    discard_pending_load_result();
     load_state_.running = true;
     load_state_.pending_started_at.reset();
     set_program_status("status.edit.loading_metadata");
@@ -534,54 +529,6 @@ bool table_row_count_matches(const char* label,
     return false;
 }
 
-struct EditMetadataTableRows {
-    const char* label;
-    std::vector<TableRow> MapModel::* member;
-};
-
-constexpr std::array<EditMetadataTableRows, 38> k_edit_metadata_table_rows = {{
-    {"curve", &MapModel::curve_rows},
-    {"gradient", &MapModel::gradient_rows},
-    {"otherTrack.change", &MapModel::other_track_changes},
-    {"station.put", &MapModel::station_list_rows},
-    {"station.list", &MapModel::station_definition_rows},
-    {"structure.put", &MapModel::structures},
-    {"structure.between", &MapModel::structures_between},
-    {"structure.model", &MapModel::structure_models},
-    {"otherTrain.definition", &MapModel::other_trains},
-    {"otherTrain.stop", &MapModel::other_train_stops},
-    {"otherTrain.structureKey", &MapModel::other_train_structure_keys},
-    {"otherTrain.sound3DKey", &MapModel::other_train_sound_3d_keys},
-    {"signal.aspect", &MapModel::signal_aspects},
-    {"signal.put", &MapModel::signals},
-    {"beacon.put", &MapModel::beacons},
-    {"preTrain.pass", &MapModel::pretrains},
-    {"sound.list", &MapModel::sound_list},
-    {"sound3D.list", &MapModel::sound_3d_list},
-    {"repeater", &MapModel::repeaters},
-    {"irregularity.change", &MapModel::irregularities},
-    {"mapSound.play", &MapModel::map_sounds},
-    {"mapSound3D.put", &MapModel::map_sound_3d},
-    {"rollingNoise.change", &MapModel::rolling_noises},
-    {"flangeNoise.change", &MapModel::flange_noises},
-    {"jointNoise.play", &MapModel::joint_noises},
-    {"background.change", &MapModel::backgrounds},
-    {"adhesion.change", &MapModel::adhesions},
-    {"cabIlluminance.change", &MapModel::cab_illuminance},
-    {"fog.change", &MapModel::fogs},
-    {"legacyFog.change", &MapModel::legacy_fogs},
-    {"light.ambient", &MapModel::light_ambient},
-    {"light.diffuse", &MapModel::light_diffuse},
-    {"light.direction", &MapModel::light_direction},
-    {"drawDistance.change", &MapModel::draw_distances},
-    {"speedlimit", &MapModel::speed_limit_rows},
-    {"section.begin", &MapModel::section_begins},
-    {"section.speedLimit", &MapModel::section_speed_limits},
-    {"creator.message", &MapModel::creator_messages},
-}};
-
-constexpr size_t k_own_track_edit_metadata_row_count = 3;
-
 bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edit_model,
                                     std::string& error) {
     for (const EditMetadataTableRows& rows : k_edit_metadata_table_rows) {
@@ -616,10 +563,10 @@ bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edi
 }
 
 void merge_table_row_edit_metadata(std::vector<TableRow>& current,
-                                   const std::vector<TableRow>& edit_rows) {
+                                   std::vector<TableRow>& edit_rows) {
     for (size_t i = 0; i < current.size(); ++i) {
-        current[i].edit_id = edit_rows[i].edit_id;
-        current[i].source = edit_rows[i].source;
+        current[i].edit_id = std::move(edit_rows[i].edit_id);
+        current[i].source = std::move(edit_rows[i].source);
     }
 }
 
@@ -629,19 +576,16 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     current.edit_elements = std::move(edit_model.edit_elements);
     for (size_t i = 0; i < current.resource_list_sources.size(); ++i) {
         current.resource_list_sources[i].edit_id =
-            edit_model.resource_list_sources[i].edit_id;
+            std::move(edit_model.resource_list_sources[i].edit_id);
     }
     for (size_t i = 0; i < current.own_events.size(); ++i) {
         current.own_events[i].source_row_index =
             edit_model.own_events[i].source_row_index;
     }
-    for (size_t i = 0; i < k_edit_metadata_table_rows.size(); ++i) {
-        const EditMetadataTableRows& rows = k_edit_metadata_table_rows[i];
-        merge_table_row_edit_metadata(current.*(rows.member), edit_model.*(rows.member));
-        if (i + 1 == k_own_track_edit_metadata_row_count) {
-            annotate_own_track_transition_links(current);
-        }
+    for (const auto& rows : k_edit_metadata_table_rows) {
+        merge_table_row_edit_metadata(current.*rows.member, edit_model.*rows.member);
     }
+    annotate_own_track_transition_links(current);
     bind_station_position_edit_ids(current);
 }
 
@@ -775,7 +719,8 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
     out.load_profile = options.load_profile;
     auto maploader_started_at = std::chrono::steady_clock::now();
     unsigned load_flags = options.full_edit_registry ? KV_LOAD_EDIT_METADATA : KV_LOAD_PREVIEW;
-    void* handle = kv_load_map_ex(path.c_str(), unit_distance, load_flags);
+    std::unique_ptr<void, decltype(&kv_free)> handle(
+        kv_load_map_ex(path.c_str(), unit_distance, load_flags), &kv_free);
     auto maploader_finished_at = std::chrono::steady_clock::now();
     out.maploader_seconds = std::chrono::duration<double>(maploader_finished_at - maploader_started_at).count();
     if (!handle) {
@@ -785,17 +730,16 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
         return out;
     }
     if (has_cp) {
-        if (!kv_generate_geometry(handle, unit_distance, 1, cp_start, cp_end, cp_step)) {
+        if (!kv_generate_geometry(handle.get(), unit_distance, 1, cp_start, cp_end, cp_step)) {
             const char* err = kv_get_last_error();
             out.error = err ? err : "geometry failed";
             out.elapsed_seconds = elapsed_seconds();
-            kv_free(handle);
             return out;
         }
     }
     try {
         auto model_started_at = std::chrono::steady_clock::now();
-        out.model = build_model_from_handle(handle, path, options);
+        out.model = build_model_from_handle(handle.get(), path, options);
         out.model_build_seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - model_started_at).count();
         if (has_cp) {
@@ -804,13 +748,12 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
             out.model.cp_arb[1] = cp_end;
             out.model.cp_arb[2] = cp_step;
         }
-        out.handle = handle;
+        out.handle = handle.release();
         out.ok = true;
         out.elapsed_seconds = elapsed_seconds();
     } catch (const std::exception& e) {
         out.error = e.what();
         out.elapsed_seconds = elapsed_seconds();
-        kv_free(handle);
     }
     return out;
 }

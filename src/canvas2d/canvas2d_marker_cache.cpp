@@ -303,7 +303,6 @@ void App::rebuild_marker_overlay_cache() {
                 marker.y = point->y;
                 marker.label = method == "curve.setcenter" ? "CC" :
                     method == "curve.setfunction" ? "CF" : "CG";
-                marker.value_label = table_cell(row, "radius");
                 marker.edit_id = row.edit_id;
                 marker.row_index = row_index;
                 curve_parameter_marker_cache_.push_back(std::move(marker));

@@ -14,6 +14,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <initializer_list>
+#include <list>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -39,8 +41,8 @@ struct Canvas3D::Impl {
 
     bool load_scene(Canvas3DScene scene, std::string& error, bool preserve_loaded_models, bool preserve_camera);
 
-    std::vector<canvas3d_detail::SceneModelLoadRequest> reconcile_dynamic_scene_model_requests(
-        const std::map<std::string, canvas3d_detail::SceneModelLoadRequest>& requests);
+    std::vector<canvas3d_detail::SceneModelLoadRequest> reconcile_scene_model_requests(
+        std::map<std::string, canvas3d_detail::SceneModelLoadRequest>& requests);
 
     bool refresh_scene_dynamic_content(const MapModel& model, int station_index, std::string& error);
 
@@ -258,7 +260,8 @@ struct Canvas3D::Impl {
 
     void notify_scene_loading_progress();
 
-    void queue_scene_model_uploads(std::vector<canvas3d_detail::CpuModelData> outputs);
+    void build_scene_model_group(canvas3d_detail::SceneModelLoadGroup& group);
+    void log_scene_worker_failure(std::initializer_list<std::string_view> fragments) noexcept;
 
     void clear_pending_scene_model_uploads();
 
@@ -1004,7 +1007,7 @@ struct Canvas3D::Impl {
     size_t scene_model_worker_limit = 0;
     bool scene_texture_cache_enabled = true;
     std::mutex scene_upload_mutex;
-    std::vector<canvas3d_detail::CpuModelData> scene_pending_uploads;
+    std::list<canvas3d_detail::SceneModelLoadGroup> scene_pending_uploads;
     std::atomic<bool> scene_wake_pending{false};
     std::mutex scene_log_mutex;
     std::vector<std::string> scene_pending_logs;
@@ -1070,6 +1073,4 @@ struct Canvas3D::Impl {
     std::atomic<int> debug_texture_allocation_throw_countdown{0};
     std::atomic<int> debug_scene_index_buffer_failure_countdown{0};
 #endif
-    canvas3d_detail::ModelLoaderClient loader;
-    canvas3d_detail::ModelLoaderClient scene_loader;
 };

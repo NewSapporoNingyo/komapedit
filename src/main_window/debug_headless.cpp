@@ -4765,7 +4765,7 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
                  << "Structure.Load('structures.csv');\n"
                  << "100;\n"
                  << "Station['STA'].Put();\n"
-                 << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\n"
+                 << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25); PreTrain.Pass(46800);\n"
                  << "Structure['bridge'].PutBetween('0','1',0);\n"
                  << "125;\n"
                  << "Structure['pole'].Put('0',9,2,3,0,0,0,0,25);\n"
@@ -4798,8 +4798,8 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
     if (!baseline_snapshot_ok) exit_code = 4;
     const TableRow* initial_target = find_structure_by_values(load.model, 100.0, 1.0);
     const TableRow* initial_non_target = find_structure_by_values(load.model, 125.0, 9.0);
-    if (!initial_target || !initial_non_target) {
-        *out << "missing_structure_identity_fixture_rows=1\nresult=FAIL\n";
+    if (!initial_target || !initial_non_target || load.model.pretrains.size() != 1) {
+        *out << "missing_identity_fixture_rows=1\nresult=FAIL\n";
         if (load.handle) kv_free(load.handle);
         std::filesystem::remove_all(temp_root);
         return 3;
@@ -4993,6 +4993,30 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         const bool commit_call_ok = kv_edit_commit_typed(
             load.handle, &commit_report, sizeof(commit_report)) != 0;
         const bool commit_ok = commit_call_ok && commit_report.ok != 0;
+        bool rejected_report_unchanged = false;
+        if (commit_ok) {
+            MapModel malformed_model = local_commit_model;
+            // An empty local ID cannot bind to a report row with a stable ID.
+            malformed_model.structures[1].edit_id.clear();
+            std::string rejection;
+            const bool rejected = !apply_committed_edit_report_to_model(
+                malformed_model, commit_report, rejection);
+            const bool rows_unchanged = std::equal(
+                malformed_model.structures.begin(), malformed_model.structures.end(),
+                local_commit_model.structures.begin(), [](const TableRow& a, const TableRow& b) {
+                    return a.source.file_path == b.source.file_path &&
+                        a.source.line == b.source.line && a.source.column == b.source.column &&
+                        a.source.raw_text_preview == b.source.raw_text_preview;
+                });
+            const bool files_unchanged = std::equal(
+                malformed_model.edit_files.begin(), malformed_model.edit_files.end(),
+                local_commit_model.edit_files.begin(),
+                [](const EditSourceFileInfo& a, const EditSourceFileInfo& b) {
+                    return a.source_hash == b.source_hash && a.byte_length == b.byte_length;
+                });
+            rejected_report_unchanged = rejected && !rejection.empty() &&
+                rows_unchanged && files_unchanged;
+        }
         std::string commit_metadata_error;
         bool commit_metadata_merge_ok = commit_ok &&
             apply_committed_edit_report_to_model(
@@ -5011,6 +5035,18 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
             find_structure_by_edit_id(local_commit_model, baseline_structure_edit_id);
         const TableRow* local_committed_non_target =
             find_structure_by_edit_id(local_commit_model, baseline_non_target_edit_id);
+        const TableRow& baseline_pretrain = load.model.pretrains.front();
+        const TableRow& local_committed_pretrain = local_commit_model.pretrains.front();
+        const auto committed_pretrain_metadata = resolve_inspector_target_metadata(
+            load.handle, baseline_pretrain.edit_id, "preTrain.pass");
+        const bool pretrain_source_rebound = committed_pretrain_metadata &&
+            !baseline_pretrain.edit_id.empty() &&
+            local_committed_pretrain.edit_id == baseline_pretrain.edit_id &&
+            local_committed_pretrain.source.file_path == committed_pretrain_metadata->source.file_path &&
+            local_committed_pretrain.source.line == committed_pretrain_metadata->source.line &&
+            local_committed_pretrain.source.column == committed_pretrain_metadata->source.column &&
+            (local_committed_pretrain.source.line != baseline_pretrain.source.line ||
+             local_committed_pretrain.source.column != baseline_pretrain.source.column);
         commit_metadata_merge_ok = commit_metadata_merge_ok && committed_target_metadata &&
             committed_non_target_metadata && local_committed_target &&
             local_committed_non_target &&
@@ -5021,7 +5057,13 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         *out << "commit_ok=" << (commit_ok ? 1 : 0) << "\n";
         *out << "commit_metadata_merge_ok=" <<
             (commit_metadata_merge_ok ? 1 : 0) << "\n";
-        if (!commit_ok || !commit_metadata_merge_ok) {
+        *out << "commit_rejected_report_unchanged=" << (rejected_report_unchanged ? 1 : 0) << "\n";
+        *out << "commit_pretrain_source_rebound=" << (pretrain_source_rebound ? 1 : 0) << "\n";
+        if (!commit_ok || !commit_metadata_merge_ok ||
+            !rejected_report_unchanged || !pretrain_source_rebound) {
+            *out << "pretrain_source_before=" << baseline_pretrain.source.line << ","
+                 << baseline_pretrain.source.column << " after=" << local_committed_pretrain.source.line
+                 << "," << local_committed_pretrain.source.column << "\n";
             *out << "commit_report_ok=" << (commit_report.ok ? 1 : 0)
                  << " committed_files=" << commit_report.committed_file_count
                  << " blocking_errors=" << commit_report.blocking_error_count << "\n";

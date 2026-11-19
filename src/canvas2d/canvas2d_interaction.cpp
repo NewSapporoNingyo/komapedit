@@ -81,14 +81,6 @@ std::optional<PlanMarkerHit> nearest_marker_hit(
 }
 
 std::optional<PlanMarkerHit> nearest_marker_hit(
-    const std::vector<PlanCurveParameterMarker>& markers,
-    const PlanScreenTransform& transform, ImVec2 mouse,
-    ImVec2 origin, ImVec2 size, float canvas_margin, bool enabled) {
-    return nearest_marker_hit_impl(
-        markers, transform, mouse, origin, size, canvas_margin, enabled);
-}
-
-std::optional<PlanMarkerHit> nearest_marker_hit(
     const std::vector<PlanCurveInterpolateMarker>& markers,
     const PlanScreenTransform& transform, ImVec2 mouse,
     ImVec2 origin, ImVec2 size, float canvas_margin, bool enabled) {
@@ -194,7 +186,6 @@ std::optional<double> App::nearest_plan_measure_distance(
         MeasureHitTestCache rebuilt;
         rebuilt.plan_generation = plan_data_cache_.generation;
         rebuilt.scale = scale;
-        rebuilt.cell_size = cell_size;
         rebuilt.cells.reserve(data.own.size() / 4 + 1);
         for (size_t index = 0; index < data.own.size(); ++index) {
             const TrackPoint& point = data.own[index];
@@ -226,29 +217,23 @@ std::optional<double> App::nearest_plan_measure_distance(
         }
     };
 
+    std::optional<MeasureHitTestCell> center;
     if (use_spatial_index) {
         const auto [mouse_x, mouse_y] = measure_transform.screen_to_plan(mouse);
-        if (auto center = cell_for_point(mouse_x, mouse_y)) {
-            for (long long offset_y = -1; offset_y <= 1; ++offset_y) {
-                for (long long offset_x = -1; offset_x <= 1; ++offset_x) {
-                    const MeasureHitTestCell cell{center->x + offset_x, center->y + offset_y};
-                    const auto found = measure_hit_test_cache_.cells.find(cell);
-                    if (found == measure_hit_test_cache_.cells.end()) continue;
-                    for (size_t index : found->second) consider_point(index);
-                }
-            }
-            for (size_t index : measure_hit_test_cache_.unindexed_points) {
-                consider_point(index);
-            }
-        } else {
-            for (size_t index = 0; index < data.own.size(); ++index) {
-                consider_point(index);
+        center = cell_for_point(mouse_x, mouse_y);
+    }
+    if (center) {
+        for (long long offset_y = -1; offset_y <= 1; ++offset_y) {
+            for (long long offset_x = -1; offset_x <= 1; ++offset_x) {
+                const MeasureHitTestCell cell{center->x + offset_x, center->y + offset_y};
+                const auto found = measure_hit_test_cache_.cells.find(cell);
+                if (found == measure_hit_test_cache_.cells.end()) continue;
+                for (size_t index : found->second) consider_point(index);
             }
         }
+        for (size_t index : measure_hit_test_cache_.unindexed_points) consider_point(index);
     } else {
-        for (size_t index = 0; index < data.own.size(); ++index) {
-            consider_point(index);
-        }
+        for (size_t index = 0; index < data.own.size(); ++index) consider_point(index);
     }
 
 #ifndef NDEBUG
