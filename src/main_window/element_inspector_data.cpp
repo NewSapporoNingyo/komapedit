@@ -266,6 +266,7 @@ std::optional<ResourceListKind> resource_list_kind_for_new_file(NewFileKind kind
     case NewFileKind::Sound3D: return ResourceListKind::Sound3D;
     case NewFileKind::Station: return ResourceListKind::Station;
     case NewFileKind::Map:
+    case NewFileKind::Project:
     case NewFileKind::Scenario: return std::nullopt;
     }
     return std::nullopt;
@@ -391,7 +392,9 @@ bool App::stage_new_file_reference(NewFileKind kind,
 }
 
 void App::request_new_file_create(NewFileCreateRequest request) {
-    if (request.kind == NewFileKind::Scenario) request.target_file_path.clear();
+    if (request.kind == NewFileKind::Scenario || request.kind == NewFileKind::Project) {
+        request.target_file_path.clear();
+    }
     pending_new_file_create_request_ = std::move(request);
 }
 
@@ -399,15 +402,22 @@ void App::process_pending_new_file_create() {
     if (!pending_new_file_create_request_) return;
     NewFileCreateRequest request = std::move(*pending_new_file_create_request_);
     pending_new_file_create_request_.reset();
+    const bool project = request.kind == NewFileKind::Project;
+    const char* invalid_path = project ? "status.new_project.invalid_path"
+                                       : "status.new_file.invalid_path";
     if (!new_file_name_is_safe(request.file_name)) {
-        set_program_status("status.new_file.invalid_path");
+        set_program_status(invalid_path);
         return;
     }
 
     const std::filesystem::path directory(utf8_to_wide(request.directory));
     std::error_code ec;
     if (directory.empty() || !std::filesystem::is_directory(directory, ec) || ec) {
-        set_program_status("status.new_file.invalid_path");
+        set_program_status(invalid_path);
+        return;
+    }
+    if (project) {
+        create_new_project(request, directory);
         return;
     }
     std::filesystem::path file_name(utf8_to_wide(request.file_name));

@@ -29,6 +29,7 @@ Select a language:
 - **Interface**: Movable, dockable windows, searchable data tables, and navigation between tables, 2D views, and the 3D scene.
 - **Preview**: Route plans, elevation profiles, markers, Structure models, and 3D scenes, with background-image alignment, measurement, and track-geometry CSV export.
 - **Editing** supports modifying, deleting, or adding map elements through property windows, resource lists, and wizards. Use 3D gizmos to translate and rotate supported placements. Manage submaps and create or edit Map, Scenario, and resource-list files. [3D editing controls](docs/user-manual.md#live-adjustment-in-the-3d-scene)
+- Start a blank project from **File → New... → Presets → BVETs Project**. The chosen directory receives a Scenario and a README, and the project subdirectory holds the Map and five linked resource lists. **Confirm and Load** opens the Scenario. The wizard reports a conflict if any output name already exists.
 - **UI languages** include English, Simplified Chinese, Traditional Chinese, Japanese, and Korean. The Language menu groups `简体`, `台湾繁體`, and `香港繁體` under `中文`.
 
 ## Installation and Startup

@@ -115,7 +115,7 @@ constexpr std::array<NewFileTemplateCategoryInfo, 4>
         {"resource_lists", "new_file.category.resource_lists"},
     }};
 
-constexpr std::array<NewFileTemplate, 7> k_new_file_templates = {{
+constexpr std::array<NewFileTemplate, 8> k_new_file_templates = {{
     {NewFileKind::Map, "map", "BveTs Map 2.02", "new_file.usage.map"},
     {NewFileKind::Scenario, "scenario", "BveTs Scenario 2.00", "new_file.usage.scenario"},
     {NewFileKind::Structure, "resource_lists", "Structure List", "new_file.usage.structure"},
@@ -123,6 +123,7 @@ constexpr std::array<NewFileTemplate, 7> k_new_file_templates = {{
     {NewFileKind::Sound, "resource_lists", "Sound List", "new_file.usage.sound"},
     {NewFileKind::Sound3D, "resource_lists", "Sound3D List", "new_file.usage.sound3d"},
     {NewFileKind::Station, "resource_lists", "Station List", "new_file.usage.station"},
+    {NewFileKind::Project, "presets", "BVETs Project", "new_file.usage.project"},
 }};
 
 const std::vector<NewElementTemplate>& new_element_templates_internal() {
@@ -2169,6 +2170,9 @@ void App::render_new_file_wizard() {
                       ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), true);
     const NewFileTemplate& tpl =
         k_new_file_templates[static_cast<size_t>(wizard.selected_template)];
+    const bool project_template = tpl.kind == NewFileKind::Project;
+    const bool scenario_template = tpl.kind == NewFileKind::Scenario;
+    const bool accepts_reference = !project_template && !scenario_template;
     const ImGuiStyle& style = ImGui::GetStyle();
     const std::optional<ResourceListKind> resource_list_kind =
         resource_list_kind_for_new_file(tpl.kind);
@@ -2198,23 +2202,30 @@ void App::render_new_file_wizard() {
             }
         }
     }
-    ImGui::TextUnformatted(tr("label.new_file_name").c_str());
-    const float extension_control_width = ImGui::GetFrameHeight() * 2.0f +
-        ImGui::CalcTextSize(".txt").x + ImGui::CalcTextSize(".csv").x +
-        style.ItemSpacing.x * 2.0f + style.ItemInnerSpacing.x * 2.0f;
-    ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x -
-                                     extension_control_width));
-    ImGui::InputText("##NewFileName", &wizard.file_name);
-    ImGui::SameLine();
-    if (ImGui::RadioButton(".txt##NewFileTextExtension", !wizard.use_csv_extension)) {
-        wizard.use_csv_extension = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton(".csv##NewFileCsvExtension", wizard.use_csv_extension)) {
-        wizard.use_csv_extension = true;
+    if (project_template) {
+        ImGui::TextUnformatted(tr("label.new_project_name").c_str());
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputText("##NewProjectName", &wizard.project_name);
+    } else {
+        ImGui::TextUnformatted(tr("label.new_file_name").c_str());
+        const float extension_control_width = ImGui::GetFrameHeight() * 2.0f +
+            ImGui::CalcTextSize(".txt").x + ImGui::CalcTextSize(".csv").x +
+            style.ItemSpacing.x * 2.0f + style.ItemInnerSpacing.x * 2.0f;
+        ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x -
+                                         extension_control_width));
+        ImGui::InputText("##NewFileName", &wizard.file_name);
+        ImGui::SameLine();
+        if (ImGui::RadioButton(".txt##NewFileTextExtension", !wizard.use_csv_extension)) {
+            wizard.use_csv_extension = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(".csv##NewFileCsvExtension", wizard.use_csv_extension)) {
+            wizard.use_csv_extension = true;
+        }
     }
 
-    ImGui::TextUnformatted(tr("label.new_file_directory").c_str());
+    ImGui::TextUnformatted(tr(project_template ? "label.new_project_directory"
+                                              : "label.new_file_directory").c_str());
     const std::string select_directory = tr("button.select_directory");
     const float select_directory_width = ImGui::CalcTextSize(select_directory.c_str()).x +
         style.FramePadding.x * 2.0f;
@@ -2227,7 +2238,6 @@ void App::render_new_file_wizard() {
         if (!selected.empty()) wizard.directory = selected;
     }
 
-    const bool scenario_template = tpl.kind == NewFileKind::Scenario;
     if (scenario_template) {
         // The Scenario form mirrors the Scenario File tab's eight official
         // fields. Route/Vehicle use one candidate with default weight 1; Image
@@ -2290,7 +2300,7 @@ void App::render_new_file_wizard() {
         scenario_field_row("Comment", draft.comment, false);
     }
 
-    if (!scenario_template) {
+    if (accepts_reference) {
         ImGui::TextUnformatted(tr("label.new_file_reference").c_str());
         const std::string target_preview = wizard.target_file_path.empty()
             ? tr("status.new_file.no_reference_target")
@@ -2317,13 +2327,13 @@ void App::render_new_file_wizard() {
     }
     ImGui::Separator();
     const bool create_disabled =
-        (!scenario_template && !wizard.target_file_path.empty() &&
+        (accepts_reference && !wizard.target_file_path.empty() &&
          !edit_actions_available()) ||
         resource_list_already_referenced;
     const auto request_create = [&](bool load_after_create) {
         request_new_file_create(NewFileCreateRequest{
-            tpl.kind, wizard.file_name, wizard.directory, wizard.target_file_path,
-            wizard.use_csv_extension, load_after_create,
+            tpl.kind, project_template ? wizard.project_name : wizard.file_name,
+            wizard.directory, wizard.target_file_path, wizard.use_csv_extension, load_after_create,
             scenario_template ? wizard.scenario_draft : NewFileScenarioDraft{}});
     };
     ImGui::BeginDisabled(create_disabled);
@@ -2331,7 +2341,7 @@ void App::render_new_file_wizard() {
         request_create(false);
     }
     ImGui::EndDisabled();
-    if (tpl.kind == NewFileKind::Map || scenario_template) {
+    if (tpl.kind == NewFileKind::Map || scenario_template || project_template) {
         ImGui::SameLine();
         ImGui::BeginDisabled(create_disabled || load_state_.running);
         if (ImGui::Button(tr("button.confirm_and_load").c_str())) {

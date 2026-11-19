@@ -498,6 +498,32 @@ HeadlessNewFileWizardOptions parse_headless_new_file_wizard_options(
         [](HeadlessNewFileWizardOptions&) {});
 }
 
+HeadlessNewProjectOptions parse_headless_new_project_options(
+    const std::vector<std::string>& args) {
+    HeadlessNewProjectOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        std::string* destination = nullptr;
+        const char* requirement = "an existing directory";
+        if (arg == "--debug-headless-new-project") {
+            options.requested = true;
+            destination = &options.directory;
+        } else if (arg == "--headless-output") {
+            destination = &options.output_path;
+            requirement = "an output file";
+        } else {
+            continue;
+        }
+        const std::string* value = take_option_value(args, i, arg, requirement, options.error);
+        if (!value) return options;
+        *destination = *value;
+    }
+    if (options.requested && options.directory.empty()) {
+        options.error = "--debug-headless-new-project requires an existing directory";
+    }
+    return options;
+}
+
 HeadlessScenarioCreateOptions parse_headless_scenario_create_options(
     const std::vector<std::string>& args) {
     HeadlessScenarioCreateOptions options;

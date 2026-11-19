@@ -288,6 +288,7 @@ std::string_view new_bve_file_header(NewFileKind kind) {
     case NewFileKind::Sound3D: return "BveTs Sound List 2.00:utf-8\r\n";
     case NewFileKind::Station: return "BveTs Station List 2.00:utf-8\r\n";
     case NewFileKind::Scenario: return "BveTs Scenario 2.00:utf-8\r\n";
+    case NewFileKind::Project: return {};
     }
     return {};
 }
@@ -300,6 +301,7 @@ std::string_view new_file_resource_list_kind(NewFileKind kind) {
     case NewFileKind::Sound3D: return "sound3d";
     case NewFileKind::Station: return "station";
     case NewFileKind::Map:
+    case NewFileKind::Project:
     case NewFileKind::Scenario: return {};
     }
     return {};

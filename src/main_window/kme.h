@@ -78,6 +78,7 @@ struct HeadlessAutoInsertDiagnosticsOptions;
 struct HeadlessResourceListReplaceOptions;
 struct HeadlessResourceListInsertOptions;
 struct HeadlessNewFileWizardOptions;
+struct HeadlessNewProjectOptions;
 struct HeadlessScenarioCreateOptions;
 struct HeadlessScenarioLifecycleOptions;
 struct HeadlessFreshResourceListWorkflowOptions;
@@ -1489,6 +1490,7 @@ enum class NewFileKind : std::uint8_t {
     Sound3D,
     Station,
     Scenario,
+    Project,
 };
 
 // Wizard draft for the eight official BveTs Scenario 2.00 fields. Empty
@@ -1514,6 +1516,7 @@ struct NewFileWizardState {
     std::vector<std::string> target_file_candidates;
     std::string target_file_path;
     std::string file_name;
+    std::string project_name;
     std::string directory;
     NewFileScenarioDraft scenario_draft;
 };
@@ -1990,6 +1993,7 @@ public:
         const HeadlessResourceListInsertOptions& options);
     static int run_debug_headless_new_file_wizard(
         const HeadlessNewFileWizardOptions& options);
+    static int run_debug_headless_new_project(const HeadlessNewProjectOptions& options);
     static int run_debug_headless_scenario_create(
         const HeadlessScenarioCreateOptions& options);
     static int run_debug_headless_scenario_lifecycle(
@@ -2671,6 +2675,8 @@ private:
     void process_pending_include_file_insert();
     void request_new_file_create(NewFileCreateRequest request);
     void process_pending_new_file_create();
+    void create_new_project(const NewFileCreateRequest& request,
+                            const std::filesystem::path& directory);
     bool stage_new_file_reference(NewFileKind kind,
                                   const std::string& target_file_path,
                                   const std::string& selected_file);

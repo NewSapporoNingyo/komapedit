@@ -557,6 +557,17 @@ int main(int, char**) {
         return App::run_debug_headless_new_file_wizard(new_file_wizard);
     }
 
+    HeadlessNewProjectOptions new_project = parse_headless_new_project_options(args);
+    if (new_project.requested) {
+        if (!new_project.error.empty()) {
+            std::cerr << new_project.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-new-project <existing-directory> "
+                         "[--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_new_project(new_project);
+    }
+
     HeadlessScenarioLifecycleOptions scenario_lifecycle =
         parse_headless_scenario_lifecycle_options(args);
     if (scenario_lifecycle.requested) {

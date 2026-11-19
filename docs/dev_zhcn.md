@@ -376,6 +376,7 @@ ctest --test-dir build --output-on-failure
 - `edit_benchmark.cpp` 承载独立的 Debug 编辑性能入口：真实输入只做内存 Apply/Delete/Revert 与字节保护，Save 仅在保持相对依赖布局的排他临时普通文件副本中运行，同时检查刷新合并、回滚和阶段计时契约。
 - `element_inspector_data.cpp` 管理 Inspector 打开、定位、字段/场景编辑数据与 Apply；`element_inspector_render.cpp` 只渲染 Inspector 字段、可选插入参数和可变 Repeater/Section UI。
 - `editable_list_drafts.cpp` 管理资源列表草稿；`new_element_wizard.cpp` 拥有新元素模板/向导、结构化插入以及新建文件向导的状态与渲染；`headless_entrypoints.cpp` 承载复用正式 App 工作流的新元素、资源列表替换/插入、新建文件向导和 Scenario 创建契约。
+- `new_project.cpp` 在最终目标所在目录暂存 BVETs Project 模板，用 maploader 校验暂存的 Scenario、地图和资源列表，最后发布 Scenario。发布失败时回滚本次请求已移动的条目。
 - `app_dialogs.cpp` 拥有文件对话框、Scenario Route 候选选择、Scenario 新文件正文构建和其它模态弹窗；布景模型列表的模型文件选择对话框同时复用于 3D-模型预览窗口直接打开任意模型；`element_inspector_data.cpp` 处理新文件请求的延迟、排他创建与创建后打开；`ui_elements.cpp` 拥有 dockspace、菜单、工具栏、状态栏、控制台、快捷键和设置投影；`scene_preview_lifecycle.cpp` 拥有场景/模型预览的启停、重建、可见性和窗口渲染。
 
 #### `src/main_window/file_structure_diagram.cpp`
@@ -769,6 +770,7 @@ build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless
 build\komapedit.exe --debug-headless-resource-list-insert <map-path> --kind structure|signal --headless-output build\resource-list-insert.txt
 build\komapedit.exe --debug-headless-signal-aspect-columns <map-or-scenario-path> --headless-output build\signal-aspect-columns.txt
 build\komapedit.exe --debug-headless-new-file-wizard <tests目录下尚不存在的地图路径> --headless-output build\new-file-wizard.txt
+build\komapedit.exe --debug-headless-new-project <已存在的测试目录> --headless-output build\new-project.txt
 build\komapedit.exe --debug-headless-scenario-create <tests目录下尚不存在的Scenario路径> --route <已存在的地图路径> --headless-output build\scenario-create.txt
 build\komapedit.exe --debug-headless-fresh-resource-list-workflow <地图路径> --headless-output build\fresh-resource-list.txt
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
@@ -793,6 +795,7 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 | `--debug-headless-resource-list-insert` | 地图路径及 `--kind structure` 或 `signal`；内存 Apply，拒绝 `--commit` | structure 要求列表经 Include 加载，检查 2 字段行与上下顺序；signal 检查主行/glare 插入块、6 字段主行及显式新增 glare；均检查 Reset 和源哈希 |
 | `--debug-headless-signal-aspect-columns` | Map/Scenario；输入线路仅内存编辑，Save/reload 使用临时夹具；拒绝 `--commit` | 正式列操作、确认/取消、主行/glare 独立宽度、多轮 Apply/Revert 和显示上限 |
 | `--debug-headless-new-file-wizard` | `tests/` 下尚不存在的地图路径；创建文件后清理 | 空地图重载、排他创建、复用已有列表、五类 Load 暂存/保存、空列表重载 |
+| `--debug-headless-new-project` | 已存在的测试目录，写入限定在结束后移除的排他测试子目录 | 八个文件的布局与编码、Unicode 相对路径、`确定`和`确定并载入`、冲突与回滚、首个资源列表行和地图元素、保存重开 |
 | `--debug-headless-scenario-create` | `tests/` 下尚不存在的 Scenario 路径，`--route` 指向已有地图；结束后删除新 Scenario | 官方键序、重复创建拒绝、字段存在位、相对路径/默认权重、Scenario 预览与异步地图加载、历史保持 |
 | `--debug-headless-scenario-lifecycle` | Scenario；输入源码只读，写入使用独占临时目录 | 历史入口、元数据发布、Reload 视图恢复、单/多 Route 选择、新建/加载、先 Map 后 Scenario 保存、设置/布局重试、CSV 导出及文件失败处理 |
 | `--debug-headless-fresh-resource-list-workflow` | 地图路径；只读输入并在临时目录创建 Map、Structure、Station 和 Signal 夹具 | 无距离地图的 Load 目标、多个未保存 Load 与空列表首行同批 Apply；Signal 多轮 Apply、glare 删除/重加、Revert、相邻行 Save/reload。检查 `input_map_bytes_unchanged`、`fixture_files_cleaned` |

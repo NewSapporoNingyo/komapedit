@@ -265,6 +265,13 @@ struct HeadlessNewFileWizardOptions {
     std::string error;
 };
 
+struct HeadlessNewProjectOptions {
+    bool requested = false;
+    std::string directory;
+    std::string output_path;
+    std::string error;
+};
+
 struct HeadlessScenarioCreateOptions {
     bool requested = false;
     std::string path;
@@ -447,6 +454,8 @@ HeadlessResourceListReplaceOptions parse_headless_resource_list_replace_options(
 HeadlessResourceListInsertOptions parse_headless_resource_list_insert_options(
     const std::vector<std::string>& args);
 HeadlessNewFileWizardOptions parse_headless_new_file_wizard_options(
+    const std::vector<std::string>& args);
+HeadlessNewProjectOptions parse_headless_new_project_options(
     const std::vector<std::string>& args);
 HeadlessScenarioCreateOptions parse_headless_scenario_create_options(
     const std::vector<std::string>& args);

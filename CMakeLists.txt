@@ -291,6 +291,7 @@ add_executable(komapedit
     src/main_window/editable_list_drafts.cpp
     src/main_window/creator_messages.cpp
     src/main_window/new_element_wizard.cpp
+    src/main_window/new_project.cpp
     src/main_window/app_dialogs.cpp
     src/main_window/ui_elements.cpp
     src/main_window/scene_preview_lifecycle.cpp
