@@ -255,6 +255,7 @@ struct SceneModelGpu {
     enum class State { Pending, Ready, Failed };
 
     State state = State::Pending;
+    bool preview_only = false;
     ID3D11Buffer* vertex_buffer = nullptr;
     UINT vertex_capacity = 0;
     bool dynamic_vertices = false;
@@ -402,6 +403,7 @@ struct SceneStructureEditState {
     Canvas3DPlacementEditTarget completed;
     std::string preview_model_key;
     std::uint64_t preview_sequence = 0;
+    bool resume_preview_after_model_reload = false;
     SceneGizmoHandle placement_gizmo;
     SceneGizmoHandle repeater_end_gizmo;
     SceneRotationGizmo rotation_gizmo;

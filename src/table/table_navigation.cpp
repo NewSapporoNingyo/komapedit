@@ -80,7 +80,7 @@ void App::sync_marker_visibility_sizes() {
 void App::locate_structure_row_on_plan(size_t row_index) {
     sync_marker_visibility_sizes();
     if (row_index >= structure_marker_cache_.size() || !structure_marker_cache_[row_index]) return;
-    if (row_index < structure_row_visible_.size()) structure_row_visible_[row_index] = 1;
+    structure_row_visible_[row_index] = 1;
     const PlanStructureMarker& marker = *structure_marker_cache_[row_index];
     focus_plan_at_model_point(marker.x, marker.y);
 }
@@ -110,7 +110,7 @@ void App::locate_structure_row_in_scene_preview(size_t row_index) {
 void App::locate_repeater_row_on_plan(size_t row_index) {
     sync_marker_visibility_sizes();
     if (row_index >= repeater_marker_cache_.size() || !repeater_marker_cache_[row_index].begin_marker) return;
-    if (row_index < repeater_row_visible_.size()) repeater_row_visible_[row_index] = 1;
+    repeater_row_visible_[row_index] = 1;
     const PlanRepeaterMarker& marker = *repeater_marker_cache_[row_index].begin_marker;
     focus_plan_at_model_point(marker.x, marker.y);
 }
@@ -134,7 +134,7 @@ void App::locate_repeater_row_in_scene_preview(size_t row_index) {
 void App::locate_signal_row_on_plan(size_t row_index) {
     sync_marker_visibility_sizes();
     if (row_index >= signal_marker_cache_.size() || !signal_marker_cache_[row_index]) return;
-    if (row_index < signal_row_visible_.size()) signal_row_visible_[row_index] = 1;
+    signal_row_visible_[row_index] = 1;
     const PlanSignalMarker& marker = *signal_marker_cache_[row_index];
     focus_plan_at_model_point(marker.x, marker.y);
 }

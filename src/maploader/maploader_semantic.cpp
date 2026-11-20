@@ -344,7 +344,7 @@ void write_structure_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "rz", changed_number(change, "rz", row.rz));
     field(out, "tilt", changed_number(change, "tilt", row.tilt));
     field(out, "span", changed_number(change, "span", row.span));
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_structure_between(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -356,7 +356,7 @@ void write_structure_between(SemanticWriter& out, const KvMapSnapshot& snapshot,
     changed_track_key(out, snapshot, change, "trackKey1", row.track_key1);
     changed_track_key(out, snapshot, change, "trackKey2", row.track_key2);
     field(out, "flag", changed_number(change, "flag", row.flag));
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_station_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -367,7 +367,7 @@ void write_station_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
     changed_optional_number(out, snapshot, change, "door", row.door);
     changed_optional_number(out, snapshot, change, "margin1", row.margin1);
     changed_optional_number(out, snapshot, change, "margin2", row.margin2);
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_irregularity(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -380,7 +380,7 @@ void write_irregularity(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "lx", changed_number(change, "lx", row.lx));
     field(out, "ly", changed_number(change, "ly", row.ly));
     field(out, "lr", changed_number(change, "lr", row.lr));
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 bool optional_number_present(const MapEditChange* change, const char* key,
@@ -399,7 +399,7 @@ void write_pretrain(SemanticWriter& out, const KvMapSnapshot& snapshot,
     } else {
         out.value(snapshot, row.pass_time);
     }
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_beacon(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -408,14 +408,14 @@ void write_beacon(SemanticWriter& out, const KvMapSnapshot& snapshot,
     changed_required_number_value(out, snapshot, change, "type", row.type);
     changed_required_number_value(out, snapshot, change, "section", row.section);
     changed_required_number_value(out, snapshot, change, "sendData", row.send_data);
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_map_sound(SemanticWriter& out, const KvMapSnapshot& snapshot,
                      const KvMapSoundRow& row, const MapEditChange* change = nullptr) {
     field(out, "distance", changed_number(change, "distance", row.distance));
     changed_value(out, snapshot, change, "soundKey", row.sound_key);
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_map_sound_3d(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -425,14 +425,14 @@ void write_map_sound_3d(SemanticWriter& out, const KvMapSnapshot& snapshot,
     changed_value(out, snapshot, change, "soundKey", row.sound_key);
     field(out, "x", changed_number(change, "x", row.x));
     field(out, "y", changed_number(change, "y", row.y));
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_noise(SemanticWriter& out, const KvMapSnapshot& snapshot,
                  const KvNoiseRow& row, const MapEditChange* change = nullptr) {
     field(out, "distance", changed_number(change, "distance", row.distance));
     changed_required_number_value(out, snapshot, change, "index", row.index);
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_background(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -440,7 +440,7 @@ void write_background(SemanticWriter& out, const KvMapSnapshot& snapshot,
                       const MapEditChange* change = nullptr) {
     field(out, "distance", changed_number(change, "distance", row.distance));
     changed_value(out, snapshot, change, "structureKey", row.structure_key);
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_adhesion(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -455,7 +455,7 @@ void write_adhesion(SemanticWriter& out, const KvMapSnapshot& snapshot,
     changed_required_number_value(out, snapshot, change, "a", row.a);
     changed_optional_number(out, snapshot, change, "b", row.b);
     changed_optional_number(out, snapshot, change, "c", row.c);
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_cab_illuminance(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -463,7 +463,7 @@ void write_cab_illuminance(SemanticWriter& out, const KvMapSnapshot& snapshot,
                            const MapEditChange* change = nullptr) {
     field(out, "distance", changed_number(change, "distance", row.distance));
     changed_cab_illuminance_value(out, snapshot, change, "value", row.value);
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_fog(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -481,7 +481,7 @@ void write_fog(SemanticWriter& out, const KvMapSnapshot& snapshot,
     changed_optional_number(out, snapshot, change, "red", row.red);
     changed_optional_number(out, snapshot, change, "green", row.green);
     changed_optional_number(out, snapshot, change, "blue", row.blue);
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_legacy_fog(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -492,7 +492,7 @@ void write_legacy_fog(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "red", changed_number(change, "red", row.red));
     field(out, "green", changed_number(change, "green", row.green));
     field(out, "blue", changed_number(change, "blue", row.blue));
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_light_color(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -501,7 +501,7 @@ void write_light_color(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "red", changed_number(change, "red", row.red));
     field(out, "green", changed_number(change, "green", row.green));
     field(out, "blue", changed_number(change, "blue", row.blue));
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_creator_message(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -509,7 +509,7 @@ void write_creator_message(SemanticWriter& out, const KvMapSnapshot& snapshot,
                            const MapEditChange* change = nullptr) {
     const std::string* input = changed_field(change, "content");
     // Message content is literal user text; unlike BVE keys it is never trimmed.
-    field(out, "content", input ? *input : text(snapshot, row.content));
+    field(out, "content", input ? std::string_view(*input) : SemanticWriter::snapshot_text(snapshot, row.content));
     field(out, "filePath", normalized_source_key(text(snapshot, row.file_path)));
 }
 
@@ -518,7 +518,7 @@ void write_light_direction(SemanticWriter& out, const KvMapSnapshot& snapshot,
                            const MapEditChange* change = nullptr) {
     field(out, "pitch", changed_number(change, "pitch", row.pitch));
     field(out, "yaw", changed_number(change, "yaw", row.yaw));
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_draw_distance(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -526,7 +526,7 @@ void write_draw_distance(SemanticWriter& out, const KvMapSnapshot& snapshot,
                          const MapEditChange* change = nullptr) {
     field(out, "distance", changed_number(change, "distance", row.distance));
     field(out, "value", changed_number(change, "value", row.value));
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_speed_limit(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -543,7 +543,7 @@ void write_speed_limit(SemanticWriter& out, const KvMapSnapshot& snapshot,
         changed_required_number_value(
             out, snapshot, change, "speed", row.speed);
     }
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_section_row(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -580,7 +580,7 @@ void write_section_row(SemanticWriter& out, const KvMapSnapshot& snapshot,
             }
         }
     }
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_curve(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -614,14 +614,14 @@ void write_curve(SemanticWriter& out, const KvMapSnapshot& snapshot,
             field(out, snapshot, "cant", row.cant);
         }
     }
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_gradient(SemanticWriter& out, const KvMapSnapshot& snapshot,
                     const KvGradientRow& row,
                     const MapEditChange* change = nullptr) {
     field(out, "distance", changed_number(change, "distance", row.distance));
-    field(out, "method", text(snapshot, row.method));
+    field(out, "method", SemanticWriter::snapshot_text(snapshot, row.method));
     field(out, "argumentCount", static_cast<std::int64_t>(row.argument_count));
     if (row.argument_count == 0) {
         if (changed_field(change, "gradient")) {
@@ -631,7 +631,7 @@ void write_gradient(SemanticWriter& out, const KvMapSnapshot& snapshot,
     } else {
         changed_required_number_value(out, snapshot, change, "gradient", row.gradient);
     }
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_other_track_change(SemanticWriter& out,
@@ -645,7 +645,7 @@ void write_other_track_change(SemanticWriter& out,
     }
     field(out, "distance", changed_number(change, "distance", row.distance));
     changed_track_key(out, snapshot, change, "trackKey", row.track_key);
-    field(out, "method", text(snapshot, row.method));
+    field(out, "method", SemanticWriter::snapshot_text(snapshot, row.method));
     field(out, "parameterCount",
           static_cast<std::int64_t>(row.parameters.count));
     for (std::uint64_t index = 0; index < row.parameters.count; ++index) {
@@ -653,7 +653,7 @@ void write_other_track_change(SemanticWriter& out,
         changed_optional_number(out, snapshot, change, name.c_str(),
                                 snapshot.values[row.parameters.offset + index]);
     }
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_station_list(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -730,7 +730,7 @@ void write_signal_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "rz", changed_number(change, "rz", row.rz));
     field(out, "tilt", changed_number(change, "tilt", row.tilt));
     field(out, "span", changed_number(change, "span", row.span));
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void write_repeater(SemanticWriter& out, const KvMapSnapshot& snapshot,
@@ -769,7 +769,7 @@ void write_repeater(SemanticWriter& out, const KvMapSnapshot& snapshot,
         }
         out.label("structureKeys");
         out.signed_integer(0);
-        field(out, "filePath", text(snapshot, row.file_path));
+        field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
         return;
     }
     field(out, "distance", changed_number(change, "distance", row.distance));
@@ -792,7 +792,7 @@ void write_repeater(SemanticWriter& out, const KvMapSnapshot& snapshot,
         out.signed_integer(static_cast<std::int64_t>(structure_keys.values.size()));
         for (const std::string& value : structure_keys.values) out.string_value(value);
     }
-    field(out, "filePath", text(snapshot, row.file_path));
+    field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
 }
 
 void reject_unknown_target_fields(const SemanticElementSnapshot& target,

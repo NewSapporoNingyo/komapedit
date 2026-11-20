@@ -142,30 +142,19 @@ std::string editable_list_field_name(const EditableListSpec& spec,
     return spec.field_names[field_index];
 }
 
-std::vector<size_t> editable_list_visible_row_indices(
-    const std::vector<EditableListDraftRow>& rows) {
-    std::vector<size_t> result;
-    result.reserve(rows.size());
-    for (size_t index = 0; index < rows.size(); ++index) {
-        result.push_back(index);
-    }
-    return result;
-}
-
 bool move_editable_list_draft_row(
     std::vector<EditableListDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
     int visible_row, int direction) {
     if (direction != -1 && direction != 1) return false;
     const int neighbor = visible_row + direction;
-    if (visible_row < 0 || visible_row >= static_cast<int>(visible_rows.size()) ||
-        neighbor < 0 || neighbor >= static_cast<int>(visible_rows.size())) {
+    if (visible_row < 0 || visible_row >= static_cast<int>(rows.size()) ||
+        neighbor < 0 || neighbor >= static_cast<int>(rows.size())) {
         return false;
     }
     EditableListDraftRow& left =
-        rows[visible_rows[static_cast<size_t>(visible_row)]];
+        rows[static_cast<size_t>(visible_row)];
     EditableListDraftRow& right =
-        rows[visible_rows[static_cast<size_t>(neighbor)]];
+        rows[static_cast<size_t>(neighbor)];
     if (left.deleted || right.deleted ||
         left.target_source_file != right.target_source_file) {
         return false;
@@ -194,14 +183,13 @@ bool move_editable_list_draft_row(
 
 bool clear_editable_list_draft_cell(
     std::vector<EditableListDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
     int visible_row, int column) {
-    if (visible_row < 0 || visible_row >= static_cast<int>(visible_rows.size()) ||
+    if (visible_row < 0 || visible_row >= static_cast<int>(rows.size()) ||
         column < 0) {
         return false;
     }
     EditableListDraftRow& row =
-        rows[visible_rows[static_cast<size_t>(visible_row)]];
+        rows[static_cast<size_t>(visible_row)];
     if (row.deleted ||
         static_cast<size_t>(column) >= row.values.size()) {
         return false;
@@ -212,11 +200,10 @@ bool clear_editable_list_draft_cell(
 
 bool delete_editable_list_draft_row(
     std::vector<EditableListDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
     int visible_row) {
-    if (visible_row < 0 || visible_row >= static_cast<int>(visible_rows.size())) return false;
+    if (visible_row < 0 || visible_row >= static_cast<int>(rows.size())) return false;
     EditableListDraftRow& row =
-        rows[visible_rows[static_cast<size_t>(visible_row)]];
+        rows[static_cast<size_t>(visible_row)];
     if (row.deleted) return false;
     row.deleted = true;
     return true;
@@ -229,15 +216,11 @@ void rebuild_editable_list_display_rows(
     edit.structure_key_columns = 0;
     if (!spec.numbered_structure_key_fields) return;
     edit.display_rows.reserve(
-        edit.visible_rows.size() * 2);
+        edit.rows.size() * 2);
     for (size_t visible_row = 0;
-         visible_row < edit.visible_rows.size();
+         visible_row < edit.rows.size();
          ++visible_row) {
-        const size_t draft_index =
-            edit.visible_rows[visible_row];
-        if (draft_index >= edit.rows.size()) continue;
-        const EditableListDraftRow& row =
-            edit.rows[draft_index];
+        const EditableListDraftRow& row = edit.rows[visible_row];
         if (!row.deleted) {
             edit.structure_key_columns = std::max(edit.structure_key_columns,
                 std::max(row.primary_structure_field_count,
@@ -579,7 +562,6 @@ bool App::initialize_editable_list_draft_rows(EditableListEditState& edit,
         rows.push_back(std::move(row));
     }
     edit.rows = std::move(rows);
-    edit.visible_rows = editable_list_visible_row_indices(edit.rows);
     rebuild_editable_list_display_rows(edit, spec);
     edit.rows_initialized = true;
     return true;
@@ -660,9 +642,9 @@ void App::run_pending_editable_list_actions() {
             break;
         case DeferredEditableListAction::Kind::ClearCell:
             if (clear_editable_list_cell(edit, spec, action.visible_row,
-                                         action.column) &&
-                action.select_secondary) {
-                edit.selected_secondary_row = true;
+                                         action.field_column)) {
+                edit.selected_column = action.display_column;
+                edit.selected_secondary_row = action.select_secondary;
             }
             break;
         case DeferredEditableListAction::Kind::DeleteRow:
@@ -699,8 +681,7 @@ bool App::move_editable_list_row(EditableListEditState& edit,
     commit_editable_list_active_edit(edit, spec);
     if (!initialize_editable_list_draft_rows(edit, spec)) return false;
     if (!move_editable_list_draft_row(
-            edit.rows, edit.visible_rows, visible_row, direction)) return false;
-    edit.visible_rows = editable_list_visible_row_indices(edit.rows);
+            edit.rows, visible_row, direction)) return false;
     edit.selected_row = visible_row + direction;
     edit.selected_secondary_row = false;
     rebuild_editable_list_display_rows(edit, spec);
@@ -713,7 +694,7 @@ bool App::request_signal_aspect_column_action(SignalAspectColumnAction action,
     auto& edit = signal_aspect_edit_;
     commit_editable_list_active_edit(edit, k_signal_aspect_edit_spec);
     if (!initialize_editable_list_draft_rows(edit, k_signal_aspect_edit_spec)) return false;
-    if (visible_row < -1 || visible_row >= static_cast<int>(edit.visible_rows.size()) ||
+    if (visible_row < -1 || visible_row >= static_cast<int>(edit.rows.size()) ||
         (action == SignalAspectColumnAction::AlignAll && visible_row != -1)) return false;
 
     size_t maximum = 1;
@@ -775,7 +756,7 @@ bool App::request_signal_aspect_column_action(SignalAspectColumnAction action,
             last_value, row.payload_edit_id, row.values.front()});
     };
     if (visible_row >= 0) {
-        append_target(edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]], secondary);
+        append_target(edit.rows[static_cast<size_t>(visible_row)], secondary);
     } else {
         for (const auto& row : edit.rows) {
             append_target(row, false);
@@ -843,8 +824,8 @@ bool App::apply_signal_aspect_column_targets(
     }
     edit.rows.swap(candidate);
     rebuild_editable_list_display_rows(edit, k_signal_aspect_edit_spec);
-    if (edit.selected_row >= 0 && edit.selected_row < static_cast<int>(edit.visible_rows.size())) {
-        const auto& row = edit.rows[edit.visible_rows[static_cast<size_t>(edit.selected_row)]];
+    if (edit.selected_row >= 0 && edit.selected_row < static_cast<int>(edit.rows.size())) {
+        const auto& row = edit.rows[static_cast<size_t>(edit.selected_row)];
         const size_t count = edit.selected_secondary_row ? row.secondary_structure_field_count
                                                          : row.primary_structure_field_count;
         edit.selected_column = std::min(edit.selected_column, static_cast<int>(
@@ -875,8 +856,7 @@ bool App::append_empty_list_row_draft(EditableListEditState& edit,
         }
     }
     edit.rows.push_back(std::move(row));
-    edit.visible_rows = editable_list_visible_row_indices(edit.rows);
-    edit.selected_row = static_cast<int>(edit.visible_rows.size()) - 1;
+    edit.selected_row = static_cast<int>(edit.rows.size()) - 1;
     edit.selected_column = 0;
     edit.selected_secondary_row = false;
     rebuild_editable_list_display_rows(edit, spec);
@@ -888,15 +868,15 @@ bool App::insert_editable_list_row(EditableListEditState& edit,
                                    int visible_row, bool above) {
     commit_editable_list_active_edit(edit, spec);
     if (!initialize_editable_list_draft_rows(edit, spec)) return false;
-    if (edit.visible_rows.empty()) {
+    if (edit.rows.empty()) {
         return append_empty_list_row_draft(edit, spec);
     }
     if (visible_row < 0 ||
-        visible_row >= static_cast<int>(edit.visible_rows.size())) {
+        visible_row >= static_cast<int>(edit.rows.size())) {
         return false;
     }
     const size_t anchor_index =
-        edit.visible_rows[static_cast<size_t>(visible_row)];
+        static_cast<size_t>(visible_row);
     if (anchor_index >= edit.rows.size()) return false;
     const EditableListDraftRow& anchor = edit.rows[anchor_index];
     if (anchor.deleted || anchor.target_source_file.empty()) return false;
@@ -908,7 +888,6 @@ bool App::insert_editable_list_row(EditableListEditState& edit,
     edit.rows.insert(
         edit.rows.begin() + static_cast<std::ptrdiff_t>(insert_index),
         std::move(row));
-    edit.visible_rows = editable_list_visible_row_indices(edit.rows);
     edit.selected_row = above ? visible_row : visible_row + 1;
     edit.selected_column = 0;
     edit.selected_secondary_row = false;
@@ -922,12 +901,11 @@ bool App::clear_editable_list_cell(EditableListEditState& edit,
     commit_editable_list_active_edit(edit, spec);
     if (!initialize_editable_list_draft_rows(edit, spec)) return false;
     if (!clear_editable_list_draft_cell(
-            edit.rows, edit.visible_rows, visible_row, column)) return false;
+            edit.rows, visible_row, column)) return false;
     EditableListDraftRow& row =
-        edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]];
+        edit.rows[static_cast<size_t>(visible_row)];
     if (column == spec.path_field) row.resolved_path.clear();
     edit.selected_row = visible_row;
-    edit.selected_column = column;
     return true;
 }
 
@@ -938,11 +916,11 @@ bool App::choose_editable_list_file(EditableListEditState& edit,
     if (spec.path_field < 0 ||
         !initialize_editable_list_draft_rows(edit, spec) ||
         visible_row < 0 ||
-        visible_row >= static_cast<int>(edit.visible_rows.size())) {
+        visible_row >= static_cast<int>(edit.rows.size())) {
         return false;
     }
     EditableListDraftRow& row =
-        edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]];
+        edit.rows[static_cast<size_t>(visible_row)];
     if (row.deleted || row.target_source_file.empty() ||
         static_cast<size_t>(spec.path_field) >= row.values.size()) return false;
 
@@ -977,21 +955,20 @@ bool App::delete_editable_list_row(EditableListEditState& edit,
     commit_editable_list_active_edit(edit, spec);
     if (!initialize_editable_list_draft_rows(edit, spec)) return false;
     if (visible_row < 0 ||
-        visible_row >= static_cast<int>(edit.visible_rows.size())) return false;
-    const size_t draft_index = edit.visible_rows[static_cast<size_t>(visible_row)];
+        visible_row >= static_cast<int>(edit.rows.size())) return false;
+    const size_t draft_index = static_cast<size_t>(visible_row);
     if (draft_index >= edit.rows.size()) return false;
     if (edit.rows[draft_index].inserted) {
         edit.rows.erase(edit.rows.begin() + static_cast<std::ptrdiff_t>(draft_index));
-        edit.visible_rows = editable_list_visible_row_indices(edit.rows);
         edit.selected_row = std::min(
-            visible_row, static_cast<int>(edit.visible_rows.size()) - 1);
+            visible_row, static_cast<int>(edit.rows.size()) - 1);
         edit.selected_column = -1;
         edit.selected_secondary_row = false;
         rebuild_editable_list_display_rows(edit, spec);
         return true;
     }
     if (!delete_editable_list_draft_row(
-            edit.rows, edit.visible_rows, visible_row)) return false;
+            edit.rows, visible_row)) return false;
     edit.selected_row = visible_row;
     rebuild_editable_list_display_rows(edit, spec);
     return true;
@@ -1005,13 +982,11 @@ bool App::delete_editable_list_secondary_row(
     if (!initialize_editable_list_draft_rows(edit, spec) ||
         visible_row < 0 ||
         visible_row >=
-            static_cast<int>(edit.visible_rows.size())) {
+            static_cast<int>(edit.rows.size())) {
         return false;
     }
     EditableListDraftRow& row =
-        edit.rows[
-            edit.visible_rows[
-                static_cast<size_t>(visible_row)]];
+        edit.rows[static_cast<size_t>(visible_row)];
     if (row.deleted || row.secondary_row_deleted ||
         row.secondary_structure_field_count == 0) {
         return false;
@@ -1042,11 +1017,10 @@ bool App::add_editable_list_secondary_row(
     if (!spec.numbered_structure_key_fields ||
         !initialize_editable_list_draft_rows(edit, spec) ||
         visible_row < 0 ||
-        visible_row >= static_cast<int>(edit.visible_rows.size())) {
+        visible_row >= static_cast<int>(edit.rows.size())) {
         return false;
     }
-    EditableListDraftRow& row = edit.rows[
-        edit.visible_rows[static_cast<size_t>(visible_row)]];
+    EditableListDraftRow& row = edit.rows[static_cast<size_t>(visible_row)];
     if (row.deleted || row.secondary_row_deleted ||
         row.secondary_structure_field_count != 0 ||
         row.primary_structure_field_count == 0) {

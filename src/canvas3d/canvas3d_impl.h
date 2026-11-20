@@ -994,6 +994,7 @@ struct Canvas3D::Impl {
     std::unordered_map<std::string, size_t> scene_sound3d_marker_indices;
     std::array<std::vector<size_t>, canvas3d_detail::k_scene_marker_list_kind_count> scene_marker_target_indices;
     Canvas3DSceneMarkerVisibility scene_marker_visibility;
+    bool scene_marker_indices_dirty = false;
     ImFont* scene_marker_font = nullptr;
     float scene_marker_font_size = 0.0f;
     ImTextureID scene_marker_font_texture_id = ImTextureID_Invalid;
@@ -1015,6 +1016,8 @@ struct Canvas3D::Impl {
     std::chrono::steady_clock::time_point scene_model_load_started_at{};
     bool scene_model_load_timer_active = false;
     std::thread scene_worker;
+    std::map<std::string, canvas3d_detail::SceneModelLoadRequest> queued_scene_model_requests;
+    std::unordered_set<std::string> active_scene_model_requests;
     std::atomic<bool> scene_cancel{false};
     std::atomic<bool> scene_worker_running{false};
     std::atomic<size_t> scene_model_worker_count_value{0};
@@ -1072,5 +1075,7 @@ struct Canvas3D::Impl {
     std::atomic<size_t> debug_helper_start_failure_at{0};
     std::atomic<int> debug_texture_allocation_throw_countdown{0};
     std::atomic<int> debug_scene_index_buffer_failure_countdown{0};
+    bool debug_scene_marker_compile_failure = false;
+    int debug_scene_marker_map_failure_countdown = 0;
 #endif
 };

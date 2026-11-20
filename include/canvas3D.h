@@ -296,6 +296,8 @@ struct Canvas3DSceneRenderContractResult {
     bool cache_budget = true;
     bool fps_counter = true;
     bool rotation_gizmo = true;
+    bool marker_index_retry = true;
+    size_t marker_index_retry_cases = 0;
     size_t cases = 0;
     size_t peak_cached_worlds = 0;
     size_t peak_cache_bytes = 0;
@@ -312,6 +314,7 @@ struct Canvas3DSceneLoaderContractResult {
     bool copy_exception = false;
     bool put_between_exception = false;
     bool subset_requeue = false;
+    bool active_worker_queue = false;
     bool removal_only_cancel = false;
     bool release_balance = false;
     bool texture_allocation_cleanup = false;
@@ -321,6 +324,8 @@ struct Canvas3DSceneLoaderContractResult {
     bool put_between_preparation = false;
     bool geometry_model_reuse = false;
     bool full_model_reload = false;
+    bool put_between_model_reload = false;
+    bool shader_pipeline_retry = false;
     size_t geometry_model_load_count = 0;
     size_t full_model_load_count = 0;
     float geometry_model_bounds_max_x = 0.0f;

@@ -92,7 +92,6 @@ bool Canvas3D::Impl::load_scene(Canvas3DScene scene, std::string& error, bool pr
         release_scene_track_chunks();
         release_scene_marker_chunks();
         scene_chunks.clear();
-        clear_pending_scene_model_uploads();
         scene_last_error.clear();
         scene_stats_value = {};
         scene_model_worker_count_value.store(0);
@@ -151,7 +150,6 @@ bool Canvas3D::Impl::load_scene(Canvas3DScene scene, std::string& error, bool pr
     const auto model_queue_started_at = std::chrono::steady_clock::now();
     auto requests = collect_scene_model_load_requests();
     auto requests_to_load = reconcile_scene_model_requests(requests);
-    scene_stats_value.model_path_count = requests.size();
     scene_stats_value.instance_count = count_scene_instances();
     scene_stats_value.chunk_count = scene_chunks.size();
     scene_stats_value.window_back_m = scene_window_back_m;
@@ -167,12 +165,10 @@ bool Canvas3D::Impl::load_scene(Canvas3DScene scene, std::string& error, bool pr
 std::vector<SceneModelLoadRequest> Canvas3D::Impl::reconcile_scene_model_requests(
     std::map<std::string, SceneModelLoadRequest>& requests) {
     if (scene_worker.joinable() &&
-        (requests.size() != scene_models.size() ||
-         std::any_of(scene_models.begin(), scene_models.end(), [&](const auto& entry) {
+        std::any_of(scene_models.begin(), scene_models.end(), [&](const auto& entry) {
              return requests.find(entry.first) == requests.end();
-         }))) {
+        })) {
         stop_scene_loader();
-        clear_pending_scene_model_uploads();
     }
     for (auto it = scene_models.begin(); it != scene_models.end();) {
         if (requests.find(it->first) == requests.end()) {
@@ -187,6 +183,7 @@ std::vector<SceneModelLoadRequest> Canvas3D::Impl::reconcile_scene_model_request
     requests_to_load.reserve(requests.size());
     for (auto& entry : requests) {
         auto& model = scene_models.try_emplace(entry.first).first->second;
+        model.preview_only = false;
         if (model.state == SceneModelGpu::State::Pending) {
             requests_to_load.push_back(std::move(entry.second));
         }
@@ -286,7 +283,6 @@ bool Canvas3D::Impl::refresh_scene_dynamic_content(const MapModel& model, int st
     std::vector<SceneModelLoadRequest> requests_to_load =
         reconcile_scene_model_requests(requests);
 
-    scene_stats_value.model_path_count = requests.size();
     scene_stats_value.instance_count = count_scene_instances();
     scene_stats_value.chunk_count = scene_chunks.size();
     scene_stats_value.window_back_m = scene_window_back_m;
@@ -374,23 +370,31 @@ bool Canvas3D::Impl::reload_scene_models(std::string& error) {
         error = "3D scene preview is not started";
         return false;
     }
+    auto& edit = scene_structure_edit;
+    if (edit.active && edit.kind == Canvas3DSceneEditKind::StructurePutBetween) {
+        const auto& baseline = edit.baseline_instance;
+        if (!edit.preview_model_key.empty()) {
+            const auto key = scene_model_key_for_instance(baseline, scene_geometry_generation);
+            if (!replace_scene_placement_instance(edit.edit_id, baseline, key)) {
+                error = "could not restore the baseline PutBetween instance before model reload";
+                return false;
+            }
+        }
+        edit.completed = put_between_target_from_instance(edit.edit_id, baseline);
+        edit.preview_model_key.clear();
+        edit.preview_sequence = 0;
+        edit.resume_preview_after_model_reload = !same_placement_edit_target(edit.current, edit.completed);
+    }
     stop_scene_put_between_preview_worker();
     stop_scene_loader();
-    clear_pending_scene_model_uploads();
-    std::map<std::string, SceneModelLoadRequest> requests = collect_scene_model_load_requests();
-    std::vector<SceneModelLoadRequest> requests_to_load;
-    requests_to_load.reserve(requests.size());
-    for (auto& kv : scene_models) {
-        release_scene_model(kv.second);
-        kv.second = SceneModelGpu{};
-        auto request_it = requests.find(kv.first);
-        if (request_it != requests.end()) requests_to_load.push_back(request_it->second);
-    }
+    for (auto& entry : scene_models) release_scene_model(entry.second);
+    scene_models.clear();
+    scene_put_between_preview_base_model_keys.clear();
     release_scene_texture_cache();
     scene_last_error.clear();
-    scene_stats_value.model_path_count = scene_models.size();
     scene_load_summary_pending = false;
-    start_scene_model_worker(std::move(requests_to_load));
+    auto requests = collect_scene_model_load_requests();
+    start_scene_model_worker(reconcile_scene_model_requests(requests));
     return true;
 }
 
@@ -480,7 +484,7 @@ Canvas3DSceneStats Canvas3D::Impl::scene_stats() const {
     stats.active = scene_active;
     stats.camera_distance = scene_camera_distance;
     stats.chunk_count = scene_chunks.size();
-    stats.model_path_count = scene_models.size();
+    stats.model_path_count = 0;
     stats.instance_count = scene_stats_value.instance_count;
     stats.model_worker_count = scene_model_worker_count_value.load();
     stats.window_back_m = scene_window_back_m;
@@ -488,6 +492,8 @@ Canvas3DSceneStats Canvas3D::Impl::scene_stats() const {
     stats.model_ready_count = 0;
     stats.model_failed_count = 0;
     for (const auto& kv : scene_models) {
+        if (kv.second.preview_only) continue;
+        ++stats.model_path_count;
         if (kv.second.state == SceneModelGpu::State::Ready) ++stats.model_ready_count;
         if (kv.second.state == SceneModelGpu::State::Failed) ++stats.model_failed_count;
     }
@@ -585,14 +591,6 @@ bool Canvas3D::Impl::set_scene_object_model_option(int object_index, size_t opti
             if (instance.object_index == object_index) instance.model_path = option.model_path;
         }
     }
-    if (scene_models.find(option.model_path) == scene_models.end()) {
-        scene_models[option.model_path] = SceneModelGpu{};
-        scene_stats_value.model_path_count = scene_models.size();
-        SceneModelLoadRequest request;
-        request.key = option.model_path;
-        request.source_path = option.model_path;
-        start_scene_model_worker({std::move(request)});
-    }
     scene_hover_highlight_batch.clear();
     return true;
 }
@@ -612,7 +610,6 @@ void Canvas3D::Impl::release_scene_resources() {
     scene_placement_locations.clear();
     scene_repeater_locations.clear();
     scene_structure_edit = SceneStructureEditState{};
-    clear_pending_scene_model_uploads();
     scene_last_error.clear();
     scene_stats_value = {};
     scene_model_worker_count_value.store(0);

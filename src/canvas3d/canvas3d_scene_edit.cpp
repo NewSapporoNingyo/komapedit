@@ -639,6 +639,7 @@ void Canvas3D::Impl::clear_scene_placement_edit_target() {
                 }
                 auto node = scene_models.extract(preview);
                 node.key() = render_model_key;
+                node.mapped().preview_only = false;
                 scene_models.insert(std::move(node));
             }
         }

@@ -331,7 +331,7 @@ int main(int, char**) {
     if (distance_edit_batch.requested) {
         if (!distance_edit_batch.error.empty()) {
             std::cerr << distance_edit_batch.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-distance-edit-batch [map-path] "
+                      << "usage: komapedit.exe --debug-headless-distance-edit-batch <map-path> "
                       << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
             return 2;
         }
@@ -357,7 +357,7 @@ int main(int, char**) {
     if (repeater_edit_batch.requested) {
         if (!repeater_edit_batch.error.empty()) {
             std::cerr << repeater_edit_batch.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-repeater-edit-batch [map-path] "
+                      << "usage: komapedit.exe --debug-headless-repeater-edit-batch <map-path> "
                       << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
             return 2;
         }
@@ -394,7 +394,7 @@ int main(int, char**) {
     if (section_edit_batch.requested) {
         if (!section_edit_batch.error.empty()) {
             std::cerr << section_edit_batch.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-section-edit-batch [map-path] "
+                      << "usage: komapedit.exe --debug-headless-section-edit-batch <map-path> "
                       << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
             return 2;
         }
@@ -486,7 +486,7 @@ int main(int, char**) {
     if (insert_edit.requested) {
         if (!insert_edit.error.empty()) {
             std::cerr << insert_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-insert-edit [map-path] "
+                      << "usage: komapedit.exe --debug-headless-insert-edit <map-path> "
                       << "[--repeater-only] [--unit-distance M] [--commit] "
                       << "[--headless-output FILE]\n";
             return 2;
@@ -666,7 +666,7 @@ int main(int, char**) {
     if (own_track_edit.requested) {
         if (!own_track_edit.error.empty()) {
             std::cerr << own_track_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-own-track-edit [map-path] "
+                      << "usage: komapedit.exe --debug-headless-own-track-edit <map-path> "
                       << "[--unit-distance M] [--headless-output FILE]\n";
             return 2;
         }
@@ -678,7 +678,7 @@ int main(int, char**) {
     if (other_track_edit.requested) {
         if (!other_track_edit.error.empty()) {
             std::cerr << other_track_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-other-track-edit [map-path] "
+                      << "usage: komapedit.exe --debug-headless-other-track-edit <map-path> "
                       << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
             return 2;
         }

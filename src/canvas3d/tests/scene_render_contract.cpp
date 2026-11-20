@@ -678,6 +678,7 @@ Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
     const double saved_back = scene_window_back_m, saved_forward = scene_window_forward_m;
     const bool saved_fog = scene_fog_enabled;
     const auto saved_interaction = scene_interaction_mode;
+    const auto saved_marker_visibility = scene_marker_visibility;
     std::vector<Canvas3DTrackVisibility> saved_visibility;
     for (const auto& track : scene_data.tracks) saved_visibility.push_back({track.key, track.visible});
     SceneObjectJumpTarget focus_target;
@@ -767,6 +768,42 @@ Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
         for (auto& track : visible) track.visible = true;
         if (!set_scene_track_visibility(visible, result.error)) result.instances = false;
         check("tracks-visible", true, false);
+        if (std::any_of(scene_marker_chunks.begin(), scene_marker_chunks.end(),
+                        [](const auto& chunk) { return !chunk.source_indices.empty(); })) {
+            const Canvas3DSceneMarkerVisibility all_markers{UINT64_MAX, UINT64_MAX};
+            const auto counts = [&] {
+                std::vector<std::pair<unsigned int, unsigned int>> result_counts;
+                for (const auto& chunk : scene_marker_chunks) {
+                    result_counts.emplace_back(chunk.visible_index_count,
+                                               chunk.visible_pick_index_count);
+                }
+                return result_counts;
+            };
+            std::string marker_error;
+            const bool initial = set_scene_marker_visibility(all_markers, marker_error);
+            const auto expected = counts();
+            for (int fail_at : {1, 2}) {
+                const auto cleared = set_scene_marker_visibility({}, marker_error);
+                debug_scene_marker_map_failure_countdown = fail_at;
+                const bool failed = !set_scene_marker_visibility(all_markers, marker_error) &&
+                    !marker_error.empty() && scene_marker_indices_dirty &&
+                    std::all_of(scene_marker_chunks.begin(), scene_marker_chunks.end(), [](const auto& chunk) {
+                        return chunk.visible_index_count == 0 && chunk.visible_pick_index_count == 0 &&
+                            std::none_of(chunk.ranges.begin(), chunk.ranges.end(),
+                                         [](const auto& range) { return range.visible; });
+                    });
+                debug_scene_marker_map_failure_countdown = 0;
+                const bool retried = set_scene_marker_visibility(all_markers, marker_error) &&
+                    !scene_marker_indices_dirty && counts() == expected;
+                debug_scene_marker_map_failure_countdown = 1;
+                const bool cached = set_scene_marker_visibility(all_markers, marker_error) &&
+                    debug_scene_marker_map_failure_countdown == 1;
+                debug_scene_marker_map_failure_countdown = 0;
+                result.marker_index_retry = result.marker_index_retry && initial && cleared &&
+                    failed && retried && cached;
+                ++result.marker_index_retry_cases;
+            }
+        }
     } catch (const std::exception& error) {
         result.error = error.what();
     }
@@ -786,6 +823,7 @@ Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
     scene_interaction_mode = saved_interaction;
     std::string restore_error;
     if (!set_scene_track_visibility(saved_visibility, restore_error)) result.error = restore_error;
+    if (!set_scene_marker_visibility(saved_marker_visibility, restore_error)) result.error = restore_error;
     if (!result.fps_counter && result.error.empty()) result.error = fps_error;
     return result;
 }

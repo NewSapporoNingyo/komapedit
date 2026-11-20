@@ -23,7 +23,7 @@ const T* data_or_null(const std::vector<T>& values) {
 class MapSnapshotBuilder {
 public:
     MapSnapshotBuilder(MapContext& context, MapSnapshotStorage& storage)
-        : ctx_(context), storage_(storage) {
+        : ctx_(context), storage_(storage), station_list_entries_(ordered_station_list_entries(ctx_)) {
         const size_t row_count = ctx_.own_track.size() + ctx_.curves.size() +
             ctx_.gradients.size() + ctx_.other_track_changes.size() +
             ctx_.station_puts.size() +
@@ -286,9 +286,8 @@ private:
             row.metadata = metadata(input.edit_ref, "station.put");
             storage_.station_puts.push_back(row);
         }
-        const auto& station_list_entries = ordered_station_list_entries(ctx_);
-        storage_.station_list.reserve(station_list_entries.size());
-        for (const StationListEntry* input : station_list_entries) {
+        storage_.station_list.reserve(station_list_entries_.size());
+        for (const StationListEntry* input : station_list_entries_) {
             KvStationListRow row{};
             row.object_key = string_ref(input->fields[0]);
             for (size_t i = 0; i < input->fields.size(); ++i) {
@@ -756,10 +755,9 @@ private:
         add_elements("gradient", ctx_.gradients);
         add_elements("otherTrack.change", ctx_.other_track_changes);
         add_elements("station.put", ctx_.station_puts);
-        const auto& station_list_entries = ordered_station_list_entries(ctx_);
-        for (size_t station_index = 0; station_index < station_list_entries.size(); ++station_index) {
+        for (size_t station_index = 0; station_index < station_list_entries_.size(); ++station_index) {
             add_element("station.list", station_index,
-                        station_list_entries[station_index]->edit_ref);
+                        station_list_entries_[station_index]->edit_ref);
         }
         add_elements("structure.load", ctx_.structure_loads);
         add_elements("structure.put", ctx_.structure_puts);
@@ -894,6 +892,7 @@ private:
 
     MapContext& ctx_;
     MapSnapshotStorage& storage_;
+    std::vector<const StationListEntry*> station_list_entries_;
     std::unordered_map<std::string, KvStringRef> strings_;
 };
 

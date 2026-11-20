@@ -17,6 +17,7 @@
 #include "repeater_linkage.h"
 #include "touch_input.h"
 #include "../canvas2d/canvas2d_interaction.h"
+#include "../maploader/text_decoder.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -43,6 +44,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <set>
@@ -222,57 +224,27 @@ bool plan_data_summary_matches(const PlanData& left, const PlanData& right) {
         left.xmax == right.xmax && left.ymax == right.ymax;
 }
 
-constexpr const char* k_default_edit_map_path =
-    "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
-    "Config_Map121M-ATSP+Ps_Ask.txt";
-
-template <typename Options, typename CommitHandler>
-Options parse_headless_optional_map_edit_options(
-    const std::vector<std::string>& args, std::string_view command,
-    CommitHandler&& handle_commit) {
-    Options options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (std::string_view(arg) == command) {
-            options.requested = true;
-            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
-                options.path = args[++i];
-            }
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) {
-                                         return value > 0.0 && std::isfinite(value);
-                                     })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value =
-                take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        } else if (arg == "--commit") {
-            handle_commit(options);
-        }
-    }
-    if (options.requested && options.path.empty()) options.path = k_default_edit_map_path;
-    return options;
-}
-
 template <typename Options, typename CommitHandler>
 Options parse_headless_required_map_edit_options(
     const std::vector<std::string>& args, std::string_view command,
     CommitHandler&& handle_commit) {
     Options options;
+    const auto requested = std::find_if(args.begin(), args.end(), [&](const std::string& arg) {
+        return std::string_view(arg) == command;
+    });
+    if (requested == args.end()) return options;
+    options.requested = true;
+
+    bool commit = false;
     for (size_t i = 1; i < args.size(); ++i) {
         const std::string& arg = args[i];
         if (std::string_view(arg) == command) {
-            options.requested = true;
-            const std::string* value =
-                take_option_value(args, i, arg, "a map path", options.error);
-            if (!value) return options;
-            options.path = *value;
+            if (i + 1 == args.size() || args[i + 1].empty() ||
+                args[i + 1].rfind("--", 0) == 0) {
+                options.error = arg + " requires a map path";
+                return options;
+            }
+            options.path = args[++i];
         } else if (arg == "--unit-distance") {
             if (!parse_double_option(args, i, arg, "a value",
                                      "--unit-distance must be a positive finite number",
@@ -288,11 +260,13 @@ Options parse_headless_required_map_edit_options(
             if (!value) return options;
             options.output_path = *value;
         } else if (arg == "--commit") {
-            handle_commit(options);
+            commit = true;
         }
     }
-    if (options.requested && options.path.empty() && options.error.empty()) {
+    if (options.path.empty()) {
         options.error = std::string(command) + " requires a map path";
+    } else if (commit) {
+        handle_commit(options);
     }
     return options;
 }
@@ -1043,21 +1017,23 @@ HeadlessEditBenchmarkOptions parse_headless_edit_benchmark_options(const std::ve
 
 HeadlessOwnTrackEditOptions parse_headless_own_track_edit_options(
     const std::vector<std::string>& args) {
-    return parse_headless_optional_map_edit_options<HeadlessOwnTrackEditOptions>(
+    return parse_headless_required_map_edit_options<HeadlessOwnTrackEditOptions>(
         args, "--debug-headless-own-track-edit",
-        [](HeadlessOwnTrackEditOptions&) {});
+        [](HeadlessOwnTrackEditOptions& options) {
+            options.error = "--debug-headless-own-track-edit is memory-apply only";
+        });
 }
 
 HeadlessOtherTrackEditOptions parse_headless_other_track_edit_options(
     const std::vector<std::string>& args) {
-    return parse_headless_optional_map_edit_options<HeadlessOtherTrackEditOptions>(
+    return parse_headless_required_map_edit_options<HeadlessOtherTrackEditOptions>(
         args, "--debug-headless-other-track-edit",
         [](HeadlessOtherTrackEditOptions& options) { options.commit = true; });
 }
 
 HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
     const std::vector<std::string>& args) {
-    return parse_headless_optional_map_edit_options<HeadlessDistanceEditBatchOptions>(
+    return parse_headless_required_map_edit_options<HeadlessDistanceEditBatchOptions>(
         args, "--debug-headless-distance-edit-batch",
         [](HeadlessDistanceEditBatchOptions& options) { options.commit = true; });
 }
@@ -1110,7 +1086,7 @@ HeadlessStationListEditOptions parse_headless_station_list_edit_options(
 
 HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
     const std::vector<std::string>& args) {
-    return parse_headless_optional_map_edit_options<HeadlessRepeaterEditBatchOptions>(
+    return parse_headless_required_map_edit_options<HeadlessRepeaterEditBatchOptions>(
         args, "--debug-headless-repeater-edit-batch",
         [](HeadlessRepeaterEditBatchOptions& options) { options.commit = true; });
 }
@@ -1131,13 +1107,13 @@ HeadlessOtherTrackKeyEditOptions parse_headless_other_track_key_edit_options(
 
 HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
     const std::vector<std::string>& args) {
-    return parse_headless_optional_map_edit_options<HeadlessSectionEditBatchOptions>(
+    return parse_headless_required_map_edit_options<HeadlessSectionEditBatchOptions>(
         args, "--debug-headless-section-edit-batch",
         [](HeadlessSectionEditBatchOptions& options) { options.commit = true; });
 }
 
 HeadlessInsertEditOptions parse_headless_insert_edit_options(const std::vector<std::string>& args) {
-    HeadlessInsertEditOptions options = parse_headless_optional_map_edit_options<HeadlessInsertEditOptions>(
+    HeadlessInsertEditOptions options = parse_headless_required_map_edit_options<HeadlessInsertEditOptions>(
         args, "--debug-headless-insert-edit",
         [](HeadlessInsertEditOptions& parsed_options) { parsed_options.commit = true; });
     if (!options.requested) return options;
@@ -2409,17 +2385,14 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
         auto& station_edit = app.station_definition_edit_;
         station_edit.rows_initialized = true;
         station_edit.rows = {station_draft("existing", "Arrival", "Departure")};
-        station_edit.visible_rows = editable_list_visible_row_indices(station_edit.rows);
         station_edit.rows[0].values[9] = "Draft";
         check(sound_usage_matches({1, 2}), "station_sound_modified_draft_replaces_cache");
         auto inserted_station = station_draft("", "aRrIvAl", "");
         inserted_station.inserted = true;
         inserted_station.local_draft_id = "new-station";
         station_edit.rows.push_back(std::move(inserted_station));
-        station_edit.visible_rows = editable_list_visible_row_indices(station_edit.rows);
         check(sound_usage_matches({0, 1, 2, 5}), "station_sound_inserted_draft_reference");
         station_edit.rows[0].deleted = true;
-        station_edit.visible_rows = editable_list_visible_row_indices(station_edit.rows);
         check(sound_usage_matches({0, 5}), "station_sound_deleted_draft_not_referenced");
         station_edit.editing_edit_id = "new-station";
         station_edit.editing_column = 9;
@@ -2477,7 +2450,6 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
             auto& signal_edit = usage.signal_aspect_edit_;
             signal_edit.rows_initialized = true;
             signal_edit.rows.push_back(std::move(aspect));
-            signal_edit.visible_rows = editable_list_visible_row_indices(signal_edit.rows);
             signal_edit.editing_edit_id = "signal-key-draft";
             signal_edit.editing_column = 1;
             signal_edit.editing_baseline = "main-old";
@@ -2872,11 +2844,12 @@ int run_debug_headless_scene_loader_contract(
     release_com(device);
     const bool passed = contract.error.empty() && contract.repeater_cache && contract.model_bounds && contract.normal_worker &&
         contract.copy_exception && contract.put_between_exception &&
-        contract.subset_requeue && contract.removal_only_cancel &&
+        contract.subset_requeue && contract.active_worker_queue && contract.removal_only_cancel &&
         contract.release_balance && contract.texture_allocation_cleanup &&
         contract.texture_cache_reuse && contract.upload_failure_cleanup &&
         contract.numeric_boundaries && contract.put_between_preparation &&
-        contract.geometry_model_reuse && contract.full_model_reload &&
+        contract.geometry_model_reuse && contract.full_model_reload && contract.put_between_model_reload &&
+        contract.shader_pipeline_retry &&
         resource_safety.image_layout &&
         resource_safety.image_decode && resource_safety.numeric_conversion && background_texture;
     *out << "stage=worker-contract-complete\n"
@@ -2889,6 +2862,7 @@ int run_debug_headless_scene_loader_contract(
          << "put_between_exception="
          << (contract.put_between_exception ? "PASS" : "FAIL") << "\n"
          << "subset_requeue=" << (contract.subset_requeue ? "PASS" : "FAIL") << "\n"
+         << "active_worker_queue=" << (contract.active_worker_queue ? "PASS" : "FAIL") << "\n"
          << "removal_only_cancel="
          << (contract.removal_only_cancel ? "PASS" : "FAIL") << "\n"
          << "release_balance=" << (contract.release_balance ? "PASS" : "FAIL")
@@ -2908,6 +2882,8 @@ int run_debug_headless_scene_loader_contract(
          << "full_model_reload=" << (contract.full_model_reload ? "PASS" : "FAIL")
          << " loads=" << contract.full_model_load_count
          << " bounds_max_x=" << contract.full_model_bounds_max_x << "\n"
+         << "put_between_model_reload=" << (contract.put_between_model_reload ? "PASS" : "FAIL") << "\n"
+         << "shader_pipeline_retry=" << (contract.shader_pipeline_retry ? "PASS" : "FAIL") << "\n"
          << "image_layout=" << (resource_safety.image_layout ? "PASS" : "FAIL") << "\n"
          << "image_decode=" << (resource_safety.image_decode ? "PASS" : "FAIL") << "\n"
          << "numeric_conversion="
@@ -3710,6 +3686,10 @@ Change update(std::string change_id, std::string edit_id,
 
 } // namespace typed_edit_headless
 
+namespace distance_batch_headless {
+std::string snapshot_text(const KvMapSnapshot& snapshot, KvStringRef ref);
+}
+
 int App::run_debug_headless_other_track_edit(
     const HeadlessOtherTrackEditOptions& options) {
     using typed_edit_headless::Change;
@@ -3735,9 +3715,9 @@ int App::run_debug_headless_other_track_edit(
     LoadResult load = load_map_worker(options.path, options.unit_distance,
                                       false, 0.0, 0.0, options.unit_distance,
                                       LoadModelOptions{true});
+    const std::unique_ptr<void, decltype(&kv_free)> handle(load.handle, kv_free);
     if (!load.ok) {
         *out << "load_error=" << load.error << "\nresult=FAIL\n";
-        if (load.handle) kv_free(load.handle);
         return 2;
     }
 
@@ -3793,9 +3773,22 @@ int App::run_debug_headless_other_track_edit(
     const bool snapshot_ok = kv_get_map_snapshot(
         load.handle, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot)) != 0;
     check("snapshot_ok", snapshot_ok);
-    check("logical_rows_present", !load.model.other_track_changes.empty());
-    check("typed_row_count_match", snapshot_ok &&
-          snapshot.other_track_change_count == load.model.other_track_changes.size());
+    const auto& logical_rows = load.model.other_track_changes;
+    const bool counts_match = snapshot.other_track_change_count == logical_rows.size();
+    check("logical_rows_present", !logical_rows.empty());
+    check("typed_row_count_match", counts_match);
+    if (!snapshot_ok || !counts_match || logical_rows.empty()) {
+        *out << "result=FAIL\n";
+        return 3;
+    }
+    for (size_t i = 0; i < logical_rows.size(); ++i) {
+        const auto& metadata = snapshot.other_track_changes[i].metadata;
+        if (distance_batch_headless::snapshot_text(snapshot, metadata.edit_id) !=
+            logical_rows[i].edit_id) {
+            *out << "typed_row_identity_mismatch_index=" << i << "\nresult=FAIL\n";
+            return 3;
+        }
+    }
 
     const auto target_it = std::find_if(
         load.model.other_track_changes.begin(), load.model.other_track_changes.end(),
@@ -3809,22 +3802,18 @@ int App::run_debug_headless_other_track_edit(
     check("position_target_found", target != nullptr);
     if (!target) {
         *out << "result=FAIL\n";
-        kv_free(load.handle);
         return 3;
     }
 
+    const size_t row_index = static_cast<size_t>(target_it - logical_rows.begin());
+    const KvOtherTrackChangeRow& typed = snapshot.other_track_changes[row_index];
     size_t bound_event_count = 0;
-    if (snapshot_ok) {
-        const size_t row_index = static_cast<size_t>(target_it -
-            load.model.other_track_changes.begin());
-        const KvOtherTrackChangeRow& typed = snapshot.other_track_changes[row_index];
-        for (std::uint64_t i = 0; i < snapshot.other_track_event_count; ++i) {
-            const KvTrackEventRow& event = snapshot.other_track_events[i];
-            if (event.metadata.source_file_index == typed.metadata.source_file_index &&
-                event.metadata.line == typed.metadata.line &&
-                event.metadata.column == typed.metadata.column) {
-                ++bound_event_count;
-            }
+    for (std::uint64_t i = 0; i < snapshot.other_track_event_count; ++i) {
+        const KvTrackEventRow& event = snapshot.other_track_events[i];
+        if (event.metadata.source_file_index == typed.metadata.source_file_index &&
+            event.metadata.line == typed.metadata.line &&
+            event.metadata.column == typed.metadata.column) {
+            ++bound_event_count;
         }
     }
     *out << "derived_event_binding_count=" << bound_event_count << "\n";
@@ -3871,10 +3860,12 @@ int App::run_debug_headless_other_track_edit(
 
         bool marker_2d_ok = false;
         bool marker_2d_label_ok = false;
-        ImGui::CreateContext();
-        ImPlot::CreateContext();
-        ImGui::GetIO().IniFilename = nullptr;
         try {
+            const std::unique_ptr<ImGuiContext, decltype(&ImGui::DestroyContext)> gui(
+                ImGui::CreateContext(), ImGui::DestroyContext);
+            const std::unique_ptr<ImPlotContext, decltype(&ImPlot::DestroyContext)> plot(
+                ImPlot::CreateContext(), ImPlot::DestroyContext);
+            ImGui::GetIO().IniFilename = nullptr;
             UserSettings settings;
             settings.language = Language::En;
             App app(nullptr, settings, 1.0f, false, false);
@@ -3919,11 +3910,10 @@ int App::run_debug_headless_other_track_edit(
                 marker->label.find("Track[" + track_key + "].") != std::string::npos &&
                 marker->label.find(method_suffix) != std::string::npos &&
                 marker->label.find(updated_text) != std::string::npos;
-        } catch (...) {
-            marker_2d_ok = false;
+        } catch (const std::exception& e) {
+            *out << "stage=other-track-2d-marker\nexception=" << e.what() << "\nresult=FAIL\n";
+            return 3;
         }
-        ImPlot::DestroyContext();
-        ImGui::DestroyContext();
         check("marker_2d_coordinate_and_filter_ok", marker_2d_ok);
         check("marker_2d_label_ok", marker_2d_label_ok);
 
@@ -3999,7 +3989,6 @@ int App::run_debug_headless_other_track_edit(
     *out << "logical_row_count=" << load.model.other_track_changes.size() << "\n"
          << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
     out->flush();
-    kv_free(load.handle);
     return failed_cases == 0 ? 0 : 3;
 }
 
@@ -5558,6 +5547,15 @@ std::string source_snapshot_fingerprint(void* handle) {
     return hash_text(content);
 }
 
+std::map<std::string, std::string> disk_source_bytes(const KvMapSnapshot& snapshot) {
+    std::map<std::string, std::string> result;
+    for (std::uint64_t i = 0; i < snapshot.source_file_count; ++i) {
+        const std::string path = snapshot_text(snapshot, snapshot.source_files[i].file_path);
+        result.emplace(path, kme::maploader::read_binary_file(std::filesystem::path(utf8_to_wide(path))));
+    }
+    return result;
+}
+
 bool populate_target_info(void* handle, StructureEdit& edit, std::string& error) {
     const std::optional<InspectorTargetMetadata> info =
         resolve_inspector_target_metadata(handle, edit.edit_id, edit.row_kind, &error);
@@ -5596,7 +5594,6 @@ bool candidate_has_recommended_resolution(const EditReport& report,
 
 bool choose_candidate_target(void* handle, StructureEdit& candidate,
                              int& dry_run_attempts, std::string& error) {
-    if (!populate_target_info(handle, candidate, error)) return false;
     bool accepted = false;
     StructureEdit best = candidate;
     int best_score = 99;
@@ -5727,37 +5724,34 @@ bool distances_are_separated(const std::vector<StructureEdit>& selected,
 
 std::vector<StructureEdit> select_real_map_edits(
     void* handle, const std::vector<StructureEdit>& rows,
-    int& dry_run_attempts, int& sig_context_count) {
+    int& dry_run_attempts, int& variable_context_count) {
     if (rows.empty()) throw std::runtime_error("real map has no editable structure.data rows");
     std::vector<StructureEdit> selected;
     std::set<std::string> selected_files;
     std::set<std::string> attempted_ids;
     std::string last_error;
 
-    auto try_row = [&](const StructureEdit& source, bool require_sig,
+    auto try_row = [&](const StructureEdit& source, bool require_variable,
                        double minimum_spacing) {
-        if (selected.size() >= 5 || !attempted_ids.insert(source.edit_id).second) return false;
+        if (selected.size() >= 5) return false;
         const std::string file_key = ascii_lower(source.source_file);
         if (selected_files.find(file_key) != selected_files.end()) return false;
         if (!distances_are_separated(selected, source.old_distance, minimum_spacing)) return false;
         StructureEdit candidate = source;
+        if (!populate_target_info(handle, candidate, last_error)) return false;
+        const bool has_variable = candidate.original_distance_expression.find('$') != std::string::npos;
+        if (require_variable && !has_variable) return false;
+        if (!attempted_ids.insert(source.edit_id).second) return false;
         if (!choose_candidate_target(handle, candidate, dry_run_attempts, last_error)) return false;
-        const bool has_sig = candidate.original_distance_expression.find("$sig") != std::string::npos;
-        if (require_sig && !has_sig) return false;
         selected_files.insert(file_key);
-        if (has_sig) ++sig_context_count;
+        if (has_variable) ++variable_context_count;
         selected.push_back(std::move(candidate));
         return true;
     };
 
-    for (const char* file_tail : {"beacons_common1.txt", "beacons_common2.txt"}) {
-        int attempts_for_file = 0;
-        const std::string wanted = ascii_lower(file_tail);
-        for (const StructureEdit& row : rows) {
-            if (ascii_lower(row.source_file).find(wanted) == std::string::npos) continue;
-            if (++attempts_for_file > 16) break;
-            if (try_row(row, true, 100.0)) break;
-        }
+    for (const StructureEdit& row : rows) {
+        if (variable_context_count == 2) break;
+        try_row(row, true, 100.0);
     }
 
     std::vector<size_t> pool;
@@ -6339,7 +6333,7 @@ struct BatchRunFacts {
     std::string path;
     bool commit_requested = false;
     int candidate_dry_run_attempts = 0;
-    int selected_sig_context_count = 0;
+    int selected_variable_context_count = 0;
     int initial_resolution_request_count = 0;
     std::vector<std::string> initial_resolution_reasons;
     int resolution_round_count = 0;
@@ -6362,14 +6356,17 @@ struct BatchRunFacts {
     bool reset_snapshot_fingerprint_restored = false;
     std::string initial_source_fingerprint;
     std::string reset_source_fingerprint;
+    size_t protected_source_count = 0;
+    std::optional<bool> disk_bytes_unchanged;
     bool commit_attempted = false;
     bool commit_ok = false;
+    std::vector<std::string> committed_files;
     std::vector<StructureEdit> selected;
     FixtureFacts fixtures;
     std::string error;
 
     bool passed() const {
-        return error.empty() && selected.size() == 5 && selected_sig_context_count >= 2 &&
+        return error.empty() && selected.size() == 5 && selected_variable_context_count >= 2 &&
                final_dry_run_ok && apply_to_memory_ok && full_reparse_ok &&
                target_distance_match_count == 5 && non_target_changed_count == 0 &&
                post_apply_metadata_resolved_count == 5 &&
@@ -6380,7 +6377,8 @@ struct BatchRunFacts {
                distance_group_count == 5 &&
                created_distance_block_count + reused_distance_block_count == distance_group_count &&
                no_local_wrapper && reset_ok && reset_snapshot_fingerprint_restored &&
-               fixtures.passed() && (!commit_requested || (commit_attempted && commit_ok));
+               disk_bytes_unchanged == true && fixtures.passed() &&
+               (!commit_requested || (commit_attempted && commit_ok));
     }
 };
 
@@ -6391,7 +6389,7 @@ void write_batch_result(std::ostream& out, const BatchRunFacts& facts) {
         << "commit_requested=" << boolean(facts.commit_requested) << "\n"
         << "candidate_dry_run_attempts=" << facts.candidate_dry_run_attempts << "\n"
         << "selected_count=" << facts.selected.size() << "\n"
-        << "selected_sig_context_count=" << facts.selected_sig_context_count << "\n"
+        << "selected_variable_context_count=" << facts.selected_variable_context_count << "\n"
         << "initial_resolution_request_count="
         << facts.initial_resolution_request_count << "\n";
     for (size_t i = 0; i < facts.initial_resolution_reasons.size(); ++i) {
@@ -6425,8 +6423,12 @@ void write_batch_result(std::ostream& out, const BatchRunFacts& facts) {
         << boolean(facts.reset_snapshot_fingerprint_restored) << "\n"
         << "initial_source_fingerprint=" << facts.initial_source_fingerprint << "\n"
         << "reset_source_fingerprint=" << facts.reset_source_fingerprint << "\n"
+        << "protected_source_count=" << facts.protected_source_count << "\n"
+        << "disk_bytes_unchanged_before_commit="
+        << (facts.disk_bytes_unchanged ? (*facts.disk_bytes_unchanged ? "PASS" : "FAIL") : "NOT_RUN") << "\n"
         << "commit_attempted=" << boolean(facts.commit_attempted) << "\n"
         << "commit_ok=" << boolean(facts.commit_ok) << "\n";
+    for (const auto& file : facts.committed_files) out << "committed_file=" << file << "\n";
     for (size_t i = 0; i < facts.selected.size(); ++i) {
         const StructureEdit& edit = facts.selected[i];
         out << "selected." << i << ".edit_id=" << edit.edit_id << "\n"
@@ -7393,6 +7395,14 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
     BatchRunFacts facts;
     facts.path = options.path;
     facts.commit_requested = options.commit;
+    std::map<std::string, std::string> protected_sources;
+    const auto verify_disk = [&] {
+        facts.disk_bytes_unchanged = std::all_of(protected_sources.begin(), protected_sources.end(),
+            [](const auto& source) {
+                return kme::maploader::read_binary_file(
+                    std::filesystem::path(utf8_to_wide(source.first))) == source.second;
+            });
+    };
     try {
         MapHandle handle;
         handle.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
@@ -7402,11 +7412,14 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
             throw std::runtime_error(error ? error : "real map load failed");
         }
 
+        protected_sources = disk_source_bytes(current_map_snapshot(handle.value));
+        facts.protected_source_count = protected_sources.size();
+        if (protected_sources.empty()) throw std::runtime_error("map has no physical sources to verify");
         facts.initial_source_fingerprint = source_snapshot_fingerprint(handle.value);
         std::vector<StructureEdit> rows = structure_rows_from_snapshot(handle.value);
         facts.selected = select_real_map_edits(
             handle.value, rows, facts.candidate_dry_run_attempts,
-            facts.selected_sig_context_count);
+            facts.selected_variable_context_count);
 
         std::map<std::string, ResolutionChoice> resolutions;
         std::vector<EditChange> final_changes = build_changes(facts.selected, resolutions);
@@ -7526,6 +7539,11 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
                 : facts.fixtures.error);
         }
 
+        verify_disk();
+        if (!*facts.disk_bytes_unchanged) {
+            throw std::runtime_error("source bytes changed during the memory-only checks");
+        }
+
         if (options.commit) {
             facts.commit_attempted = true;
             EditReport commit_apply = typed_edit_headless::apply_to_memory(
@@ -7541,16 +7559,26 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
             }
             EditReport commit_report = typed_edit_headless::commit(handle.value);
             ReportFacts committed = report_facts(commit_report);
-            facts.commit_ok = committed.ok && committed.full_reparse_ok;
+            facts.commit_ok = committed.ok && committed.full_reparse_ok &&
+                !commit_report.changed_files.empty();
             if (!facts.commit_ok) {
                 std::string detail = first_blocking_error(commit_report);
                 throw std::runtime_error(detail.empty() ? "commit validation failed" : detail);
             }
+            facts.committed_files = std::move(commit_report.changed_files);
         }
     } catch (const std::exception& e) {
         facts.error = e.what();
     }
 
+    if (!protected_sources.empty() && !facts.disk_bytes_unchanged) {
+        try {
+            verify_disk();
+        } catch (const std::exception& e) {
+            *out << "source_verification_error=" << e.what() << "\n";
+            if (facts.error.empty()) facts.error = e.what();
+        }
+    }
     write_batch_result(*out, facts);
     out->flush();
     return facts.passed() ? 0 : 20;
@@ -8134,37 +8162,27 @@ int run_debug_headless_station_list_edit(
         const std::vector<StationRow> all_rows = collect_station_rows(handle.value);
         std::map<std::string, std::vector<StationRow>> rows_by_file;
         for (const StationRow& row : all_rows) rows_by_file[row.source_file].push_back(row);
-        const auto preferred = std::find_if(
-            rows_by_file.begin(), rows_by_file.end(), [](const auto& entry) {
-                return ascii_lower(wide_to_utf8(
-                    std::filesystem::path(utf8_to_wide(entry.first)).filename().wstring())) ==
-                    "stations121m.txt";
-            });
-        const auto selected_file = preferred != rows_by_file.end()
-            ? preferred
-            : std::max_element(
-                  rows_by_file.begin(), rows_by_file.end(),
-                  [](const auto& left, const auto& right) {
-                      return left.second.size() < right.second.size();
-                  });
-        if (selected_file == rows_by_file.end() || selected_file->second.size() < 5) {
+        auto selected_file = rows_by_file.end();
+        std::optional<size_t> selected_run;
+        for (size_t count : {size_t{6}, size_t{5}}) {
+            for (auto it = rows_by_file.begin(); it != rows_by_file.end(); ++it) {
+                if (auto run = select_consecutive_run(it->second, count)) {
+                    selected_file = it;
+                    selected_run = run;
+                    facts.selected_row_count = count;
+                    break;
+                }
+            }
+            if (selected_run) break;
+        }
+        if (!selected_run) {
             throw std::runtime_error(
-                "no Station.List source file contains at least five definitions");
+                "no five consecutive unique Station.List definitions were found");
         }
         const std::vector<StationRow>& baseline = selected_file->second;
         facts.target_file = selected_file->first;
         facts.baseline_target_row_count = baseline.size();
-        const std::optional<size_t> sentinel_run =
-            select_consecutive_run(baseline, 6);
-        const std::optional<size_t> five_row_run = sentinel_run
-            ? sentinel_run
-            : select_consecutive_run(baseline, 5);
-        if (!five_row_run) {
-            throw std::runtime_error(
-                "no five consecutive unique Station.List definitions were found");
-        }
-        const size_t run = *five_row_run;
-        facts.selected_row_count = sentinel_run ? 6 : 5;
+        const size_t run = *selected_run;
         const bool has_sentinel = facts.selected_row_count == 6;
         facts.selected_first_line = baseline[run].source_line;
         facts.selected_last_line =
@@ -8188,28 +8206,22 @@ int run_debug_headless_station_list_edit(
 
         std::vector<EditableListDraftRow> boundary_drafts =
             make_drafts(baseline);
-        const std::vector<size_t> boundary_visible =
-            editable_list_visible_row_indices(boundary_drafts);
         facts.first_move_up_disabled = !move_editable_list_draft_row(
-            boundary_drafts, boundary_visible, 0, -1);
+            boundary_drafts, 0, -1);
         facts.last_move_down_disabled = !move_editable_list_draft_row(
-            boundary_drafts, boundary_visible,
-            static_cast<int>(boundary_visible.size()) - 1, 1);
+            boundary_drafts,
+            static_cast<int>(boundary_drafts.size()) - 1, 1);
 
         std::vector<EditableListDraftRow> down_drafts = make_drafts(baseline);
-        const std::vector<size_t> down_visible =
-            editable_list_visible_row_indices(down_drafts);
         if (!move_editable_list_draft_row(
-                down_drafts, down_visible, static_cast<int>(run), 1)) {
+                down_drafts, static_cast<int>(run), 1)) {
             throw std::runtime_error("shared first-row move-down operation failed");
         }
         const auto down_pending = build_pending(down_drafts);
 
         std::vector<EditableListDraftRow> up_drafts = make_drafts(baseline);
-        const std::vector<size_t> up_visible =
-            editable_list_visible_row_indices(up_drafts);
         if (!move_editable_list_draft_row(
-                up_drafts, up_visible, static_cast<int>(run + 1), -1)) {
+                up_drafts, static_cast<int>(run + 1), -1)) {
             throw std::runtime_error("shared second-row move-up operation failed");
         }
         const auto up_pending = build_pending(up_drafts);
@@ -8228,18 +8240,16 @@ int run_debug_headless_station_list_edit(
                 baseline[run].raw_statement;
 
         std::vector<EditableListDraftRow> drafts = make_drafts(baseline);
-        const std::vector<size_t> visible =
-            editable_list_visible_row_indices(drafts);
         if (!move_editable_list_draft_row(
-                drafts, visible, static_cast<int>(run), 1) ||
+                drafts, static_cast<int>(run), 1) ||
             !clear_editable_list_draft_cell(
-                drafts, visible, static_cast<int>(run + 2), 1) ||
+                drafts, static_cast<int>(run + 2), 1) ||
             !clear_editable_list_draft_cell(
-                drafts, visible, static_cast<int>(run + 2), 4) ||
+                drafts, static_cast<int>(run + 2), 4) ||
             !clear_editable_list_draft_cell(
-                drafts, visible, static_cast<int>(run + 3), 0) ||
+                drafts, static_cast<int>(run + 3), 0) ||
             !delete_editable_list_draft_row(
-                drafts, visible, static_cast<int>(run + 4))) {
+                drafts, static_cast<int>(run + 4))) {
             throw std::runtime_error("shared composite Station.List draft operation failed");
         }
         facts.clear_normal_cell_draft_ok =
@@ -10502,42 +10512,43 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
              << "\n"
              << "variable_distance_expression=" << variable_anchor_expression << "\n";
 
-        auto snapshot_value_or = [&](const KvValue& value, const char* fallback) {
-            const std::string text = distance_batch_headless::snapshot_value_text(
-                baseline_snap, value);
-            return text.empty() ? std::string(fallback) : text;
+        const auto snapshot_key = [&](const KvValue& value, std::string_view name) {
+            if (value.kind != KV_VALUE_STRING && value.kind != KV_VALUE_NUMBER) {
+                throw std::runtime_error("insert fixture is missing key field " + std::string(name));
+            }
+            return distance_batch_headless::snapshot_value_text(baseline_snap, value);
         };
         const std::string structure_key = baseline_snap.structure_put_count != 0 &&
                 baseline_snap.structure_puts
-            ? snapshot_value_or(baseline_snap.structure_puts[0].structure_key, "0")
+            ? snapshot_key(baseline_snap.structure_puts[0].structure_key, "structureKey")
             : "0";
         const std::string track_key = baseline_snap.structure_put_count != 0 &&
                 baseline_snap.structure_puts
-            ? snapshot_value_or(baseline_snap.structure_puts[0].track_key, "0")
+            ? snapshot_key(baseline_snap.structure_puts[0].track_key, "trackKey")
             : "0";
         const std::string track_key1 = baseline_snap.structure_between_count != 0 &&
                 baseline_snap.structure_betweens
-            ? snapshot_value_or(baseline_snap.structure_betweens[0].track_key1, track_key.c_str())
+            ? snapshot_key(baseline_snap.structure_betweens[0].track_key1, "trackKey1")
             : track_key;
         const std::string track_key2 = baseline_snap.structure_between_count != 0 &&
                 baseline_snap.structure_betweens
-            ? snapshot_value_or(baseline_snap.structure_betweens[0].track_key2, track_key.c_str())
+            ? snapshot_key(baseline_snap.structure_betweens[0].track_key2, "trackKey2")
             : track_key;
         const std::string station_key = baseline_snap.station_put_count != 0 &&
                 baseline_snap.station_puts
-            ? snapshot_value_or(baseline_snap.station_puts[0].station_key, "0")
+            ? snapshot_key(baseline_snap.station_puts[0].station_key, "stationKey")
             : "0";
         const std::string signal_aspect_key = baseline_snap.signal_put_count != 0 &&
                 baseline_snap.signal_puts
-            ? snapshot_value_or(baseline_snap.signal_puts[0].signal_aspect_key, "0")
+            ? snapshot_key(baseline_snap.signal_puts[0].signal_aspect_key, "signalAspectKey")
             : "0";
         const std::string sound_key = baseline_snap.map_sound_count != 0 &&
                 baseline_snap.map_sounds
-            ? snapshot_value_or(baseline_snap.map_sounds[0].sound_key, "0")
+            ? snapshot_key(baseline_snap.map_sounds[0].sound_key, "soundKey")
             : "0";
         const std::string sound3d_key = baseline_snap.map_sound_3d_count != 0 &&
                 baseline_snap.map_sounds_3d
-            ? snapshot_value_or(baseline_snap.map_sounds_3d[0].sound_key, sound_key.c_str())
+            ? snapshot_key(baseline_snap.map_sounds_3d[0].sound_key, "sound3DKey")
             : sound_key;
         std::string repeater_track_key = track_key;
         std::string repeater_structure_key = structure_key;
@@ -10563,7 +10574,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                 throw std::runtime_error(
                     "--repeater-only requires a Repeater.Begin/Begin0 with a structure key");
             }
-            repeater_track_key = snapshot_value_or(source_repeater->track_key, "0");
+            repeater_track_key = snapshot_key(source_repeater->track_key, "repeaterTrackKey");
             if (source_repeater->track_key.kind == KV_VALUE_STRING) {
                 repeater_track_key = "'" + repeater_track_key + "'";
             }
@@ -12933,7 +12944,7 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         const bool render_pass = render_contract.error.empty() && render_contract.cases > 0 &&
             render_contract.instances && render_contract.pixels && render_contract.picking &&
             render_contract.cache_budget && render_contract.fps_counter &&
-            render_contract.rotation_gizmo && rotation_draft_ok;
+            render_contract.rotation_gizmo && rotation_draft_ok && render_contract.marker_index_retry;
         pass = pass && render_pass;
         *out << "scene3d_signature value=" << render_contract.signature << "\n"
              << "scene3d_render_contract cases=" << render_contract.cases
@@ -12941,6 +12952,8 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
              << " picking=" << render_contract.picking << " cache_budget=" << render_contract.cache_budget
              << " fps_counter=" << render_contract.fps_counter
              << " rotation_gizmo=" << render_contract.rotation_gizmo
+             << " marker_index_retry=" << render_contract.marker_index_retry
+             << " marker_index_retry_cases=" << render_contract.marker_index_retry_cases
              << " peak_cached_worlds=" << render_contract.peak_cached_worlds
              << " peak_cache_bytes=" << render_contract.peak_cache_bytes
              << " picked_cases=" << render_contract.picked_cases

@@ -118,6 +118,7 @@ void Canvas3D::Impl::release_marker_chunk(SceneMarkerChunkGpu& chunk) {
 void Canvas3D::Impl::release_scene_marker_chunks() {
     for (SceneMarkerChunkGpu& chunk : scene_marker_chunks) release_marker_chunk(chunk);
     scene_marker_chunks.clear();
+    scene_marker_indices_dirty = false;
     scene_marker_locations.clear();
     scene_sound3d_marker_indices.clear();
     for (std::vector<size_t>& target_indices : scene_marker_target_indices) {
@@ -970,6 +971,23 @@ void Canvas3D::Impl::rebuild_scene_mileage_pick_cache() {
 
 bool Canvas3D::Impl::rebuild_scene_marker_visible_indices(std::string& error) {
     error.clear();
+    const auto map_index_buffer = [&](ID3D11Buffer* buffer, D3D11_MAPPED_SUBRESOURCE& mapped) {
+#ifndef NDEBUG
+        if (debug_scene_marker_map_failure_countdown > 0 &&
+            --debug_scene_marker_map_failure_countdown == 0) return E_FAIL;
+#endif
+        return context->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    };
+    const auto invalidate_indices = [&](const char* operation, HRESULT failure) {
+        scene_marker_indices_dirty = true;
+        for (SceneMarkerChunkGpu& chunk : scene_marker_chunks) {
+            chunk.visible_index_count = 0;
+            chunk.visible_pick_index_count = 0;
+            for (SceneMarkerIndexRange& range : chunk.ranges) range.visible = false;
+        }
+        error = hresult_text(operation, failure);
+        return false;
+    };
     std::map<std::string, bool> track_visible;
     for (const Canvas3DTrackPath& path : scene_data.tracks) {
         track_visible[normalize_track_lookup_key(path.key)] = path.visible;
@@ -981,21 +999,15 @@ bool Canvas3D::Impl::rebuild_scene_marker_visible_indices(std::string& error) {
             chunk.source_indices.empty()) continue;
 
         D3D11_MAPPED_SUBRESOURCE display_mapped = {};
-        HRESULT hr = context->Map(
-            chunk.index_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
-            &display_mapped);
+        HRESULT hr = map_index_buffer(chunk.index_buffer, display_mapped);
         if (FAILED(hr)) {
-            error = hresult_text("Map(scene marker index)", hr);
-            return false;
+            return invalidate_indices("Map(scene marker index)", hr);
         }
         D3D11_MAPPED_SUBRESOURCE pick_mapped = {};
-        hr = context->Map(
-            chunk.pick_index_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
-            &pick_mapped);
+        hr = map_index_buffer(chunk.pick_index_buffer, pick_mapped);
         if (FAILED(hr)) {
             context->Unmap(chunk.index_buffer, 0);
-            error = hresult_text("Map(scene marker pick index)", hr);
-            return false;
+            return invalidate_indices("Map(scene marker pick index)", hr);
         }
         unsigned int* display_destination =
             static_cast<unsigned int*>(display_mapped.pData);
@@ -1040,6 +1052,7 @@ bool Canvas3D::Impl::rebuild_scene_marker_visible_indices(std::string& error) {
         context->Unmap(chunk.index_buffer, 0);
         context->Unmap(chunk.pick_index_buffer, 0);
     }
+    scene_marker_indices_dirty = false;
     return true;
 }
 
@@ -1237,7 +1250,7 @@ bool Canvas3D::Impl::set_scene_marker_visibility(
     const Canvas3DSceneMarkerVisibility& visibility,
     std::string& error) {
     error.clear();
-    if (scene_marker_visibility == visibility) return true;
+    if (scene_marker_visibility == visibility && !scene_marker_indices_dirty) return true;
     scene_marker_visibility = visibility;
     if (!scene_active || scene_marker_chunks.empty()) return true;
     if (!rebuild_scene_marker_visible_indices(error)) {

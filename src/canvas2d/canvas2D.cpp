@@ -885,10 +885,13 @@ void App::render_plan_canvas(ImVec2 size) {
     draw->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), IM_COL32(12, 13, 15, 255));
     draw->PushClipRect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), true);
 
-    if (!data.own.empty() && (!plan_view_.fitted || !keep_plan_view_)) {
-        PlanData fit_data = build_plan_data(true);
+    const auto fit_plan = [&] {
+        const PlanData fit_data = build_plan_data(true);
         const PlanData& bounds = fit_data.own.empty() ? data : fit_data;
         plan_view_.fit(bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax, avail);
+    };
+    if (!data.own.empty() && (!plan_view_.fitted || !keep_plan_view_)) {
+        fit_plan();
         keep_plan_view_ = true;
     }
     debug_plan_stage("fit");
@@ -899,7 +902,7 @@ void App::render_plan_canvas(ImVec2 size) {
     if (touch.long_press) mouse = touch.long_press_pos;
     else if (touch.tap) mouse = touch.tap_pos;
     auto nearest_measure_distance = [&]() -> std::optional<double> {
-        return nearest_plan_measure_distance(data, origin, avail, mouse);
+        return nearest_plan_measure_distance(origin, avail, mouse);
     };
     std::optional<double> hovered_measure_distance;
     if (hovered && mode_ == Mode::Measure && !data.own.empty()) {
@@ -1201,9 +1204,7 @@ void App::render_plan_canvas(ImVec2 size) {
                 request_plot_focus(*clicked_distance, true, true);
             }
         } else if (!data.own.empty()) {
-            PlanData fit_data = build_plan_data(true);
-            const PlanData& bounds = fit_data.own.empty() ? data : fit_data;
-            plan_view_.fit(bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax, avail);
+            fit_plan();
         }
     }
 
@@ -1633,49 +1634,12 @@ void App::render_plan_canvas(ImVec2 size) {
                             MapMarkerVisualKind::CabIlluminance, 8.0f);
     debug_plan_stage("cab_illuminance_markers");
 
-    if (!data.fog_markers.empty()) {
-        for (const PlanMarker& marker : data.fog_markers) {
-            const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(point, origin, avail)) continue;
-            const double dx = static_cast<double>(point.x - mouse.x);
-            const double dy = static_cast<double>(point.y - mouse.y);
-            const bool marker_hovered = hovered_fog_row && *hovered_fog_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            const bool marker_active = marker_emphasized(
-                PlanMarkerKind::Fog, marker.row_index, marker_hovered);
-            const ImU32 color =
-                map_marker_theme_color_u32(MapMarkerVisualKind::Fog);
-            draw_selected_marker_ring(point, PlanMarkerKind::Fog, marker.row_index, color);
-            draw_map_marker_icon(
-                draw, MapMarkerVisualKind::Fog, point,
-                7.0f * marker_size_scale *
-                    (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, point, color, marker.label);
-        }
-    }
+    draw_colored_marker_set(data.fog_markers, PlanMarkerKind::Fog,
+                            hovered_fog_row, MapMarkerVisualKind::Fog, 7.0f);
     debug_plan_stage("fog_markers");
 
-    if (!data.legacy_fog_markers.empty()) {
-        for (const PlanMarker& marker : data.legacy_fog_markers) {
-            const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(point, origin, avail)) continue;
-            const double dx = static_cast<double>(point.x - mouse.x);
-            const double dy = static_cast<double>(point.y - mouse.y);
-            const bool marker_hovered =
-                hovered_legacy_fog_row && *hovered_legacy_fog_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            const bool marker_active = marker_emphasized(
-                PlanMarkerKind::LegacyFog, marker.row_index, marker_hovered);
-            const ImU32 color =
-                map_marker_theme_color_u32(MapMarkerVisualKind::Fog);
-            draw_selected_marker_ring(point, PlanMarkerKind::LegacyFog, marker.row_index, color);
-            draw_map_marker_icon(
-                draw, MapMarkerVisualKind::Fog, point,
-                7.0f * marker_size_scale *
-                    (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, point, color, marker.label);
-        }
-    }
+    draw_colored_marker_set(data.legacy_fog_markers, PlanMarkerKind::LegacyFog,
+                            hovered_legacy_fog_row, MapMarkerVisualKind::Fog, 7.0f);
     debug_plan_stage("legacy_fog_markers");
 
     draw_colored_marker_set(data.draw_distance_markers, PlanMarkerKind::DrawDistance,

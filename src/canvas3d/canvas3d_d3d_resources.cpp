@@ -19,6 +19,7 @@
 #include <cstring>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace canvas3d_detail;
@@ -210,367 +211,176 @@ constexpr float k_scene_mileage_highlight_top = 1.0f;
 
 } // namespace canvas3d_detail
 
+namespace {
+template <typename T>
+class SceneComResource {
+public:
+    SceneComResource() = default;
+    SceneComResource(const SceneComResource&) = delete;
+    SceneComResource& operator=(const SceneComResource&) = delete;
+    ~SceneComResource() { release_com(resource_); }
+
+    T** output() { return &resource_; }
+    T* operator->() const { return resource_; }
+    explicit operator bool() const { return resource_ != nullptr; }
+    T* take() { return std::exchange(resource_, nullptr); }
+
+private:
+    T* resource_ = nullptr;
+};
+
+bool scene_d3d_succeeded(HRESULT hr, const char* operation, std::string& error) {
+    if (SUCCEEDED(hr)) return true;
+    error = hresult_text(operation, hr);
+    return false;
+}
+
+bool compile_scene_shader(const char* source, const char* entry, const char* profile,
+                          const char* operation, SceneComResource<ID3DBlob>& bytecode,
+                          std::string& error) {
+    SceneComResource<ID3DBlob> diagnostics;
+    const HRESULT hr = D3DCompile(source, std::strlen(source), nullptr, nullptr, nullptr,
+        entry, profile, D3DCOMPILE_ENABLE_STRICTNESS, 0, bytecode.output(), diagnostics.output());
+    if (SUCCEEDED(hr)) return true;
+    error = diagnostics ? static_cast<const char*>(diagnostics->GetBufferPointer())
+                                     : hresult_text(operation, hr);
+    return false;
+}
+
+bool create_scene_constants(ID3D11Device& device, UINT bytes, const char* operation,
+                            SceneComResource<ID3D11Buffer>& constants, std::string& error) {
+    D3D11_BUFFER_DESC desc{};
+    desc.ByteWidth = bytes;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    return scene_d3d_succeeded(device.CreateBuffer(&desc, nullptr, constants.output()), operation, error);
+}
+} // namespace
+
 bool Canvas3D::Impl::ensure_scene_outline_pipeline(std::string& error) {
-    if (scene_outline_vertex_shader && scene_outline_pixel_shader &&
-        scene_outline_constant_buffer && scene_outline_sampler_state) {
-        return true;
-    }
+    if (scene_outline_vertex_shader) return true;
 
-    ID3DBlob* vs_blob = nullptr;
-    ID3DBlob* ps_blob = nullptr;
-    ID3DBlob* errors = nullptr;
-    HRESULT hr = D3DCompile(k_scene_highlight_outline_shader_source, std::strlen(k_scene_highlight_outline_shader_source),
-                            nullptr, nullptr, nullptr, "vs_main", "vs_4_0",
-                            D3DCOMPILE_ENABLE_STRICTNESS, 0, &vs_blob, &errors);
-    if (FAILED(hr)) {
-        error = errors ? static_cast<const char*>(errors->GetBufferPointer()) :
-            hresult_text("D3DCompile(scene outline vertex shader)", hr);
-        release_com(errors);
-        return false;
-    }
-    release_com(errors);
-
-    hr = D3DCompile(k_scene_highlight_outline_shader_source, std::strlen(k_scene_highlight_outline_shader_source),
-                    nullptr, nullptr, nullptr, "ps_main", "ps_4_0",
-                    D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
-    if (FAILED(hr)) {
-        error = errors ? static_cast<const char*>(errors->GetBufferPointer()) :
-            hresult_text("D3DCompile(scene outline pixel shader)", hr);
-        release_com(errors);
-        release_com(vs_blob);
-        return false;
-    }
-    release_com(errors);
-
-    hr = device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nullptr,
-                                    &scene_outline_vertex_shader);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateVertexShader(scene outline)", hr);
-        release_com(vs_blob);
-        release_com(ps_blob);
-        return false;
-    }
-    hr = device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr,
-                                   &scene_outline_pixel_shader);
-    release_com(vs_blob);
-    release_com(ps_blob);
-    if (FAILED(hr)) {
-        error = hresult_text("CreatePixelShader(scene outline)", hr);
-        release_com(scene_outline_vertex_shader);
+    SceneComResource<ID3DBlob> vs, ps;
+    SceneComResource<ID3D11VertexShader> vertex;
+    SceneComResource<ID3D11PixelShader> pixel;
+    SceneComResource<ID3D11Buffer> constants;
+    SceneComResource<ID3D11SamplerState> sampler;
+    const char* source = k_scene_highlight_outline_shader_source;
+    if (!compile_scene_shader(source, "vs_main", "vs_4_0", "D3DCompile(scene outline vertex shader)", vs, error) ||
+        !compile_scene_shader(source, "ps_main", "ps_4_0", "D3DCompile(scene outline pixel shader)", ps, error) ||
+        !scene_d3d_succeeded(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(),
+                                 nullptr, vertex.output()), "CreateVertexShader(scene outline)", error) ||
+        !scene_d3d_succeeded(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(),
+                                 nullptr, pixel.output()), "CreatePixelShader(scene outline)", error) ||
+        !create_scene_constants(*device, sizeof(SceneOutlineConstants),
+                                "CreateBuffer(scene outline constants)", constants, error)) {
         return false;
     }
 
-    D3D11_BUFFER_DESC cb_desc = {};
-    cb_desc.ByteWidth = sizeof(SceneOutlineConstants);
-    cb_desc.Usage = D3D11_USAGE_DEFAULT;
-    cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    hr = device->CreateBuffer(&cb_desc, nullptr, &scene_outline_constant_buffer);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateBuffer(scene outline constants)", hr);
-        release_com(scene_outline_pixel_shader);
-        release_com(scene_outline_vertex_shader);
-        return false;
-    }
+    D3D11_SAMPLER_DESC desc{};
+    desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    desc.AddressU = desc.AddressV = desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    desc.MaxLOD = D3D11_FLOAT32_MAX;
+    if (!scene_d3d_succeeded(device->CreateSamplerState(&desc, sampler.output()),
+                             "CreateSamplerState(scene outline)", error)) return false;
 
-    D3D11_SAMPLER_DESC sampler_desc = {};
-    sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
-    sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sampler_desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sampler_desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
-    sampler_desc.MinLOD = 0.0f;
-    sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
-    hr = device->CreateSamplerState(&sampler_desc, &scene_outline_sampler_state);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateSamplerState(scene outline)", hr);
-        release_com(scene_outline_constant_buffer);
-        release_com(scene_outline_pixel_shader);
-        release_com(scene_outline_vertex_shader);
-        return false;
-    }
-
+    scene_outline_vertex_shader = vertex.take();
+    scene_outline_pixel_shader = pixel.take();
+    scene_outline_constant_buffer = constants.take();
+    scene_outline_sampler_state = sampler.take();
     return true;
 }
 
 bool Canvas3D::Impl::ensure_scene_pick_pipeline(std::string& error) {
-    if (scene_pick_pixel_shader && scene_pick_constant_buffer) return true;
+    if (scene_pick_pixel_shader) return true;
 
-    ID3DBlob* ps_blob = nullptr;
-    ID3DBlob* errors = nullptr;
-    HRESULT hr = D3DCompile(k_scene_pick_shader_source, std::strlen(k_scene_pick_shader_source),
-                            nullptr, nullptr, nullptr, "ps_main", "ps_4_0",
-                            D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
-    if (FAILED(hr)) {
-        error = errors ? static_cast<const char*>(errors->GetBufferPointer()) :
-            hresult_text("D3DCompile(scene pick pixel shader)", hr);
-        release_com(errors);
-        return false;
-    }
-    release_com(errors);
-
-    hr = device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr,
-                                   &scene_pick_pixel_shader);
-    release_com(ps_blob);
-    if (FAILED(hr)) {
-        error = hresult_text("CreatePixelShader(scene pick)", hr);
+    SceneComResource<ID3DBlob> ps;
+    SceneComResource<ID3D11PixelShader> pixel;
+    SceneComResource<ID3D11Buffer> constants;
+    if (!compile_scene_shader(k_scene_pick_shader_source, "ps_main", "ps_4_0",
+                              "D3DCompile(scene pick pixel shader)", ps, error) ||
+        !scene_d3d_succeeded(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(),
+                                 nullptr, pixel.output()), "CreatePixelShader(scene pick)", error) ||
+        !create_scene_constants(*device, sizeof(ScenePickConstants),
+                                "CreateBuffer(scene pick constants)", constants, error)) {
         return false;
     }
 
-    D3D11_BUFFER_DESC cb_desc = {};
-    cb_desc.ByteWidth = sizeof(ScenePickConstants);
-    cb_desc.Usage = D3D11_USAGE_DEFAULT;
-    cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    hr = device->CreateBuffer(&cb_desc, nullptr, &scene_pick_constant_buffer);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateBuffer(scene pick constants)", hr);
-        release_com(scene_pick_pixel_shader);
-        return false;
-    }
-
+    scene_pick_pixel_shader = pixel.take();
+    scene_pick_constant_buffer = constants.take();
     return true;
 }
 
 bool Canvas3D::Impl::ensure_scene_pipeline(std::string& error) {
+    if (scene_marker_vertex_shader) return true;
     if (!device || !context) {
         error = "Direct3D device is not available";
         return false;
     }
-    if (scene_vertex_shader && scene_pixel_shader && scene_fog_pixel_shader &&
-        scene_input_layout && scene_constant_buffer &&
-        scene_depth_state && scene_depth_read_state && rasterizer_state && alpha_mask_rasterizer_state &&
-        track_rasterizer_state && sampler_state && blend_state &&
-        scene_outline_vertex_shader && scene_outline_pixel_shader &&
-        scene_outline_constant_buffer && scene_outline_sampler_state &&
-        scene_pick_pixel_shader && scene_pick_constant_buffer &&
-        scene_marker_vertex_shader && scene_marker_pixel_shader &&
-        scene_marker_pick_pixel_shader && scene_marker_mask_pixel_shader &&
-        scene_marker_input_layout && scene_marker_constant_buffer &&
-        scene_marker_pick_constant_buffer) return true;
+    if (!ensure_pipeline(error) || !ensure_scene_depth_states(error)) return false;
 
-    if (!ensure_pipeline(error)) return false;
-    if (!ensure_scene_depth_states(error)) return false;
-    if (scene_vertex_shader && scene_pixel_shader && scene_fog_pixel_shader &&
-        scene_input_layout && scene_constant_buffer &&
-        track_rasterizer_state && sampler_state && blend_state) {
-        return ensure_scene_outline_pipeline(error) &&
-            ensure_scene_pick_pipeline(error) &&
-            ensure_scene_marker_pipeline(error);
-    }
+    if (!scene_vertex_shader) {
+        SceneComResource<ID3DBlob> vs, ps, fog_ps;
+        SceneComResource<ID3D11VertexShader> vertex;
+        SceneComResource<ID3D11PixelShader> pixel, fog_pixel;
+        SceneComResource<ID3D11InputLayout> input_layout;
+        SceneComResource<ID3D11Buffer> constants;
+        const char* source = k_scene_shader_source;
+        if (!compile_scene_shader(source, "vs_main", "vs_4_0", "D3DCompile(scene vertex shader)", vs, error) ||
+            !compile_scene_shader(source, "ps_main", "ps_4_0", "D3DCompile(scene pixel shader)", ps, error) ||
+            !compile_scene_shader(source, "ps_fog_main", "ps_4_0", "D3DCompile(scene fog pixel shader)", fog_ps, error)) {
+            return false;
+        }
 
-    release_com(scene_input_layout);
-    release_com(scene_vertex_shader);
-    release_com(scene_pixel_shader);
-    release_com(scene_fog_pixel_shader);
-    release_com(scene_constant_buffer);
+        D3D11_INPUT_ELEMENT_DESC layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"WORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"WORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"WORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"WORLD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        };
+        if (!scene_d3d_succeeded(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(),
+                                     nullptr, vertex.output()), "CreateVertexShader(scene)", error) ||
+            !scene_d3d_succeeded(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(),
+                                     nullptr, pixel.output()), "CreatePixelShader(scene)", error) ||
+            !scene_d3d_succeeded(device->CreatePixelShader(fog_ps->GetBufferPointer(), fog_ps->GetBufferSize(),
+                                     nullptr, fog_pixel.output()), "CreatePixelShader(scene fog)", error) ||
+            !scene_d3d_succeeded(device->CreateInputLayout(layout, IM_ARRAYSIZE(layout),
+                                     vs->GetBufferPointer(), vs->GetBufferSize(), input_layout.output()),
+                                 "CreateInputLayout(scene)", error) ||
+            !create_scene_constants(*device, sizeof(SceneViewConstants),
+                                    "CreateBuffer(scene constants)", constants, error)) {
+            return false;
+        }
 
-    ID3DBlob* vs_blob = nullptr;
-    ID3DBlob* ps_blob = nullptr;
-    ID3DBlob* fog_ps_blob = nullptr;
-    ID3DBlob* errors = nullptr;
-    HRESULT hr = D3DCompile(k_scene_shader_source, std::strlen(k_scene_shader_source), nullptr, nullptr, nullptr,
-                            "vs_main", "vs_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &vs_blob, &errors);
-    if (FAILED(hr)) {
-        error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(scene vertex shader)", hr);
-        release_com(errors);
-        return false;
+        scene_vertex_shader = vertex.take();
+        scene_pixel_shader = pixel.take();
+        scene_fog_pixel_shader = fog_pixel.take();
+        scene_input_layout = input_layout.take();
+        scene_constant_buffer = constants.take();
     }
-    release_com(errors);
-
-    hr = D3DCompile(k_scene_shader_source, std::strlen(k_scene_shader_source), nullptr, nullptr, nullptr,
-                    "ps_main", "ps_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
-    if (FAILED(hr)) {
-        error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(scene pixel shader)", hr);
-        release_com(errors);
-        release_com(vs_blob);
-        return false;
-    }
-    release_com(errors);
-
-    hr = D3DCompile(k_scene_shader_source, std::strlen(k_scene_shader_source), nullptr, nullptr, nullptr,
-                    "ps_fog_main", "ps_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &fog_ps_blob, &errors);
-    if (FAILED(hr)) {
-        error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(scene fog pixel shader)", hr);
-        release_com(errors);
-        release_com(vs_blob);
-        release_com(ps_blob);
-        return false;
-    }
-    release_com(errors);
-
-    hr = device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nullptr, &scene_vertex_shader);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateVertexShader(scene)", hr);
-        release_com(vs_blob);
-        release_com(ps_blob);
-        release_com(fog_ps_blob);
-        return false;
-    }
-    hr = device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr, &scene_pixel_shader);
-    if (FAILED(hr)) {
-        error = hresult_text("CreatePixelShader(scene)", hr);
-        release_com(vs_blob);
-        release_com(ps_blob);
-        release_com(fog_ps_blob);
-        release_com(scene_vertex_shader);
-        return false;
-    }
-    hr = device->CreatePixelShader(fog_ps_blob->GetBufferPointer(), fog_ps_blob->GetBufferSize(), nullptr,
-                                   &scene_fog_pixel_shader);
-    if (FAILED(hr)) {
-        error = hresult_text("CreatePixelShader(scene fog)", hr);
-        release_com(vs_blob);
-        release_com(ps_blob);
-        release_com(fog_ps_blob);
-        release_com(scene_vertex_shader);
-        release_com(scene_pixel_shader);
-        return false;
-    }
-
-    D3D11_INPUT_ELEMENT_DESC layout[] = {
-        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"WORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1},
-        {"WORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_INSTANCE_DATA, 1},
-        {"WORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D11_INPUT_PER_INSTANCE_DATA, 1},
-        {"WORLD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D11_INPUT_PER_INSTANCE_DATA, 1},
-    };
-    hr = device->CreateInputLayout(layout, 7, vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), &scene_input_layout);
-    release_com(vs_blob);
-    release_com(ps_blob);
-    release_com(fog_ps_blob);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateInputLayout(scene)", hr);
-        release_com(scene_vertex_shader);
-        release_com(scene_pixel_shader);
-        release_com(scene_fog_pixel_shader);
-        return false;
-    }
-
-    D3D11_BUFFER_DESC cb_desc = {};
-    cb_desc.ByteWidth = sizeof(SceneViewConstants);
-    cb_desc.Usage = D3D11_USAGE_DEFAULT;
-    cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    hr = device->CreateBuffer(&cb_desc, nullptr, &scene_constant_buffer);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateBuffer(scene constants)", hr);
-        release_com(scene_input_layout);
-        release_com(scene_vertex_shader);
-        release_com(scene_pixel_shader);
-        release_com(scene_fog_pixel_shader);
-        return false;
-    }
-    return ensure_scene_outline_pipeline(error) &&
-        ensure_scene_pick_pipeline(error) &&
+    return ensure_scene_outline_pipeline(error) && ensure_scene_pick_pipeline(error) &&
         ensure_scene_marker_pipeline(error);
 }
 
 bool Canvas3D::Impl::ensure_scene_marker_pipeline(std::string& error) {
-    if (scene_marker_vertex_shader && scene_marker_pixel_shader &&
-        scene_marker_pick_pixel_shader && scene_marker_mask_pixel_shader &&
-        scene_marker_input_layout && scene_marker_constant_buffer &&
-        scene_marker_pick_constant_buffer) {
-        return true;
-    }
-    release_com(scene_marker_input_layout);
-    release_com(scene_marker_vertex_shader);
-    release_com(scene_marker_pixel_shader);
-    release_com(scene_marker_pick_pixel_shader);
-    release_com(scene_marker_mask_pixel_shader);
-    release_com(scene_marker_constant_buffer);
-    release_com(scene_marker_pick_constant_buffer);
-
-    ID3DBlob* vs_blob = nullptr;
-    ID3DBlob* ps_blob = nullptr;
-    ID3DBlob* pick_ps_blob = nullptr;
-    ID3DBlob* mask_ps_blob = nullptr;
-    ID3DBlob* errors = nullptr;
-    HRESULT hr = D3DCompile(
-        k_scene_marker_shader_source, std::strlen(k_scene_marker_shader_source),
-        nullptr, nullptr, nullptr, "vs_main", "vs_4_0",
-        D3DCOMPILE_ENABLE_STRICTNESS, 0, &vs_blob, &errors);
-    if (FAILED(hr)) {
-        error = errors
-            ? static_cast<const char*>(errors->GetBufferPointer())
-            : hresult_text("D3DCompile(scene marker vertex shader)", hr);
-        release_com(errors);
-        return false;
-    }
-    release_com(errors);
-
-    hr = D3DCompile(
-        k_scene_marker_shader_source, std::strlen(k_scene_marker_shader_source),
-        nullptr, nullptr, nullptr, "ps_main", "ps_4_0",
-        D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
-    if (FAILED(hr)) {
-        error = errors
-            ? static_cast<const char*>(errors->GetBufferPointer())
-            : hresult_text("D3DCompile(scene marker pixel shader)", hr);
-        release_com(errors);
-        release_com(vs_blob);
-        return false;
-    }
-    release_com(errors);
-
-    hr = D3DCompile(
-        k_scene_marker_shader_source, std::strlen(k_scene_marker_shader_source),
-        nullptr, nullptr, nullptr, "ps_pick_main", "ps_4_0",
-        D3DCOMPILE_ENABLE_STRICTNESS, 0, &pick_ps_blob, &errors);
-    if (FAILED(hr)) {
-        error = errors
-            ? static_cast<const char*>(errors->GetBufferPointer())
-            : hresult_text("D3DCompile(scene marker pick shader)", hr);
-        release_com(errors);
-        release_com(vs_blob);
-        release_com(ps_blob);
-        return false;
-    }
-    release_com(errors);
-
-    hr = D3DCompile(
-        k_scene_marker_shader_source, std::strlen(k_scene_marker_shader_source),
-        nullptr, nullptr, nullptr, "ps_mask_main", "ps_4_0",
-        D3DCOMPILE_ENABLE_STRICTNESS, 0, &mask_ps_blob, &errors);
-    if (FAILED(hr)) {
-        error = errors
-            ? static_cast<const char*>(errors->GetBufferPointer())
-            : hresult_text("D3DCompile(scene marker mask shader)", hr);
-        release_com(errors);
-        release_com(vs_blob);
-        release_com(ps_blob);
-        release_com(pick_ps_blob);
-        return false;
-    }
-    release_com(errors);
-
-    hr = device->CreateVertexShader(vs_blob->GetBufferPointer(),
-                                    vs_blob->GetBufferSize(), nullptr,
-                                    &scene_marker_vertex_shader);
-    if (SUCCEEDED(hr)) {
-        hr = device->CreatePixelShader(ps_blob->GetBufferPointer(),
-                                       ps_blob->GetBufferSize(), nullptr,
-                                       &scene_marker_pixel_shader);
-    }
-    if (SUCCEEDED(hr)) {
-        hr = device->CreatePixelShader(pick_ps_blob->GetBufferPointer(),
-                                       pick_ps_blob->GetBufferSize(), nullptr,
-                                       &scene_marker_pick_pixel_shader);
-    }
-    if (SUCCEEDED(hr)) {
-        hr = device->CreatePixelShader(mask_ps_blob->GetBufferPointer(),
-                                       mask_ps_blob->GetBufferSize(), nullptr,
-                                       &scene_marker_mask_pixel_shader);
-    }
-    if (FAILED(hr)) {
-        error = hresult_text("CreateShader(scene marker)", hr);
-        release_com(vs_blob);
-        release_com(ps_blob);
-        release_com(pick_ps_blob);
-        release_com(mask_ps_blob);
-        release_com(scene_marker_vertex_shader);
-        release_com(scene_marker_pixel_shader);
-        release_com(scene_marker_pick_pixel_shader);
-        release_com(scene_marker_mask_pixel_shader);
+    SceneComResource<ID3DBlob> vs, ps, pick_ps, mask_ps;
+    SceneComResource<ID3D11VertexShader> vertex;
+    SceneComResource<ID3D11PixelShader> pixel, pick_pixel, mask_pixel;
+    SceneComResource<ID3D11InputLayout> input_layout;
+    SceneComResource<ID3D11Buffer> constants, pick_constants;
+    const char* source = k_scene_marker_shader_source;
+    const char* mask_entry = "ps_mask_main";
+#ifndef NDEBUG
+    if (std::exchange(debug_scene_marker_compile_failure, false)) mask_entry = "missing_mask_entry";
+#endif
+    if (!compile_scene_shader(source, "vs_main", "vs_4_0", "D3DCompile(scene marker vertex shader)", vs, error) ||
+        !compile_scene_shader(source, "ps_main", "ps_4_0", "D3DCompile(scene marker pixel shader)", ps, error) ||
+        !compile_scene_shader(source, "ps_pick_main", "ps_4_0", "D3DCompile(scene marker pick shader)", pick_ps, error) ||
+        !compile_scene_shader(source, mask_entry, "ps_4_0", "D3DCompile(scene marker mask shader)", mask_ps, error)) {
         return false;
     }
 
@@ -586,51 +396,31 @@ bool Canvas3D::Impl::ensure_scene_marker_pipeline(std::string& error) {
         {"TEXCOORD", 2, DXGI_FORMAT_R32_UINT, 0, 28,
          D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
-    hr = device->CreateInputLayout(
-        layout, IM_ARRAYSIZE(layout),
-        vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(),
-        &scene_marker_input_layout);
-    release_com(vs_blob);
-    release_com(ps_blob);
-    release_com(pick_ps_blob);
-    release_com(mask_ps_blob);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateInputLayout(scene marker)", hr);
-        release_com(scene_marker_vertex_shader);
-        release_com(scene_marker_pixel_shader);
-        release_com(scene_marker_pick_pixel_shader);
-        release_com(scene_marker_mask_pixel_shader);
+    if (!scene_d3d_succeeded(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(),
+                                 nullptr, vertex.output()), "CreateVertexShader(scene marker)", error) ||
+        !scene_d3d_succeeded(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(),
+                                 nullptr, pixel.output()), "CreatePixelShader(scene marker)", error) ||
+        !scene_d3d_succeeded(device->CreatePixelShader(pick_ps->GetBufferPointer(), pick_ps->GetBufferSize(),
+                                 nullptr, pick_pixel.output()), "CreatePixelShader(scene marker pick)", error) ||
+        !scene_d3d_succeeded(device->CreatePixelShader(mask_ps->GetBufferPointer(), mask_ps->GetBufferSize(),
+                                 nullptr, mask_pixel.output()), "CreatePixelShader(scene marker mask)", error) ||
+        !scene_d3d_succeeded(device->CreateInputLayout(layout, IM_ARRAYSIZE(layout),
+                                 vs->GetBufferPointer(), vs->GetBufferSize(), input_layout.output()),
+                             "CreateInputLayout(scene marker)", error) ||
+        !create_scene_constants(*device, sizeof(SceneMarkerConstants),
+                                "CreateBuffer(scene marker constants)", constants, error) ||
+        !create_scene_constants(*device, sizeof(SceneMarkerPickConstants),
+                                "CreateBuffer(scene marker pick constants)", pick_constants, error)) {
         return false;
     }
 
-    D3D11_BUFFER_DESC cb_desc = {};
-    cb_desc.ByteWidth = sizeof(SceneMarkerConstants);
-    cb_desc.Usage = D3D11_USAGE_DEFAULT;
-    cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    hr = device->CreateBuffer(&cb_desc, nullptr,
-                              &scene_marker_constant_buffer);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateBuffer(scene marker constants)", hr);
-        release_com(scene_marker_input_layout);
-        release_com(scene_marker_vertex_shader);
-        release_com(scene_marker_pixel_shader);
-        release_com(scene_marker_pick_pixel_shader);
-        release_com(scene_marker_mask_pixel_shader);
-        return false;
-    }
-    cb_desc.ByteWidth = sizeof(SceneMarkerPickConstants);
-    hr = device->CreateBuffer(&cb_desc, nullptr,
-                              &scene_marker_pick_constant_buffer);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateBuffer(scene marker pick constants)", hr);
-        release_com(scene_marker_constant_buffer);
-        release_com(scene_marker_input_layout);
-        release_com(scene_marker_vertex_shader);
-        release_com(scene_marker_pixel_shader);
-        release_com(scene_marker_pick_pixel_shader);
-        release_com(scene_marker_mask_pixel_shader);
-        return false;
-    }
+    scene_marker_vertex_shader = vertex.take();
+    scene_marker_pixel_shader = pixel.take();
+    scene_marker_pick_pixel_shader = pick_pixel.take();
+    scene_marker_mask_pixel_shader = mask_pixel.take();
+    scene_marker_input_layout = input_layout.take();
+    scene_marker_constant_buffer = constants.take();
+    scene_marker_pick_constant_buffer = pick_constants.take();
     return true;
 }
 

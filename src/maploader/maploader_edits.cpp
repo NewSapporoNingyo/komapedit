@@ -12,6 +12,8 @@
 #include "own_track_transition_linkage.h"
 #include "repeater_linkage.h"
 
+#include <tuple>
+
 namespace kme::maploader::detail {
 
 using kme::timing::MapTiming;
@@ -23,6 +25,7 @@ using kme::maploader::read_binary_file;
 
 using SemanticSnapshot = SemanticMapSnapshot;
 using SemanticElement = SemanticElementSnapshot;
+using EditChangesView = std::vector<const MapEditChange*>;
 
 SemanticSnapshot semantic_snapshot_for_context(MapContext& ctx) {
     MapTiming::Stage timing("semantic.snapshot");
@@ -162,7 +165,6 @@ struct SourcePatch {
     const SourceFileRecord* record = nullptr;
     std::string text;
     std::vector<size_t> line_starts;
-    std::string current_hash;
     std::string base_hash;
     bool utf8_bom = false;
     std::vector<TextReplacement> replacements;
@@ -226,33 +228,24 @@ std::vector<MapEditChange> copy_edit_batch(const KvEditBatch& batch) {
             const KvEditField& field = batch.fields[input.fields.offset + j];
             std::string name = copy_utf8_view(field.name, "field name");
             if (name.empty()) throw std::runtime_error("edit field name is empty");
-            if (change.operation == "insert" && name == "rowKind") {
-                // Insert changes have no existing edit target to derive their
-                // row kind from. The GUI transports it as a reserved field so
-                // the typed edit path can build the statement and expected
-                // semantic without it leaking into field validation.
-                if (!change.row_kind.empty()) {
-                    throw std::runtime_error("insert edit contains duplicate rowKind fields");
-                }
-                change.row_kind = trim_field_copy(copy_utf8_view(field.value, "rowKind"));
-                if (change.row_kind.empty()) {
-                    throw std::runtime_error("insert edit rowKind is empty");
-                }
-                continue;
+            const auto [entry, inserted] = change.field_changes.try_emplace(
+                std::move(name), copy_utf8_view(field.value, "field value"));
+            if (!inserted) {
+                throw std::runtime_error("edit change contains duplicate field: " + entry->first);
             }
-            if (change.operation == "insert" && name == "repeaterPairId") {
-                if (!change.repeater_pair_id.empty()) {
-                    throw std::runtime_error(
-                        "insert edit contains duplicate repeaterPairId fields");
+        }
+        if (change.operation == "insert") {
+            const auto take_insert_metadata = [&](const char* name) {
+                const auto field = change.field_changes.extract(name);
+                if (field.empty()) return std::string{};
+                std::string value = trim_field_copy(field.mapped());
+                if (value.empty()) {
+                    throw std::runtime_error(std::string("insert edit ") + name + " is empty");
                 }
-                change.repeater_pair_id = trim_field_copy(
-                    copy_utf8_view(field.value, "repeaterPairId"));
-                if (change.repeater_pair_id.empty()) {
-                    throw std::runtime_error("insert edit repeaterPairId is empty");
-                }
-                continue;
-            }
-            change.field_changes[std::move(name)] = copy_utf8_view(field.value, "field value");
+                return value;
+            };
+            change.row_kind = take_insert_metadata("rowKind");
+            change.repeater_pair_id = take_insert_metadata("repeaterPairId");
         }
         changes.push_back(std::move(change));
     }
@@ -267,25 +260,24 @@ std::string newline_text(const std::string& newline) {
 
 SourcePatch load_source_patch(const MapContext& ctx, const SourceFileRecord& record) {
     MapTiming::Stage timing("source.patch_read_decode_hash");
+    const std::string bytes = read_binary_file(path_from_utf8(record.file_path));
+    const auto override_it = ctx.source_overrides.find(record.source_key);
+    const auto& expected = override_it == ctx.source_overrides.end()
+        ? record.source_hash : override_it->second.base_hash;
     SourcePatch patch;
     patch.record = &record;
-    auto override_it = ctx.source_overrides.find(record.source_key);
+    patch.base_hash = hex64(stable_hash64(bytes));
+    if (!expected.empty() && expected != patch.base_hash) {
+        throw std::runtime_error("source file changed externally: " + record.file_path);
+    }
     if (override_it != ctx.source_overrides.end()) {
         const SourceTextOverride& source = override_it->second;
         patch.text = source.text;
-        patch.current_hash = source.current_hash;
-        patch.base_hash = source.base_hash.empty() ? source.current_hash : source.base_hash;
         patch.utf8_bom = source.utf8_bom;
-        patch.line_starts = build_line_starts(patch.text);
-        return patch;
+    } else {
+        patch.utf8_bom = has_utf8_bom(bytes);
+        patch.text = decode_text_bytes(bytes, record.encoding);
     }
-
-    std::filesystem::path path = path_from_utf8(record.file_path);
-    std::string bytes = read_binary_file(path);
-    patch.current_hash = hex64(stable_hash64(bytes));
-    patch.base_hash = patch.current_hash;
-    patch.utf8_bom = has_utf8_bom(bytes);
-    patch.text = decode_text_bytes(bytes, record.encoding);
     patch.line_starts = build_line_starts(patch.text);
     return patch;
 }
@@ -2357,207 +2349,126 @@ ResourceListContentInsertionPlan plan_resource_list_content_insertion(
     return plan;
 }
 
-template <typename Row>
-bool match_edit_ref(MapContext& ctx, const Row& row, const std::string& row_kind,
-                    size_t row_index, const std::string& edit_id, EditableTarget& target) {
-    if (!row.edit_ref.valid() || row.edit_ref.statement_index >= ctx.parsed_statements.size()) return false;
-    if (element_edit_id(ctx, row.edit_ref, row_kind) != edit_id) return false;
+static EditableTarget restore_statement_target(const MapContext&, const EditableTargetLocation& location) {
+    EditableTarget target;
+    target.statement_index = location.storage_index;
+    target.row_kind = location.row_kind;
+    target.row_index = location.row_index;
+    return target;
+}
+
+template <auto Rows, auto Binding>
+EditableTarget restore_row_target(const MapContext& ctx, const EditableTargetLocation& location) {
+    const auto& row = (ctx.*Rows)[location.storage_index];
+    EditableTarget target;
     target.statement_index = row.edit_ref.statement_index;
-    target.row_kind = row_kind;
-    target.row_index = row_index;
+    target.row_kind = location.row_kind;
+    target.row_index = location.row_index;
     target.element_index = row.edit_ref.element_index;
-    target.elements_for_statement =
-        ctx.parsed_statements[target.statement_index].editable_element_count;
-    return true;
-}
-
-template <typename Row, auto Builder>
-bool match_simple_edit_ref(MapContext& ctx, const Row& row,
-                           const std::string& row_kind, size_t row_index,
-                           const std::string& edit_id, EditableTarget& target) {
-    if (!match_edit_ref(ctx, row, row_kind, row_index, edit_id, target)) return false;
-    target.simple_row = &row;
-    target.simple_statement_builder = &build_simple_statement_adapter<Row, Builder>;
-    return true;
-}
-
-template <typename Rows, auto Builder>
-bool find_simple_target(MapContext& ctx, const Rows& rows,
-                        const std::string& row_kind, const std::string& edit_id,
-                        EditableTarget& target) {
-    for (size_t i = 0; i < rows.size(); ++i) {
-        if (match_simple_edit_ref<typename Rows::value_type, Builder>(
-                ctx, rows[i], row_kind, i, edit_id, target)) return true;
+    target.elements_for_statement = ctx.parsed_statements[target.statement_index].editable_element_count;
+    if constexpr (std::is_member_object_pointer_v<decltype(Binding)>) {
+        target.*Binding = &row;
+    } else {
+        using Row = std::decay_t<decltype(row)>;
+        target.simple_row = &row;
+        target.simple_statement_builder = &build_simple_statement_adapter<Row, Binding>;
     }
-    return false;
+    return target;
+}
+
+static void index_target_row(MapContext& ctx, EditableTargetIndex& index,
+                             const EditSourceRef& ref, const std::string& kind,
+                             EditableTargetLocation location) {
+    std::string id = element_edit_id(ctx, ref, kind);
+    if (!id.empty()) index.try_emplace(std::move(id), location);
+}
+
+template <auto Rows, auto Binding>
+void index_target_family(MapContext& ctx, EditableTargetIndex& index, const char* row_kind) {
+    const std::string kind(row_kind);
+    const auto& rows = ctx.*Rows;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        index_target_row(ctx, index, rows[i].edit_ref, kind,
+                         {row_kind, i, i, &restore_row_target<Rows, Binding>});
+    }
+}
+
+static std::unique_ptr<EditableTargetIndex> index_editable_targets(MapContext& ctx) {
+    auto index = std::make_unique<EditableTargetIndex>();
+    index->reserve(ctx.parsed_statements.size());
+    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+        auto& statement = ctx.parsed_statements[i];
+        const char* kind = nullptr;
+        if (statement.statement_kind == "Include") {
+            kind = "include";
+        } else if (resource_list_edit_spec_for_statement(statement.statement_kind)) {
+            kind = "resourceList.load";
+        }
+        if (kind) {
+            index->try_emplace(statement_edit_id(ctx, statement),
+                               EditableTargetLocation{kind, i, i, restore_statement_target});
+        }
+    }
+    index_target_family<&MapContext::curves, &EditableTarget::curve>(ctx, *index, "curve");
+    index_target_family<&MapContext::gradients, &EditableTarget::gradient>(ctx, *index, "gradient");
+    index_target_family<&MapContext::other_track_changes, &EditableTarget::other_track_change>(ctx, *index, "otherTrack.change");
+    index_target_family<&MapContext::structure_models, &EditableTarget::structure_model>(ctx, *index, "structure.model");
+    index_target_family<&MapContext::structure_puts, &EditableTarget::structure_put>(ctx, *index, "structure.put");
+    index_target_family<&MapContext::structure_betweens, &EditableTarget::structure_put>(ctx, *index, "structure.between");
+    index_target_family<&MapContext::station_puts, &EditableTarget::station_put>(ctx, *index, "station.put");
+    index_target_family<&MapContext::signal_aspects, &EditableTarget::signal_aspect>(ctx, *index, "signal.aspect");
+    index_target_family<&MapContext::signal_puts, &EditableTarget::signal_put>(ctx, *index, "signal.put");
+    index_target_family<&MapContext::repeaters, &EditableTarget::repeater>(ctx, *index, "repeater");
+    index_target_family<&MapContext::irregularities, &EditableTarget::irregularity>(ctx, *index, "irregularity.change");
+    const std::string sound_kinds[] = {"sound.list", "sound3D.list"};
+    size_t sound_row_indices[2]{};
+    for (size_t i = 0; i < ctx.sound_list.size(); ++i) {
+        const auto& row = ctx.sound_list[i];
+        const size_t family = static_cast<size_t>(row.is_3d);
+        const char* kind = row.is_3d ? "sound3D.list" : "sound.list";
+        index_target_row(ctx, *index, row.edit_ref, sound_kinds[family],
+                         {kind, i, sound_row_indices[family]++,
+                          &restore_row_target<&MapContext::sound_list, &EditableTarget::sound_list>});
+    }
+
+    const auto stations = ordered_station_list_entries(ctx);
+    const std::string station_kind = "station.list";
+    for (size_t i = 0; i < stations.size(); ++i) {
+        const size_t storage_index = static_cast<size_t>(stations[i] - ctx.station_list.data());
+        index_target_row(ctx, *index, stations[i]->edit_ref, station_kind,
+                         {"station.list", storage_index, i,
+                          &restore_row_target<&MapContext::station_list, &EditableTarget::station_list>});
+    }
+
+    index_target_family<&MapContext::beacons, build_beacon_statement>(ctx, *index, "beacon.put");
+    index_target_family<&MapContext::pretrains, build_pretrain_statement>(ctx, *index, "preTrain.pass");
+    index_target_family<&MapContext::section_begins, build_section_begin_statement>(ctx, *index, "section.begin");
+    index_target_family<&MapContext::section_speed_limits, build_section_speed_limit_statement>(ctx, *index, "section.speedLimit");
+    index_target_family<&MapContext::map_sounds, build_map_sound_statement>(ctx, *index, "mapSound.play");
+    index_target_family<&MapContext::map_sound_3d, build_map_sound_3d_statement>(ctx, *index, "mapSound3D.put");
+    index_target_family<&MapContext::rolling_noises, build_rolling_noise_statement>(ctx, *index, "rollingNoise.change");
+    index_target_family<&MapContext::flange_noises, build_flange_noise_statement>(ctx, *index, "flangeNoise.change");
+    index_target_family<&MapContext::joint_noises, build_joint_noise_statement>(ctx, *index, "jointNoise.play");
+    index_target_family<&MapContext::backgrounds, build_background_statement>(ctx, *index, "background.change");
+    index_target_family<&MapContext::adhesions, build_adhesion_statement>(ctx, *index, "adhesion.change");
+    index_target_family<&MapContext::cab_illuminance, build_cab_illuminance_statement>(ctx, *index, "cabIlluminance.change");
+    index_target_family<&MapContext::fogs, build_fog_statement>(ctx, *index, "fog.change");
+    index_target_family<&MapContext::legacy_fogs, build_legacy_fog_statement>(ctx, *index, "legacyFog.change");
+    index_target_family<&MapContext::light_ambient, build_light_ambient_statement>(ctx, *index, "light.ambient");
+    index_target_family<&MapContext::creator_messages, build_creator_message_statement>(ctx, *index, "creator.message");
+    index_target_family<&MapContext::light_diffuse, build_light_diffuse_statement>(ctx, *index, "light.diffuse");
+    index_target_family<&MapContext::light_direction, build_light_direction_statement>(ctx, *index, "light.direction");
+    index_target_family<&MapContext::draw_distances, build_draw_distance_statement>(ctx, *index, "drawDistance.change");
+    index_target_family<&MapContext::speedlimits, build_speed_limit_statement>(ctx, *index, "speedlimit");
+    return index;
 }
 
 EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id) {
-    EditableTarget target;
-    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
-        ParsedStatement& statement = ctx.parsed_statements[i];
-        if (statement.statement_kind != "Include") continue;
-        if (statement_edit_id(ctx, statement) != edit_id) continue;
-        target.statement_index = i;
-        target.row_kind = "include";
-        target.row_index = i;
-        target.elements_for_statement = 0;
-        return target;
-    }
-    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
-        ParsedStatement& statement = ctx.parsed_statements[i];
-        if (!resource_list_edit_spec_for_statement(statement.statement_kind) ||
-            statement_edit_id(ctx, statement) != edit_id) {
-            continue;
-        }
-        target.statement_index = i;
-        target.row_kind = "resourceList.load";
-        target.row_index = i;
-        target.elements_for_statement = 0;
-        return target;
-    }
-    for (size_t i = 0; i < ctx.curves.size(); ++i) {
-        const CurveEditRow& row = ctx.curves[i];
-        if (match_edit_ref(ctx, row, "curve", i, edit_id, target)) {
-            target.curve = &row;
-            return target;
-        }
-    }
-    for (size_t i = 0; i < ctx.gradients.size(); ++i) {
-        const GradientEditRow& row = ctx.gradients[i];
-        if (match_edit_ref(ctx, row, "gradient", i, edit_id, target)) {
-            target.gradient = &row;
-            return target;
-        }
-    }
-    for (size_t i = 0; i < ctx.other_track_changes.size(); ++i) {
-        const OtherTrackChange& row = ctx.other_track_changes[i];
-        if (match_edit_ref(ctx, row, "otherTrack.change", i, edit_id, target)) {
-            target.other_track_change = &row;
-            return target;
-        }
-    }
-    for (size_t i = 0; i < ctx.structure_models.size(); ++i) {
-        const StructureModel& row = ctx.structure_models[i];
-        if (match_edit_ref(ctx, row, "structure.model", i, edit_id, target)) {
-            target.structure_model = &row;
-            return target;
-        }
-    }
-    size_t sound_index = 0;
-    size_t sound_3d_index = 0;
-    for (const SoundListEntry& row : ctx.sound_list) {
-        const char* row_kind = row.is_3d ? "sound3D.list" : "sound.list";
-        const size_t row_index = row.is_3d ? sound_3d_index++ : sound_index++;
-        if (match_edit_ref(ctx, row, row_kind, row_index, edit_id, target)) {
-            target.sound_list = &row;
-            return target;
-        }
-    }
-    for (size_t i = 0; i < ctx.structure_puts.size(); ++i) {
-        const StructurePut& row = ctx.structure_puts[i];
-        if (match_edit_ref(ctx, row, "structure.put", i, edit_id, target)) {
-            target.structure_put = &row;
-            return target;
-        }
-    }
-    for (size_t i = 0; i < ctx.structure_betweens.size(); ++i) {
-        const StructurePut& row = ctx.structure_betweens[i];
-        if (match_edit_ref(ctx, row, "structure.between", i, edit_id, target)) {
-            target.structure_put = &row;
-            return target;
-        }
-    }
-    for (size_t i = 0; i < ctx.station_puts.size(); ++i) {
-        const StationPut& row = ctx.station_puts[i];
-        if (match_edit_ref(ctx, row, "station.put", i, edit_id, target)) {
-            target.station_put = &row;
-            return target;
-        }
-    }
-    {
-        const auto entries = ordered_station_list_entries(ctx);
-        for (size_t i = 0; i < entries.size(); ++i) {
-            const StationListEntry& row = *entries[i];
-            if (match_edit_ref(ctx, row, "station.list", i, edit_id, target)) {
-                target.station_list = &row;
-                return target;
-            }
-        }
-    }
-    for (size_t i = 0; i < ctx.signal_aspects.size(); ++i) {
-        const SignalAspect& row = ctx.signal_aspects[i];
-        if (match_edit_ref(
-                ctx, row, "signal.aspect", i, edit_id, target)) {
-            target.signal_aspect = &row;
-            return target;
-        }
-    }
-    for (size_t i = 0; i < ctx.signal_puts.size(); ++i) {
-        const SignalPut& row = ctx.signal_puts[i];
-        if (match_edit_ref(ctx, row, "signal.put", i, edit_id, target)) {
-            target.signal_put = &row;
-            return target;
-        }
-    }
-    for (size_t i = 0; i < ctx.repeaters.size(); ++i) {
-        const RepeaterEvent& row = ctx.repeaters[i];
-        if (match_edit_ref(ctx, row, "repeater", i, edit_id, target)) {
-            target.repeater = &row;
-            return target;
-        }
-    }
-    for (size_t i = 0; i < ctx.irregularities.size(); ++i) {
-        const IrregularityChange& row = ctx.irregularities[i];
-        if (match_edit_ref(ctx, row, "irregularity.change", i, edit_id, target)) {
-            target.irregularity = &row;
-            return target;
-        }
-    }
-    if (find_simple_target<decltype(ctx.beacons), build_beacon_statement>(
-            ctx, ctx.beacons, "beacon.put", edit_id, target) ||
-        find_simple_target<decltype(ctx.pretrains), build_pretrain_statement>(
-            ctx, ctx.pretrains, "preTrain.pass", edit_id, target) ||
-        find_simple_target<decltype(ctx.section_begins), build_section_begin_statement>(
-            ctx, ctx.section_begins, "section.begin", edit_id, target) ||
-        find_simple_target<decltype(ctx.section_speed_limits),
-                           build_section_speed_limit_statement>(
-            ctx, ctx.section_speed_limits, "section.speedLimit", edit_id, target) ||
-        find_simple_target<decltype(ctx.map_sounds), build_map_sound_statement>(
-            ctx, ctx.map_sounds, "mapSound.play", edit_id, target) ||
-        find_simple_target<decltype(ctx.map_sound_3d), build_map_sound_3d_statement>(
-            ctx, ctx.map_sound_3d, "mapSound3D.put", edit_id, target) ||
-        find_simple_target<decltype(ctx.rolling_noises), build_rolling_noise_statement>(
-            ctx, ctx.rolling_noises, "rollingNoise.change", edit_id, target) ||
-        find_simple_target<decltype(ctx.flange_noises), build_flange_noise_statement>(
-            ctx, ctx.flange_noises, "flangeNoise.change", edit_id, target) ||
-        find_simple_target<decltype(ctx.joint_noises), build_joint_noise_statement>(
-            ctx, ctx.joint_noises, "jointNoise.play", edit_id, target) ||
-        find_simple_target<decltype(ctx.backgrounds), build_background_statement>(
-            ctx, ctx.backgrounds, "background.change", edit_id, target) ||
-        find_simple_target<decltype(ctx.adhesions), build_adhesion_statement>(
-            ctx, ctx.adhesions, "adhesion.change", edit_id, target) ||
-        find_simple_target<decltype(ctx.cab_illuminance), build_cab_illuminance_statement>(
-            ctx, ctx.cab_illuminance, "cabIlluminance.change", edit_id, target) ||
-        find_simple_target<decltype(ctx.fogs), build_fog_statement>(
-            ctx, ctx.fogs, "fog.change", edit_id, target) ||
-        find_simple_target<decltype(ctx.legacy_fogs), build_legacy_fog_statement>(
-            ctx, ctx.legacy_fogs, "legacyFog.change", edit_id, target) ||
-        find_simple_target<decltype(ctx.light_ambient), build_light_ambient_statement>(
-            ctx, ctx.light_ambient, "light.ambient", edit_id, target) ||
-        find_simple_target<decltype(ctx.creator_messages), build_creator_message_statement>(
-            ctx, ctx.creator_messages, "creator.message", edit_id, target) ||
-        find_simple_target<decltype(ctx.light_diffuse), build_light_diffuse_statement>(
-            ctx, ctx.light_diffuse, "light.diffuse", edit_id, target) ||
-        find_simple_target<decltype(ctx.light_direction), build_light_direction_statement>(
-            ctx, ctx.light_direction, "light.direction", edit_id, target) ||
-        find_simple_target<decltype(ctx.draw_distances), build_draw_distance_statement>(
-            ctx, ctx.draw_distances, "drawDistance.change", edit_id, target) ||
-        find_simple_target<decltype(ctx.speedlimits), build_speed_limit_statement>(
-            ctx, ctx.speedlimits, "speedlimit", edit_id, target)) {
-        return target;
-    }
-    return target;
+    if (ctx.parsed_statements.empty()) return {};
+    if (!ctx.editable_target_index) ctx.editable_target_index = index_editable_targets(ctx);
+    const auto found = ctx.editable_target_index->find(edit_id);
+    if (found == ctx.editable_target_index->end()) return {};
+    return found->second.restore(ctx, found->second);
 }
 
 const KvEditTargetSnapshot& build_edit_target_snapshot(MapContext& ctx,
@@ -3751,8 +3662,9 @@ struct DistancePlanningIndex {
     std::map<std::string, ContextAnchors> anchors_by_context;
     std::map<std::string, std::vector<size_t>> statements_by_context;
     std::map<PhysicalKey, std::vector<size_t>> statements_by_physical_source;
+    std::vector<std::vector<size_t>> anchors_by_file;
 
-    explicit DistancePlanningIndex(const MapContext& ctx) {
+    explicit DistancePlanningIndex(const MapContext& ctx) : anchors_by_file(ctx.source_files.size()) {
         MapTiming::Stage timing("plan.distance_index");
         for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
             const ParsedStatement& statement = ctx.parsed_statements[i];
@@ -3760,6 +3672,7 @@ struct DistancePlanningIndex {
             statements_by_context[context_key].push_back(i);
             if (is_distance_statement(statement)) {
                 anchors_by_context[context_key].indices.push_back(i);
+                anchors_by_file[statement.source.source_file_index].push_back(i);
             }
             statements_by_physical_source[physical_key(statement)].push_back(i);
         }
@@ -5327,13 +5240,14 @@ repeater_linkage::Linkage repeater_linkage_state(
 bool validate_repeater_boundaries_after_edit(
     MapContext& baseline, MapContext& candidate,
     const std::set<std::string>& target_ids,
-    const std::vector<MapEditChange>& changes, std::string& error) {
+    const EditChangesView& changes, std::string& error) {
     bool has_repeater_edit = std::any_of(baseline.repeaters.begin(), baseline.repeaters.end(),
         [&](const RepeaterEvent& row) {
             return target_ids.count(element_edit_id(baseline, row.edit_ref, "repeater")) != 0;
         });
     std::set<std::string> inserted_boundaries;
-    for (const MapEditChange& change : changes) {
+    for (const MapEditChange* item : changes) {
+        const MapEditChange& change = *item;
         if (change.row_kind != "repeater") continue;
         has_repeater_edit = true;
         if (ascii_lower(change.operation) == "insert" &&
@@ -6071,7 +5985,7 @@ bool final_environment_matches_include_edits(
 }
 
 void validate_edit_report(MapContext& baseline,
-                          const std::vector<MapEditChange>& changes,
+                          const EditChangesView& changes,
                           MapEditReport& report) {
     MapTiming::Stage timing("validation.reparse");
     std::unique_ptr<MapContext> candidate;
@@ -6127,8 +6041,8 @@ void validate_edit_report(MapContext& baseline,
         std::string candidate_structure_load_edit_id;
     };
     std::vector<ResourceListReplacement> resource_list_replacements;
-    for (const MapEditChange& change : changes) {
-        if (change.edit_id.empty()) continue;
+    for (const MapEditChange* item : changes) {
+        const MapEditChange& change = *item;
         const std::string operation =
             ascii_lower(change.operation.empty() ? "update" : change.operation);
         if (operation == "delete") {
@@ -6835,10 +6749,12 @@ void validate_edit_report(MapContext& baseline,
             identity.first, identity.second);
     }
     candidate->element_edit_id_cache.clear();
+    candidate->editable_target_index.reset();
 
     std::set<std::string> deleted_ids;
     std::set<std::string> inserted_ids;
-    for (const MapEditChange& change : changes) {
+    for (const MapEditChange* item : changes) {
+        const MapEditChange& change = *item;
         const std::string operation =
             ascii_lower(change.operation.empty() ? "update" : change.operation);
         if (operation == "delete") {
@@ -7390,12 +7306,29 @@ void replace_context_and_advance_revisions(MapContext& current, MapContext&& rep
     current.edit_report_snapshot.reset();
 }
 
-MapEditReport build_edit_report(MapContext& ctx,
-                                const std::vector<MapEditChange>& changes,
-                                bool write_files) {
+static MapEditReport build_edit_report(MapContext& ctx, EditChangesView effective_changes) {
     MapTiming::Stage timing("plan.prepare");
     MapEditReport report;
     std::map<size_t, SourcePatch> patches;
+    const auto prepare_source = [&](size_t file_index, const MapEditChange& change) -> SourcePatch* {
+        const auto& file = ctx.source_files[file_index];
+        auto [entry, inserted] = patches.try_emplace(file_index);
+        auto& patch = entry->second;
+        if (inserted) {
+            try {
+                patch = load_source_patch(ctx, file);
+            } catch (const std::exception& e) {
+                report.blocking_errors.push_back(e.what());
+                return nullptr;
+            }
+        }
+        if (!patch.record) return nullptr;
+        if (!change.expected_source_hash.empty() && change.expected_source_hash != patch.base_hash) {
+            report.blocking_errors.push_back("source file changed externally: " + file.file_path);
+            return nullptr;
+        }
+        return &patch;
+    };
     std::optional<DistancePlanningIndex> distance_index;
     const auto get_distance_index = [&]() -> DistancePlanningIndex& {
         if (!distance_index) distance_index.emplace(ctx);
@@ -7407,42 +7340,6 @@ MapEditReport build_edit_report(MapContext& ctx,
             map_source_keys.insert(normalized_source_key(record.absolute_path));
         }
     }
-
-    auto change_signature = [](const MapEditChange& change) {
-        std::ostringstream out;
-        out << change.operation << "\n" << change.replacement_statement << "\n"
-            << change.target_file_path << "\n" << change.insert_before_edit_id << "\n"
-            << change.expected_source_hash << "\n" << change.distance_resolution_key << "\n"
-            << change.distance_boundary_token << "\n" << change.distance_expression << "\n"
-            << change.confirm_environment_mismatch << "\n";
-        for (const auto& field : change.field_changes) {
-            out << field.first.size() << ":" << field.first << "="
-                << field.second.size() << ":" << field.second << "\n";
-        }
-        return out.str();
-    };
-
-    std::map<std::string, std::string> edit_signatures;
-    std::vector<const MapEditChange*> effective_changes;
-    effective_changes.reserve(changes.size());
-    for (const MapEditChange& change : changes) {
-        if (change.edit_id.empty()) {
-            report.blocking_errors.push_back("edit change is missing editId");
-            continue;
-        }
-        std::string signature = change_signature(change);
-        auto existing = edit_signatures.find(change.edit_id);
-        if (existing != edit_signatures.end()) {
-            if (existing->second != signature) {
-                report.blocking_errors.push_back(
-                    "conflicting duplicate editId in one edit batch: " + change.edit_id);
-            }
-            continue;
-        }
-        edit_signatures.emplace(change.edit_id, std::move(signature));
-        effective_changes.push_back(&change);
-    }
-    if (!report.blocking_errors.empty()) return report;
 
     std::set<std::string> delete_ids;
     for (const MapEditChange* change : effective_changes) {
@@ -7524,25 +7421,8 @@ MapEditReport build_edit_report(MapContext& ctx,
                 report.blocking_errors.push_back("edit target has no source file: " + change.edit_id);
                 continue;
             }
-            const SourceFileRecord& file = ctx.source_files[statement->source.source_file_index];
-            SourcePatch& loaded_patch = patches[statement->source.source_file_index];
-            if (!loaded_patch.record) {
-                try {
-                    loaded_patch = load_source_patch(ctx, file);
-                } catch (const std::exception& e) {
-                    report.blocking_errors.push_back(e.what());
-                    continue;
-                }
-            }
-            const std::string& expected_hash = change.expected_source_hash.empty()
-                ? file.source_hash
-                : change.expected_source_hash;
-            if (!expected_hash.empty() && loaded_patch.current_hash != expected_hash &&
-                loaded_patch.base_hash != expected_hash) {
-                report.blocking_errors.push_back("source file changed externally: " + file.file_path);
-                continue;
-            }
-            patch = &loaded_patch;
+            patch = prepare_source(statement->source.source_file_index, change);
+            if (!patch) continue;
         }
 
         try {
@@ -7565,26 +7445,11 @@ MapEditReport build_edit_report(MapContext& ctx,
                         change.target_file_path);
                     continue;
                 }
-                const SourceFileRecord& file = ctx.source_files[target_file_index];
-                SourcePatch& target_patch = patches[target_file_index];
-                if (!target_patch.record) {
-                    try {
-                        target_patch = load_source_patch(ctx, file);
-                    } catch (const std::exception& e) {
-                        report.blocking_errors.push_back(e.what());
-                        continue;
-                    }
-                }
-                const std::string& expected_hash = change.expected_source_hash.empty()
-                    ? file.source_hash
-                    : change.expected_source_hash;
-                if (!expected_hash.empty() &&
-                    target_patch.current_hash != expected_hash &&
-                    target_patch.base_hash != expected_hash) {
-                    report.blocking_errors.push_back(
-                        "source file changed externally: " + file.file_path);
-                    continue;
-                }
+                SourcePatch* target_source = prepare_source(target_file_index, change);
+                if (!target_source) continue;
+                SourcePatch& target_patch = *target_source;
+                const SourceFileRecord& file = *target_patch.record;
+                std::string inserted_statement = build_insert_statement(change, newline_text(file.newline));
                 if (const ResourceListEditSpec* content_spec =
                         resource_list_edit_spec_for_content_row_kind(change.row_kind)) {
                     try {
@@ -7592,8 +7457,6 @@ MapEditReport build_edit_report(MapContext& ctx,
                             plan_resource_list_content_insertion(
                                 ctx, change, *content_spec, target_file_index,
                                 target_patch);
-                        const std::string inserted_statement = build_insert_statement(
-                            change, newline_text(target_patch.record->newline));
                         PreparedEdit edit;
                         edit.change = &change;
                         edit.input_ordinal = input_ordinal;
@@ -7625,7 +7488,6 @@ MapEditReport build_edit_report(MapContext& ctx,
                         if (change.row_kind == "resourceList.load") {
                             validate_resource_list_insert_header(ctx, change);
                         }
-                        const std::string inserted_statement = build_insert_statement(change);
                         const ReferenceInsertionPlan insertion = plan_reference_insertion(
                             ctx, target_file_index, target_patch, inserted_statement);
                         PreparedEdit edit;
@@ -7654,7 +7516,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                 }
                 if (change.row_kind == "creator.message") {
                     const auto insertion = plan_creator_message_insertion(
-                        ctx, target_file_index, target_patch, build_insert_statement(change));
+                        ctx, target_file_index, target_patch, inserted_statement);
                     PreparedEdit edit;
                     edit.change = &change;
                     edit.input_ordinal = input_ordinal;
@@ -7678,7 +7540,6 @@ MapEditReport build_edit_report(MapContext& ctx,
                     change.row_kind == "light.direction") {
                     try {
                         validate_light_insert_distance(change);
-                        const std::string inserted_statement = build_insert_statement(change);
                         const ReferenceInsertionPlan insertion = plan_reference_insertion(
                             ctx, target_file_index, target_patch, inserted_statement, true);
                         PreparedEdit edit;
@@ -7741,7 +7602,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                         edit.target.elements_for_statement = 1;
                         edit.source_file_index = target_file_index;
                         edit.source_range = {target_patch.text.size(), target_patch.text.size()};
-                        edit.replacement_statement = build_insert_statement(change);
+                        edit.replacement_statement = std::move(inserted_statement);
                         edit.target_distance = target_distance;
                         edit.moves_distance = true;
                         edit.suggested_distance_expression =
@@ -7802,12 +7663,8 @@ MapEditReport build_edit_report(MapContext& ctx,
                     DistanceSectionAnalysis fallback_section;
                     double best_gap = std::numeric_limits<double>::max();
                     double best_resolved_gap = std::numeric_limits<double>::max();
-                    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+                    for (size_t i : get_distance_index().anchors_by_file[target_file_index]) {
                         const ParsedStatement& candidate = ctx.parsed_statements[i];
-                        if (candidate.source.source_file_index != target_file_index ||
-                            !is_distance_statement(candidate)) {
-                            continue;
-                        }
                         const double gap = std::fabs(candidate.distance_value - target_distance);
                         const DistanceSectionAnalysis section = analyze_distance_section(
                             ctx, i, get_distance_index(), true);
@@ -7896,12 +7753,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                             edit.source_indent = std::move(indent);
                         }
                     }
-                    edit.replacement_statement = change.replacement_statement.empty()
-                        ? build_insert_statement(change)
-                        : trim_field_copy(change.replacement_statement);
-                    if (edit.replacement_statement.empty()) {
-                        throw std::runtime_error("insert produced an empty statement");
-                    }
+                    edit.replacement_statement = std::move(inserted_statement);
                     edit.target_distance = target_distance;
                     edit.moves_distance = true;
                     edit.suggested_distance_expression =
@@ -8677,7 +8529,7 @@ MapEditReport build_edit_report(MapContext& ctx,
             bytes,
             patch.record->encoding,
             patch.record->newline,
-            patch.base_hash.empty() ? patch.current_hash : patch.base_hash,
+            patch.base_hash,
             current_hash,
             bytes.size(),
             patch.utf8_bom
@@ -8689,16 +8541,8 @@ MapEditReport build_edit_report(MapContext& ctx,
     }
 
     if (!report.ok()) return report;
-    std::vector<MapEditChange> validation_changes;
-    validation_changes.reserve(effective_changes.size());
-    for (const MapEditChange* change : effective_changes) validation_changes.push_back(*change);
     timing.next("plan.validate");
-    validate_edit_report(ctx, validation_changes, report);
-    if (!report.ok()) return report;
-
-    if (write_files) {
-        finalize_direct_disk_apply(ctx, report);
-    }
+    validate_edit_report(ctx, effective_changes, report);
     return report;
 }
 
@@ -8751,15 +8595,13 @@ namespace {
 // reference and edits resource-list rows. Rows of the newly connected file can
 // only be planned against a context that already contains the inserted Load
 // statement, so such a batch must be planned in two stages.
-bool batch_needs_staged_load_replay(const std::vector<MapEditChange>& changes) {
+bool batch_needs_staged_load_replay(const EditChangesView& changes) {
     bool has_new_load = false;
     bool has_list_row_change = false;
-    for (const MapEditChange& change : changes) {
-        const std::string operation = ascii_lower(
-            change.operation.empty() ? "update" : change.operation);
-        if (operation == "insert" && change.row_kind == "resourceList.load") {
+    for (const MapEditChange* change : changes) {
+        if (change->operation == "insert" && change->row_kind == "resourceList.load") {
             has_new_load = true;
-        } else if (resource_list_edit_spec_for_content_row_kind(change.row_kind)) {
+        } else if (resource_list_edit_spec_for_content_row_kind(change->row_kind)) {
             has_list_row_change = true;
         }
     }
@@ -8770,25 +8612,52 @@ bool batch_needs_staged_load_replay(const std::vector<MapEditChange>& changes) {
 
 MapEditReport plan_staged_edit_batch(MapContext& ctx,
                                      const std::vector<MapEditChange>& changes) {
-    if (!batch_needs_staged_load_replay(changes)) {
-        return build_edit_report(ctx, changes, false);
-    }
-
-    std::vector<MapEditChange> load_inserts;
-    std::vector<MapEditChange> remaining;
+    MapEditReport report;
+    const auto content = [](const MapEditChange& change) {
+        return std::tie(change.operation, change.row_kind, change.replacement_statement,
+                        change.insert_before_edit_id, change.expected_source_hash,
+                        change.distance_resolution_key, change.distance_boundary_token,
+                        change.distance_expression, change.repeater_pair_id,
+                        change.confirm_environment_mismatch, change.confirm_repeater_change_point,
+                        change.field_changes);
+    };
+    std::unordered_map<std::string_view, const MapEditChange*> first_by_id;
+    first_by_id.reserve(changes.size());
+    EditChangesView effective;
+    effective.reserve(changes.size());
     for (const MapEditChange& change : changes) {
-        const std::string operation = ascii_lower(
-            change.operation.empty() ? "update" : change.operation);
-        if (operation == "insert" && change.row_kind == "resourceList.load") {
-            load_inserts.push_back(change);
-        } else {
-            remaining.push_back(change);
+        if (change.edit_id.empty()) {
+            report.blocking_errors.push_back("edit change is missing editId");
+            continue;
+        }
+        const auto [entry, inserted] = first_by_id.try_emplace(change.edit_id, &change);
+        if (inserted) {
+            effective.push_back(&change);
+            continue;
+        }
+        const MapEditChange& first = *entry->second;
+        if (content(first) != content(change) ||
+            (first.target_file_path != change.target_file_path &&
+             normalized_source_key(first.target_file_path) != normalized_source_key(change.target_file_path))) {
+            report.blocking_errors.push_back(
+                "conflicting duplicate editId in one edit batch: " + change.edit_id);
         }
     }
+    if (!report.ok()) return report;
+    if (!batch_needs_staged_load_replay(effective)) {
+        return build_edit_report(ctx, std::move(effective));
+    }
 
-    // Stage 1: plan and fully reparse every new Load insert on the current
-    // working copy. build_edit_report leaves ctx untouched without write_files.
-    MapEditReport staged = build_edit_report(ctx, load_inserts, false);
+    EditChangesView load_inserts;
+    EditChangesView remaining;
+    for (const MapEditChange* change : effective) {
+        auto& stage = change->operation == "insert" && change->row_kind == "resourceList.load"
+            ? load_inserts : remaining;
+        stage.push_back(change);
+    }
+
+    // Reparse the inserted Load references before resolving the new list rows.
+    MapEditReport staged = build_edit_report(ctx, std::move(load_inserts));
     if (!staged.ok() || !staged.full_reparse_ok || !staged.validated_context) {
         return staged;
     }
@@ -8799,7 +8668,7 @@ MapEditReport plan_staged_edit_batch(MapContext& ctx,
     // overrides already contain stage-1 patches, so its full reparse covers
     // both stages when validating stage-2 edits.
     MapContext& candidate_base = *staged.validated_context;
-    MapEditReport final = build_edit_report(candidate_base, remaining, false);
+    MapEditReport final = build_edit_report(candidate_base, std::move(remaining));
 
     MapEditReport merged;
     merged.warnings = staged.warnings;
@@ -8910,6 +8779,7 @@ void reparse_context_with_overrides(MapContext& ctx,
     next->disk_native_element_edit_id_to_stable = disk_identities;
     next->disk_source_hashes_for_stable_ids = disk_source_hashes;
     next->element_edit_id_cache.clear();
+    next->editable_target_index.reset();
     replace_context_and_advance_revisions(ctx, std::move(*next));
 }
 

@@ -40,21 +40,21 @@ TrackPoint matrix_row_track_point(
     return point;
 }
 
-std::optional<TrackPoint> sample_matrix_track_point_at_lower_bound(
+template <typename FindLowerBound>
+std::optional<TrackPoint> sample_matrix_track_point_with_search(
     const Matrix& points, double distance, bool has_theta_column,
-    size_t lower_bound_row) {
+    FindLowerBound find_lower_bound) {
     if (points.empty() || points.cols < 3) return std::nullopt;
     const double first = points.at(0, 0);
     const double last = points.at(points.rows - 1, 0);
     constexpr double eps = 1e-6;
     if (distance < first - eps || distance > last + eps) return std::nullopt;
-    if (distance <= first) return matrix_row_track_point(points, 0, has_theta_column);
+    if (!(distance > first)) return matrix_row_track_point(points, 0, has_theta_column);
     if (distance >= last) {
         return matrix_row_track_point(points, points.rows - 1, has_theta_column);
     }
 
-    const size_t b_row = std::min(lower_bound_row, points.rows - 1);
-    if (b_row == 0) return matrix_row_track_point(points, 0, has_theta_column);
+    const size_t b_row = find_lower_bound();
     const size_t a_row = b_row - 1;
     const TrackPoint a = matrix_row_track_point(points, a_row, has_theta_column);
     const TrackPoint b = matrix_row_track_point(points, b_row, has_theta_column);
@@ -186,19 +186,9 @@ void populate_speed_limit_marker_cache(
 
 std::optional<TrackPoint> sample_matrix_track_point(
     const Matrix& points, double distance, bool has_theta_column) {
-    if (points.empty() || points.cols < 3) return std::nullopt;
-    const double first = points.at(0, 0);
-    const double last = points.at(points.rows - 1, 0);
-    constexpr double eps = 1e-6;
-    if (distance < first - eps || distance > last + eps) return std::nullopt;
-    if (distance <= first) return matrix_row_track_point(points, 0, has_theta_column);
-    if (distance >= last) {
-        return matrix_row_track_point(points, points.rows - 1, has_theta_column);
-    }
-
-    return sample_matrix_track_point_at_lower_bound(
-        points, distance, has_theta_column,
-        matrix_lower_bound_distance(points, distance));
+    return sample_matrix_track_point_with_search(points, distance, has_theta_column, [&] {
+        return matrix_lower_bound_distance(points, distance);
+    });
 }
 
 size_t matrix_lower_bound_distance(const Matrix& points, double distance) {
@@ -734,8 +724,8 @@ void App::rebuild_marker_overlay_cache() {
             if (row_index == first || distance != previous_distance) {
                 lower_bound_row = row_index;
             }
-            append_sample(sample_matrix_track_point_at_lower_bound(
-                *source.points, distance, source.has_theta_column, lower_bound_row));
+            append_sample(sample_matrix_track_point_with_search(
+                *source.points, distance, source.has_theta_column, [&] { return lower_bound_row; }));
             previous_distance = distance;
         }
         append_sample(sample_matrix_track_point(

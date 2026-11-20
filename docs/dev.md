@@ -36,10 +36,10 @@ Install Assimp separately. When using vcpkg, set `VCPKG_ROOT` and install the tr
 
 ```bat
 set VCPKG_ROOT=C:\path\to\vcpkg
-%VCPKG_ROOT%\vcpkg install assimp:x64-mingw-dynamic
+"%VCPKG_ROOT%\vcpkg.exe" install assimp:x64-mingw-dynamic
 ```
 
-Build scripts use vcpkg when `VCPKG_ROOT` is set. If `VCPKG_DEFAULT_TRIPLET` is unset, they default to `x64-mingw-dynamic`; MSVC users should select a suitable triplet such as `x64-windows`. `install_Assimp.bat` is a MinGW helper that may need a local vcpkg path; keep that machine-specific path out of commits.
+Build scripts use vcpkg when `VCPKG_ROOT` is set. The default triplet is `x64-mingw-dynamic`. MSVC users should set `VCPKG_DEFAULT_TRIPLET` to a matching triplet such as `x64-windows`. The MinGW helper `install_Assimp.bat` uses `VCPKG_ROOT` to install `assimp:x64-mingw-dynamic`.
 
 ## Build and test
 
@@ -294,7 +294,7 @@ This section describes the main responsibilities of files in `include/` and `src
 - **Distance expressions**: scanners identify predefined `distance`, top-level addition/subtraction, and safe numeric addends. `find_safe_numeric_distance_addend()`, `apply_delta_to_distance_addend()`, and `adjust_distance_expression_by_delta()` preserve variable expressions and modify safe constants where possible, otherwise proposing distance resolution.
 - **Arguments and CSV**: BVE argument splitting/quoting and numeric/optional/value/key helpers preserve unchanged raw arguments; CSV parsing, equivalence checks, and `build_editable_csv_list_statement()` preserve delimiters, trailing fields, and encoding representability.
 - **Statement builders**: `build_structure_model/sound_list/station_list/signal_aspect_statement()` handles list rows; `build_station_put/structure_put/signal_put/repeater_statement()` handles explicit method/argument-shape conversions, including both directions between normal and zero-offset Structure/Repeater forms. Other `build_*` functions cover curves, gradients, other tracks, Section, speed limits, beacons, sounds/noises, and effects while retaining method and argument shape.
-- **Targets and target snapshots**: templated `match_edit_ref()`, `find_simple_target()`, and `find_editable_target()` locate edit IDs in MapContext's typed rows; `build_edit_target_snapshot()` emits fields, original values, raw arguments, constraints, sourceHash, and expectedSourceHash.
+- **Targets and target snapshots** use a MapContext index built on the first lookup. Each edit ID identifies a typed row or statement by index. `build_edit_target_snapshot()` returns the fields, original values, raw arguments, constraints, `sourceHash`, and `expectedSourceHash`.
 - **Insertion validation**: `validate_insert_field_names()`, `validate_insert_method()`, and `validate_insert_change()` check row kind, method, and structured fields; `build_insert_statement()` generates ordinary BVE statements from them.
 - **Distance-section planning**: `DistanceSectionAnalysis/PlanningIndex` indexes physical files, Include invocations, and distance sections to plan initial blocks, gaps, final blocks, and EOF. Moves within a clear final section may extend in its direction; insertions prefer an existing unique position, with ambiguous positions offered to the user. Candidate filtering shares variable/physical-instance checks; the selected plan receives full semantic validation before apply or disk writes.
 - **Reports and transactional writes**: `build_edit_report_snapshot()` projects patch, resolution, and commit data; hash/temp-file helpers create staging files alongside the targets. `replace_files_transactionally()` replaces files in stages and rolls back failures; `TransactionalWriteError` retains both primary and rollback errors.
@@ -635,7 +635,7 @@ maploader owns sources and edit identity; the GUI operates on working copies thr
 | `kv_edit_reset_memory()` / GUI Revert | Discard memory overrides and restore the disk baseline |
 | GUI Reload | Reread disk after confirming unsaved changes |
 
-`sourceHash` identifies the working copy; `expectedSourceHash` remains the disk concurrency baseline across repeated Apply/Delete operations. Before Apply or Save, a full reparse checks each target value, non-target elements, and final variable bindings. A valid edit may change the final `distance`.
+`sourceHash` identifies the working copy. `expectedSourceHash` identifies the disk baseline across repeated Apply and Delete operations. Planning verifies the disk bytes once per edited physical file, including files with in-memory changes. Preview and edit metadata must have the same physical source set and byte hashes before the editor merges them. Apply and Save fully reparse the candidate sources to check target values, other elements, and final variable bindings. A valid edit may change the final `distance`.
 
 After Save, the GUI validates all committed row bindings before updating source locations, hashes, and file sizes. It matches rows by stable edit ID and uses row indices for rows without an ID.
 
@@ -756,14 +756,14 @@ build\komapedit.exe --debug-headless-station-list-edit <map-path> --headless-out
 build\komapedit.exe --debug-headless-station-put-margin-edit <map-path> --headless-output build\station-put-margin-edit.txt
 build\komapedit.exe --debug-headless-edit-roundtrip <map-path> --headless-output build\edit-roundtrip.txt
 build\komapedit.exe --debug-headless-edit-bench <map-path> --scene off|on --repeat 5 --unit-distance 25 --headless-output build\edit-bench.txt
-build\komapedit.exe --debug-headless-own-track-edit [map-path] --headless-output build\own-track-edit.txt
-build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --headless-output build\other-track-edit.txt
-build\komapedit.exe --debug-headless-distance-edit-batch [map-path] --headless-output build\distance-edit-batch.txt
+build\komapedit.exe --debug-headless-own-track-edit <map-path> --headless-output build\own-track-edit.txt
+build\komapedit.exe --debug-headless-other-track-edit <map-path> [--commit] --headless-output build\other-track-edit.txt
+build\komapedit.exe --debug-headless-distance-edit-batch <map-path> --headless-output build\distance-edit-batch.txt
 build\komapedit.exe --debug-headless-auto-insert-diagnostics <fixture-directory> [--unit-distance M] --headless-output build\auto-insert-diagnostics.txt
-build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-output build\repeater-edit-batch.txt
+build\komapedit.exe --debug-headless-repeater-edit-batch <map-path> --headless-output build\repeater-edit-batch.txt
 build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
 build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
-build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
+build\komapedit.exe --debug-headless-insert-edit <map-path> --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
 build\komapedit.exe --debug-headless-include-delete <map-path> [--index N] [--commit] --headless-output build\include-delete.txt
 build\komapedit.exe --debug-headless-include-replace <map-path> --new-path <file> [--index N] [--commit] --headless-output build\include-replace.txt
 build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
@@ -779,7 +779,7 @@ build\komapedit.exe --debug-headless-light-edit <map-path> --headless-output bui
 build\komapedit.exe --debug-headless-pretrain-edit <map-path> --headless-output build\headless-pretrain-edit.txt
 build\komapedit.exe --debug-headless-legacy-fog-edit <map-path> --unit-distance 25 --headless-output build\headless-legacy-fog-edit.txt
 build\komapedit.exe --debug-headless-sparse-new-element <map-path> --headless-output build\sparse-new-element.txt
-build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
+build\komapedit.exe --debug-headless-section-edit-batch <map-path> [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
 build\komapedit.exe --debug-headless-touch-input --headless-output build\headless-touch-input.txt
 build\komapedit.exe --debug-headless-settings-persistence --headless-output build\settings-persistence.txt

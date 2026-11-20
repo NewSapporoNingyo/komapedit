@@ -632,11 +632,9 @@ void App::render_signals_window() {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.signal_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
-                if (row_has_pending_edit(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
-                } else if (row_index == signal_list_highlight_row_) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
-                }
+                const ImU32 color = editable_row_bg_color(
+                    row.edit_id, row_index == signal_list_highlight_row_ ? highlight_color : 0);
+                if (color != 0) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, color);
                 if (row_index == scroll_target_row) {
                     ImGui::SetScrollHereY(0.5f);
                     signal_list_scroll_row_ = -1;
@@ -722,13 +720,11 @@ void App::render_sections_window() {
                                     const std::string& heading,
                                     const std::vector<CachedTableRow>& rows,
                                     size_t value_columns,
-                                    const char* value_prefix,
+                                    const std::vector<std::string>& value_headers,
                                     bool has_markers,
-                                    const std::vector<TableRow>* source_rows,
                                     const char* row_kind) {
         ImGui::TextUnformatted(heading.c_str());
-        const size_t displayed_value_columns =
-            std::min(value_columns, k_max_section_value_columns);
+        const size_t displayed_value_columns = value_headers.size();
         if (value_columns > displayed_value_columns) {
             std::string notice = tr("table.section_values_truncated");
             replace_all(notice, "{shown}", std::to_string(displayed_value_columns));
@@ -747,65 +743,75 @@ void App::render_sections_window() {
         }
         ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 45.0f);
         ImGui::TableSetupColumn("distance", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-        for (size_t i = 0; i < displayed_value_columns; ++i) {
-            const std::string header = value_prefix + std::to_string(i);
+        for (const auto& header : value_headers) {
             ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_WidthFixed, 80.0f);
         }
         ImGui::TableSetupColumn("filePath", ImGuiTableColumnFlags_WidthFixed, 200.0f);
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
-        for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
-            const CachedTableRow& row = rows[row_index];
-            ImGui::TableNextRow();
-            if (has_markers && static_cast<int>(row_index) == section_list_highlight_row_) {
-                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
-                                       table_row_highlight_color(theme_color_));
-            }
-            if (has_markers && static_cast<int>(row_index) == section_list_scroll_row_) {
-                ImGui::SetScrollHereY(0.5f);
-                section_list_scroll_row_ = -1;
-            }
-            ImGui::PushID(static_cast<int>(row_index));
-            for (int column = 0; column < column_count; ++column) {
-                ImGui::TableSetColumnIndex(column);
-                const std::string& value = row.cells[static_cast<size_t>(column)];
-                if (column == 1) {
-                    const bool can_edit = edit_actions_available() &&
-                        source_rows && row_index < source_rows->size() &&
-                        !(*source_rows)[row_index].edit_id.empty();
-                    const TextCellContextAction action =
-                        render_marker_text_cell_with_context(
-                            value, tr("menu.locate_on_plan"), true,
-                            tr("menu.locate_in_scene_preview"),
-                            has_markers && can_locate_scene,
-                            tr("dialog.element_properties"), can_edit,
-                            tr("button.delete"), can_edit);
-                    if (action == TextCellContextAction::Primary) {
-                        if (has_markers) {
-                            locate_section_row_on_plan(row_index);
-                        } else {
-                            focus_plan_at_distance(
-                                std::strtod(value.c_str(), nullptr));
-                        }
-                    } else if (action == TextCellContextAction::Secondary) {
-                        locate_scene_marker_row_in_scene_preview(
-                            Canvas3DSceneMarkerListKind::Section, row_index);
-                    } else if (action == TextCellContextAction::Tertiary) {
-                        request_element_inspector(
-                            (*source_rows)[row_index].edit_id, row_kind);
-                    } else if (action == TextCellContextAction::Quaternary) {
-                        request_element_delete(
-                            (*source_rows)[row_index].edit_id, row_kind);
-                    }
-                } else if (column == column_count - 1) {
-                    render_file_path_cell_with_context(
-                        value, row.open_path, tr("menu.open_in_explorer"),
-                        row.tooltip_text);
-                } else if (!value.empty()) {
-                    ImGui::TextUnformatted(value.c_str());
+        const int row_count = static_cast<int>(rows.size());
+        if (has_markers && section_list_scroll_row_ >= row_count) section_list_scroll_row_ = -1;
+        const ImU32 highlight = table_row_highlight_color(theme_color_);
+        const std::string locate_on_plan = tr("menu.locate_on_plan");
+        const std::string locate_in_scene = tr("menu.locate_in_scene_preview");
+        const std::string properties = tr("dialog.element_properties");
+        const std::string delete_label = tr("button.delete");
+        const std::string open_file = tr("menu.open_in_explorer");
+        ImGuiListClipper clipper;
+        clipper.Begin(row_count);
+        if (has_markers && section_list_scroll_row_ >= 0) {
+            clipper.IncludeItemByIndex(section_list_scroll_row_);
+        }
+        while (clipper.Step()) {
+            for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index) {
+                const size_t row_index = static_cast<size_t>(index);
+                const CachedTableRow& row = rows[row_index];
+                ImGui::TableNextRow();
+                if (has_markers && static_cast<int>(row_index) == section_list_highlight_row_) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                           highlight);
                 }
+                if (has_markers && static_cast<int>(row_index) == section_list_scroll_row_) {
+                    ImGui::SetScrollHereY(0.5f);
+                    section_list_scroll_row_ = -1;
+                }
+                ImGui::PushID(static_cast<int>(row_index));
+                for (int column = 0; column < column_count; ++column) {
+                    if (!ImGui::TableSetColumnIndex(column)) continue;
+                    const std::string& value = row.cells[static_cast<size_t>(column)];
+                    if (column == 1) {
+                        const bool can_edit = edit_actions_available() && !row.edit_id.empty();
+                        const TextCellContextAction action =
+                            render_text_cell_with_context_actions(
+                                value, locate_on_plan, true, locate_in_scene,
+                                has_markers && can_locate_scene, properties, can_edit, delete_label, can_edit);
+                        if (action == TextCellContextAction::Primary) {
+                            if (has_markers) {
+                                locate_section_row_on_plan(row_index);
+                            } else {
+                                focus_plan_at_distance(
+                                    std::strtod(value.c_str(), nullptr));
+                            }
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_scene_marker_row_in_scene_preview(
+                                Canvas3DSceneMarkerListKind::Section, row_index);
+                        } else if (action == TextCellContextAction::Tertiary) {
+                            request_element_inspector(
+                                row.edit_id, row_kind);
+                        } else if (action == TextCellContextAction::Quaternary) {
+                            request_element_delete(
+                                row.edit_id, row_kind);
+                        }
+                    } else if (column == column_count - 1) {
+                        render_file_path_cell_with_context(
+                            value, row.open_path, open_file,
+                            row.tooltip_text);
+                    } else if (!value.empty()) {
+                        ImGui::TextUnformatted(value.c_str());
+                    }
+                }
+                ImGui::PopID();
             }
-            ImGui::PopID();
         }
         ImGui::EndTable();
     };
@@ -813,14 +819,14 @@ void App::render_sections_window() {
     render_section_table(
         "section_begins", tr("frame.section_begins"),
         table_cache_.section_begin_rows,
-        table_cache_.section_begin_value_columns, "signal", true,
-        &model_.section_begins, "section.begin");
+        table_cache_.section_begin_value_columns, table_cache_.section_begin_value_headers,
+        true, "section.begin");
     ImGui::Separator();
     render_section_table(
         "section_speed_limits", tr("frame.section_speed_limits"),
         table_cache_.section_speed_limit_rows,
-        table_cache_.section_speed_limit_value_columns, "v", false,
-        &model_.section_speed_limits, "section.speedLimit");
+        table_cache_.section_speed_limit_value_columns, table_cache_.section_speed_limit_value_headers,
+        false, "section.speedLimit");
     focus_sections_next_ = false;
     ImGui::End();
 }
@@ -849,11 +855,11 @@ void App::render_variables_window() {
         ImGui::TableSetupColumn("filePath");
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
-        for (size_t row_index = 0; row_index < table_cache_.variable_rows.size();
-             ++row_index) {
-            const CachedVariableRow& row = table_cache_.variable_rows[row_index];
+        const std::string open_file = tr("menu.open_in_explorer");
+        const auto render_row = [&](int row_index) {
+            const CachedVariableRow& row = table_cache_.variable_rows[static_cast<size_t>(row_index)];
             ImGui::TableNextRow();
-            ImGui::PushID(static_cast<int>(row_index));
+            ImGui::PushID(row_index);
             if (row.group_header) {
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextColored(theme_color_, "$%s", row.name.c_str());
@@ -866,9 +872,19 @@ void App::render_variables_window() {
                 ImGui::TableSetColumnIndex(2);
                 render_file_path_cell_with_context(
                     row.file_name, row.file_path,
-                    tr("menu.open_in_explorer"), row.file_path);
+                    open_file, row.file_path);
             }
             ImGui::PopID();
+        };
+        const int row_count = static_cast<int>(table_cache_.variable_rows.size());
+        if (table_cache_.has_multiline_variable_values) {
+            for (int i = 0; i < row_count; ++i) render_row(i);
+        } else {
+            ImGuiListClipper clipper;
+            clipper.Begin(row_count);
+            while (clipper.Step()) {
+                for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) render_row(i);
+            }
         }
         ImGui::EndTable();
     }

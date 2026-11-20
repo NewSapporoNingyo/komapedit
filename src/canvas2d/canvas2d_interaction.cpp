@@ -143,7 +143,8 @@ const char* plan_marker_type_label_key(PlanMarkerKind kind) {
 }  // namespace
 
 std::optional<double> App::nearest_plan_measure_distance(
-    const PlanData& data, ImVec2 origin, ImVec2 size, ImVec2 mouse) {
+    ImVec2 origin, ImVec2 size, ImVec2 mouse) {
+    const PlanData& data = plan_data_cache_.data;
     PlanScreenTransform measure_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, size);
     constexpr double hit_radius_pixels = 30.0;
     constexpr double hit_radius_squared = hit_radius_pixels * hit_radius_pixels;
@@ -151,11 +152,8 @@ std::optional<double> App::nearest_plan_measure_distance(
     if (!(scale > 0.0) || !std::isfinite(scale)) return std::nullopt;
 
     const double cell_size = hit_radius_pixels / scale;
+    if (!std::isfinite(cell_size)) return std::nullopt;
     auto cell_for_point = [cell_size](double x, double y) -> std::optional<MeasureHitTestCell> {
-        if (!std::isfinite(x) || !std::isfinite(y) ||
-            !(cell_size > 0.0) || !std::isfinite(cell_size)) {
-            return std::nullopt;
-        }
         const long double cell_x = std::floor(static_cast<long double>(x) /
                                               static_cast<long double>(cell_size));
         const long double cell_y = std::floor(static_cast<long double>(y) /

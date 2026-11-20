@@ -464,6 +464,7 @@ bool Canvas3D::Impl::upload_scene_put_between_preview_model(
     }
 
     SceneModelGpu& model = scene_models[preview_key];
+    model.preview_only = true;
     const UINT vertex_count = static_cast<UINT>(cpu.vertices.size());
     const bool rebuild = !model.dynamic_vertices ||
         model.shared_model_key != cpu.shared_model_key ||
@@ -513,6 +514,11 @@ bool Canvas3D::Impl::upload_scene_put_between_preview_model(
 }
 
 void Canvas3D::Impl::apply_scene_put_between_preview_result() {
+    if (scene_worker_running.load() || !active_scene_model_requests.empty()) return;
+    auto& edit = scene_structure_edit;
+    if (std::exchange(edit.resume_preview_after_model_reload, false) && edit.preview_sequence == 0) {
+        edit.preview_sequence = queue_scene_put_between_preview(edit.current);
+    }
     std::optional<ScenePutBetweenPreviewResult> pending =
         take_scene_put_between_preview_result();
     if (!pending) return;
@@ -534,6 +540,10 @@ void Canvas3D::Impl::apply_scene_put_between_preview_result() {
     }
 
     auto [shared_it, inserted] = scene_models.try_emplace(result.source->path);
+    if (inserted) {
+        shared_it->second.preview_only = true;
+        scene_put_between_preview_base_model_keys.insert(result.source->path);
+    }
     if (inserted || shared_it->second.state != SceneModelGpu::State::Ready) {
         const CpuModelData& source = *result.source;
         std::string source_error;
@@ -544,7 +554,6 @@ void Canvas3D::Impl::apply_scene_put_between_preview_result() {
                 (source_error.empty() ? shared_it->second.error : source_error));
             return;
         }
-        scene_put_between_preview_base_model_keys.insert(source.path);
     }
 
     const std::string preview_key = scene_put_between_preview_model_key(

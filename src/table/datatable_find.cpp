@@ -148,14 +148,7 @@ void App::run_unused_structure_model_search() {
                 }
             }
             if (signal_aspect_edit_.rows_initialized) {
-                for (size_t visible_index :
-                     signal_aspect_edit_.visible_rows) {
-                    if (visible_index >=
-                        signal_aspect_edit_.rows.size()) {
-                        continue;
-                    }
-                    const EditableListDraftRow& row =
-                        signal_aspect_edit_.rows[visible_index];
+                for (const auto& row : signal_aspect_edit_.rows) {
                     if (row.deleted) continue;
                     const size_t main_end = std::min(
                         row.values.size(),

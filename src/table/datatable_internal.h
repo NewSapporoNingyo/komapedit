@@ -118,7 +118,7 @@ struct TableFindRowsView {
 
     size_t size() const {
         return edit && edit->rows_initialized
-            ? edit->visible_rows.size()
+            ? edit->rows.size()
             : cached_rows->size();
     }
 
@@ -126,10 +126,8 @@ struct TableFindRowsView {
         if (!edit || !edit->rows_initialized) {
             return row_index < cached_rows->size();
         }
-        if (row_index >= edit->visible_rows.size()) return false;
-        const size_t draft_index = edit->visible_rows[row_index];
-        return draft_index < edit->rows.size() &&
-            !edit->rows[draft_index].deleted;
+        if (row_index >= edit->rows.size()) return false;
+        return !edit->rows[row_index].deleted;
     }
 
     const std::string* cell(size_t row_index, size_t column) const {
@@ -140,18 +138,16 @@ struct TableFindRowsView {
             }
             return &(*cached_rows)[row_index].cells[column];
         }
-        if (!spec || row_index >= edit->visible_rows.size() ||
+        if (!spec || row_index >= edit->rows.size() ||
             column < spec->cache_column_offset) {
             return nullptr;
         }
         const size_t field = column - spec->cache_column_offset;
-        const size_t draft_index = edit->visible_rows[row_index];
-        if (draft_index >= edit->rows.size() ||
-            edit->rows[draft_index].deleted ||
-            field >= edit->rows[draft_index].values.size()) {
+        const auto& row = edit->rows[row_index];
+        if (row.deleted || field >= row.values.size()) {
             return nullptr;
         }
-        return &edit->rows[draft_index].values[field];
+        return &row.values[field];
     }
 };
 
@@ -325,6 +321,8 @@ inline constexpr size_t k_max_signal_aspect_table_columns =
     k_signal_aspect_visible_key_limit + k_signal_aspect_structure_key_column_offset;
 inline constexpr size_t k_max_signal_aspect_structure_key_columns =
     k_max_signal_aspect_table_columns - static_cast<size_t>(k_signal_aspect_structure_key_column_offset);
+inline constexpr float k_signal_aspect_key_column_width = 120.0f;
+const std::vector<std::string>& signal_aspect_column_headers();
 
 inline constexpr TableColumnDef k_signal_columns[] = {
     {"rowNumber", "#", 40.0f},

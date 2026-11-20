@@ -283,7 +283,9 @@ void App::ensure_table_cache() {
 
     auto append_section_rows = [&](const std::vector<TableRow>& rows,
                                    std::vector<CachedTableRow>& output,
-                                   size_t& value_columns) {
+                                   size_t& value_columns,
+                                   std::vector<std::string>& headers,
+                                   std::string_view prefix) {
         for (const TableRow& row : rows) {
             value_columns = std::max(
                 value_columns,
@@ -291,16 +293,25 @@ void App::ensure_table_cache() {
         }
         const size_t displayed_value_columns =
             std::min(value_columns, k_max_section_value_columns);
+        headers.reserve(displayed_value_columns);
+        std::vector<std::string> value_keys;
+        value_keys.reserve(displayed_value_columns);
+        for (size_t column = 0; column < displayed_value_columns; ++column) {
+            const std::string number = std::to_string(column);
+            headers.push_back(std::string(prefix) + number);
+            value_keys.push_back("value" + number);
+        }
         output.reserve(rows.size());
         for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
             const TableRow& row = rows[row_index];
             CachedTableRow cached;
+            copy_table_row_metadata(row, cached);
             cached.cells.resize(3 + displayed_value_columns);
             cached.cells[0] = std::to_string(row_index + 1);
             cached.cells[1] = table_cell(row, "distance");
             for (size_t value_index = 0; value_index < displayed_value_columns; ++value_index) {
                 cached.cells[2 + value_index] =
-                    table_cell(row, "value" + std::to_string(value_index));
+                    table_cell(row, value_keys[value_index]);
             }
             cached.open_path = table_cell(row, "filePath");
             cached.cells[2 + displayed_value_columns] = display_name_from_path(cached.open_path);
@@ -309,25 +320,26 @@ void App::ensure_table_cache() {
         }
     };
     append_section_rows(model_.section_begins, cache.section_begin_rows,
-                        cache.section_begin_value_columns);
+                        cache.section_begin_value_columns, cache.section_begin_value_headers, "signal");
     append_section_rows(model_.section_speed_limits,
                         cache.section_speed_limit_rows,
-                        cache.section_speed_limit_value_columns);
+                        cache.section_speed_limit_value_columns,
+                        cache.section_speed_limit_value_headers, "v");
 
-    std::vector<const TableRow*> variable_rows;
+    std::vector<std::pair<double, const TableRow*>> variable_rows;
     variable_rows.reserve(model_.variable_assignments.size());
     for (const TableRow& row : model_.variable_assignments) {
-        variable_rows.push_back(&row);
+        variable_rows.emplace_back(table_cell_number(row, "order"), &row);
     }
     std::stable_sort(variable_rows.begin(), variable_rows.end(),
-                     [](const TableRow* left, const TableRow* right) {
-                         return table_cell_number(*left, "order") <
-                                table_cell_number(*right, "order");
+                     [](const auto& left, const auto& right) {
+                         return left.first < right.first;
                      });
     std::vector<std::string> variable_group_order;
     std::unordered_map<std::string, std::vector<const TableRow*>> variable_groups;
     std::unordered_map<std::string, std::string> variable_group_names;
-    for (const TableRow* row : variable_rows) {
+    for (const auto& ordered : variable_rows) {
+        const TableRow* row = ordered.second;
         const std::string normalized = table_cell(*row, "normalizedName");
         auto inserted = variable_groups.emplace(
             normalized, std::vector<const TableRow*>{});
@@ -346,6 +358,7 @@ void App::ensure_table_cache() {
         for (const TableRow* row : variable_groups[group_key]) {
             CachedVariableRow cached;
             cached.value = table_cell(*row, "value");
+            cache.has_multiline_variable_values |= cached.value.find('\n') != std::string::npos;
             cached.expression = table_cell(*row, "expression");
             cached.file_path = table_cell(*row, "filePath");
             cached.file_name = display_name_from_path(cached.file_path);
@@ -455,24 +468,14 @@ void App::ensure_table_cache() {
     }
     const size_t displayed_signal_columns =
         std::min(cache.signal_aspect_structure_key_columns, k_max_signal_aspect_structure_key_columns);
-    cache.signal_aspect_column_headers.reserve(
-        k_signal_aspect_structure_key_column_offset +
-        displayed_signal_columns);
-    cache.signal_aspect_column_widths.reserve(
-        k_signal_aspect_structure_key_column_offset +
-        displayed_signal_columns);
-    for (const TableColumnDef& column :
-         k_signal_aspect_fixed_columns) {
-        cache.signal_aspect_column_headers.emplace_back(column.header);
+    const auto& headers = signal_aspect_column_headers();
+    const size_t aspect_column_count = k_signal_aspect_structure_key_column_offset + displayed_signal_columns;
+    cache.signal_aspect_column_headers.assign(headers.begin(), headers.begin() + aspect_column_count);
+    cache.signal_aspect_column_widths.reserve(aspect_column_count);
+    for (const TableColumnDef& column : k_signal_aspect_fixed_columns) {
         cache.signal_aspect_column_widths.push_back(column.width);
     }
-    for (size_t key_index = 0;
-         key_index < displayed_signal_columns;
-         ++key_index) {
-        cache.signal_aspect_column_headers.push_back(
-            "structureKey" + std::to_string(key_index + 1));
-        cache.signal_aspect_column_widths.push_back(120.0f);
-    }
+    cache.signal_aspect_column_widths.resize(aspect_column_count, k_signal_aspect_key_column_width);
     cache.signal_aspect_rows.reserve(model_.signal_aspects.size());
     cache.signal_aspect_display_rows.reserve(
         model_.signal_aspects.size() * 2);
@@ -544,27 +547,10 @@ void App::ensure_table_cache() {
                              cache.beacon_rows,
                              cache.beacon_distance_width, cache.beacon_file_path_width);
 
-    cache.irregularity_distance_width = 0.0f;
-    expand_width_for_text(cache.irregularity_distance_width, k_irregularity_columns[k_irregularity_distance_column].header);
-    cache.irregularity_rows.reserve(model_.irregularities.size());
-    for (size_t row_index = 0; row_index < model_.irregularities.size(); ++row_index) {
-        const TableRow& row = model_.irregularities[row_index];
-        CachedTableRow cached;
-        copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(k_irregularity_columns));
-        cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(k_irregularity_columns); ++i) {
-            if (i == k_irregularity_file_path_column) {
-                cached.cells[i] = display_name_from_path(cached.open_path);
-                expand_width_for_text(cache.irregularity_file_path_width, cached.cells[i]);
-            } else {
-                cached.cells[i] = table_cell(row, k_irregularity_columns[i].key);
-            }
-        }
-        cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.irregularity_distance_width, cached.cells[k_irregularity_distance_column]);
-        cache.irregularity_rows.push_back(std::move(cached));
-    }
+    append_change_point_rows(model_.irregularities, k_irregularity_columns,
+                             k_irregularity_distance_column, k_irregularity_file_path_column,
+                             cache.irregularity_rows,
+                             cache.irregularity_distance_width, cache.irregularity_file_path_width);
 
     append_change_point_rows(model_.rolling_noises, k_rolling_noise_columns,
                              k_rolling_noise_distance_column, k_rolling_noise_file_path_column,

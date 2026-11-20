@@ -11485,7 +11485,143 @@ void creator_message_contract() {
     }
 }
 
+void edit_batch_input_contract() {
+    TempFixture fixture;
+    const auto path = fixture.path_utf8();
+    MapHandle map(kv_load_map_ex(path.c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+    check(map.value != nullptr, "edit batch input fixture loads");
+    if (!map.value) return;
+
+    const auto insert = [&](const char* kind) {
+        return SimpleInsertBatch(path, "deduplicated-message",
+            {{"rowKind", kind}, {"content", "typed edit batch"}});
+    };
+    auto first = insert("creator.message");
+    const auto duplicate = [&](const SimpleInsertBatch& other) {
+        std::vector<KvEditField> fields = first.fields;
+        fields.insert(fields.end(), other.fields.begin(), other.fields.end());
+        KvEditChange changes[] = {first.change, other.change};
+        changes[1].fields.offset = first.fields.size();
+        const KvEditBatch batch{changes, 2, fields.data(), fields.size()};
+        KvEditReportSnapshot report{};
+        check(kv_edit_dry_run_typed(map.value, &batch, &report, sizeof(report)) != 0,
+              "duplicate edit batch returns a report");
+        return report;
+    };
+    const auto identical = duplicate(first);
+    check(identical.ok && identical.full_reparse_ok && identical.insert_count == 1,
+          "identical edit entries collapse before full reparse");
+    const auto check_conflict = [&](const SimpleInsertBatch& other, const char* message) {
+        const auto report = duplicate(other);
+        check(!report.ok && edit_report_has_error_prefix(
+            report, "conflicting duplicate editId in one edit batch"), message);
+    };
+    check_conflict(insert("include"), "different insert row kinds conflict");
+    SimpleInsertBatch paired(path, "deduplicated-message",
+        {{"rowKind", "creator.message"}, {"content", "typed edit batch"}, {"repeaterPairId", "pair"}});
+    check_conflict(paired, "different Repeater pair identities conflict");
+    auto confirmed = insert("creator.message");
+    confirmed.change.flags = KV_EDIT_CHANGE_CONFIRM_REPEATER_CHANGE_POINT;
+    check_conflict(confirmed, "different Repeater confirmation flags conflict");
+    const std::string left_key = "a\nb", left_boundary = "c";
+    const std::string right_key = "a", right_boundary = "b\nc";
+    auto unambiguous = insert("creator.message");
+    first.change.distance_resolution_key = utf8_view(left_key);
+    first.change.distance_boundary_token = utf8_view(left_boundary);
+    unambiguous.change.distance_resolution_key = utf8_view(right_key);
+    unambiguous.change.distance_boundary_token = utf8_view(right_boundary);
+    check_conflict(unambiguous, "line breaks cannot alias adjacent duplicate-comparison fields");
+
+    SimpleInsertBatch duplicate_field(path, "duplicate-field",
+        {{"rowKind", "creator.message"}, {"content", "a"}, {"content", "b"}});
+    KvEditReportSnapshot report{};
+    check(!kv_edit_dry_run_typed(map.value, &duplicate_field.batch, &report, sizeof(report)) &&
+          std::string_view(kv_get_last_error()).find("duplicate field: content") != std::string_view::npos,
+          "duplicate typed field names are rejected at the ABI boundary");
+    auto raw = insert("structure.put");
+    const std::string replacement = "Structure['pole'].Put0(0,0,0);";
+    raw.change.replacement_statement = utf8_view(replacement);
+    check(kv_edit_dry_run_typed(map.value, &raw.batch, &report, sizeof(report)) &&
+          !report.ok && edit_report_has_error_prefix(report, "edit change failed for") &&
+          report.preview_snippet_count == 0 && !report.full_reparse_ok,
+          "raw map insert cannot bypass structured validation");
+}
+
+void working_copy_disk_baseline_contract() {
+    TempFixture fixture;
+    const auto child = fixture.directory / "guard-child.txt";
+    const std::string bytes = "BveTs Map 2.02:utf-8\r\n50;\r\nStructure['pole'].Put(0,1,0,0,0,0,0,0,0);\r\n";
+    const auto write = [](const std::filesystem::path& path, const std::string& text) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << text;
+        file.close();
+        if (!file) throw std::runtime_error("could not write disk-baseline fixture");
+    };
+    write(fixture.map_path, "BveTs Map 2.02:utf-8\r\nStructure.Load('structures.csv');\r\ninclude 'guard-child.txt';\r\n");
+    write(child, bytes);
+
+    const auto path = fixture.path_utf8();
+    MapHandle map(kv_load_map_ex(path.c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot baseline{};
+    if (!kv_get_map_snapshot(map.value, KV_MAP_SNAPSHOT_VERSION, &baseline, sizeof(baseline)) ||
+        baseline.structure_put_count != 1) {
+        check(false, "disk-baseline fixture has one included Structure.Put");
+        return;
+    }
+    const auto& metadata = baseline.structure_puts[0].metadata;
+    const std::string id = map_string(baseline, metadata.edit_id);
+    const std::string hash = map_string(baseline, baseline.source_files[metadata.source_file_index].source_hash);
+    const auto read = [&] {
+        std::ifstream file(child, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(file), {});
+    };
+    KvEditReportSnapshot report{};
+    const auto apply = [&](const std::string& value, const std::string& expected) {
+        UpdateBatch edit(id, expected, value);
+        return kv_edit_apply_to_memory_typed(map.value, &edit.batch, &report, sizeof(report)) != 0 && report.ok;
+    };
+    check(apply("2", hash) && apply("3", hash) && read() == bytes,
+          "repeated Include Apply accepts its disk baseline and leaves disk bytes intact");
+    KvEditTargetSnapshot target{};
+    if (!kv_get_edit_target_typed(map.value, utf8_view(id), &target, sizeof(target))) {
+        check(false, "Include target remains available after repeated Apply");
+        return;
+    }
+    const std::string working_hash(arena_view(target.string_data, target.string_size, target.source_hash));
+    check(working_hash != hash &&
+          arena_view(target.string_data, target.string_size, target.expected_source_hash) == hash,
+          "working-copy sourceHash differs from the disk expectedSourceHash");
+    check(!apply("4", working_hash) &&
+          edit_report_has_error_prefix(report, "source file changed externally"),
+          "working-copy hash cannot substitute for the disk baseline");
+    const std::string external = bytes + "# external edit\r\n";
+    write(child, external);
+    check(!apply("5", hash) && edit_report_has_error_prefix(report, "source file changed externally") &&
+          !apply("5", "") && edit_report_has_error_prefix(report, "source file changed externally"),
+          "external Include changes block Apply with explicit and default baselines");
+    check(kv_edit_commit_typed(map.value, &report, sizeof(report)) && !report.ok && read() == external,
+          "external Include changes block Save and preserve outside edits");
+    check(!kv_edit_reset_memory(map.value) &&
+          std::string_view(kv_get_last_error()).find("full Reload is required") != std::string_view::npos,
+          "Revert requires a full Reload after an external Include change");
+
+    MapHandle reloaded(kv_load_map_ex(path.c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+    const bool reloaded_baseline =
+        kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION, &baseline, sizeof(baseline)) &&
+          baseline.structure_put_count == 1 && baseline.structure_puts[0].x == 1.0 &&
+          read() == external;
+    check(reloaded_baseline, "Reload sees the external Include baseline");
+    if (!reloaded_baseline) return;
+    UpdateBatch fresh(map_string(baseline, baseline.structure_puts[0].metadata.edit_id), "", "6");
+    check(kv_edit_apply_to_memory_typed(reloaded.value, &fresh.batch, &report, sizeof(report)) && report.ok &&
+          kv_edit_commit_typed(reloaded.value, &report, sizeof(report)) && report.ok &&
+          read().find("Put(0,6,0,0,0,0,0,0,0);\r\n# external edit\r\n") != std::string::npos,
+          "Save after Reload uses the fresh Include baseline and preserves the external comment");
+}
+
 int edit_contract() {
+    edit_batch_input_contract();
+    working_copy_disk_baseline_contract();
     creator_message_contract();
     pretrain_edit_contract();
     untouched_object_key_contract();

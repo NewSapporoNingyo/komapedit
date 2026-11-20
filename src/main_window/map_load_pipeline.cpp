@@ -500,7 +500,11 @@ void App::apply_load_result(LoadResult result) {
 
 bool source_file_hashes_match(const MapModel& current, const MapModel& edit_model,
                               std::string& error) {
-    std::map<std::string, std::string> current_hashes;
+    if (current.edit_files.size() != edit_model.edit_files.size()) {
+        error = "source file set changed since preview load";
+        return false;
+    }
+    std::map<std::string_view, std::string_view> current_hashes;
     for (const EditSourceFileInfo& file : current.edit_files) {
         current_hashes[file.file_path] = file.source_hash;
     }
@@ -510,7 +514,7 @@ bool source_file_hashes_match(const MapModel& current, const MapModel& edit_mode
             error = "edit metadata includes a source file that is not in the current preview: " + file.file_path;
             return false;
         }
-        if (!it->second.empty() && !file.source_hash.empty() && it->second != file.source_hash) {
+        if (it->second != file.source_hash) {
             error = "source file changed since preview load: " + file.file_path;
             return false;
         }

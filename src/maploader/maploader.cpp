@@ -32,7 +32,6 @@ using kme::maploader::detail::MapContext;
 using kme::maploader::detail::MapEditChange;
 using kme::maploader::detail::MapEditReport;
 using kme::maploader::detail::MapParseOptions;
-using kme::maploader::detail::Matrix;
 using kme::maploader::detail::SourceTextOverrides;
 
 MapParseOptions parse_options_from_load_flags(unsigned flags) {
@@ -196,78 +195,8 @@ KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
-        const std::array<double, 5> parameters{
-            unit_distance, min_step, max_step, max_angle_degrees, max_chord_error};
-        if (ctx->scene_geometry_valid && ctx->scene_geometry_parameters == parameters) {
-            return 1;
-        }
-        kme::maploader::detail::invalidate_scene_geometry_snapshot(*ctx, true);
-        if (ctx->owntrack_buffer.rows == 0) {
-            kme::maploader::detail::generate_geometry(*ctx, unit_distance, false, 0.0, 0.0, 0.0);
-        }
-
-        const bool has_arb = ctx->has_cp_arbdistribution;
-        const std::array<double, 3> arb = ctx->cp_arbdistribution;
-        const Matrix& baseline = ctx->owntrack_buffer;
-        std::vector<double> extra = kme::maploader::detail::build_scene_adaptive_controlpoints(
-            *ctx, baseline, min_step, max_step, max_angle_degrees, max_chord_error);
-
-        struct RegularGeometryState {
-            double unit_distance;
-            Matrix owntrack_buffer;
-            Matrix curveradius_buffer;
-            Matrix structure_put_buffer;
-            std::map<std::string, Matrix> othertrack_buffers;
-            std::array<double, 3> cp_arbdistribution;
-            std::array<double, 3> cp_arbdistribution_default;
-            std::array<double, 2> cp_defaultrange;
-            bool has_cp_arbdistribution;
-            bool cp_arbdistribution_explicit;
-            kme::maploader::detail::LoadTiming timing;
-            bool load_timing_logged;
-        } regular{
-            ctx->unit_distance,
-            std::move(ctx->owntrack_buffer),
-            std::move(ctx->curveradius_buffer),
-            std::move(ctx->structure_put_buffer),
-            std::move(ctx->othertrack_buffers),
-            ctx->cp_arbdistribution,
-            ctx->cp_arbdistribution_default,
-            ctx->cp_defaultrange,
-            ctx->has_cp_arbdistribution,
-            ctx->cp_arbdistribution_explicit,
-            std::move(ctx->timing),
-            ctx->load_timing_logged};
-
-        auto restore_regular_geometry = [&]() {
-            ctx->unit_distance = regular.unit_distance;
-            ctx->owntrack_buffer = std::move(regular.owntrack_buffer);
-            ctx->curveradius_buffer = std::move(regular.curveradius_buffer);
-            ctx->structure_put_buffer = std::move(regular.structure_put_buffer);
-            ctx->othertrack_buffers = std::move(regular.othertrack_buffers);
-            ctx->cp_arbdistribution = regular.cp_arbdistribution;
-            ctx->cp_arbdistribution_default = regular.cp_arbdistribution_default;
-            ctx->cp_defaultrange = regular.cp_defaultrange;
-            ctx->has_cp_arbdistribution = regular.has_cp_arbdistribution;
-            ctx->cp_arbdistribution_explicit = regular.cp_arbdistribution_explicit;
-            ctx->timing = std::move(regular.timing);
-            ctx->load_timing_logged = regular.load_timing_logged;
-        };
-
-        try {
-            kme::maploader::detail::generate_geometry(
-                *ctx, unit_distance, has_arb, arb[0], arb[1], arb[2], &extra, false);
-            Matrix generated_owntrack = std::move(ctx->owntrack_buffer);
-            std::map<std::string, Matrix> generated_othertracks = std::move(ctx->othertrack_buffers);
-            restore_regular_geometry();
-            std::swap(ctx->scene_owntrack_buffer, generated_owntrack);
-            ctx->scene_othertrack_buffers.swap(generated_othertracks);
-        } catch (...) {
-            restore_regular_geometry();
-            throw;
-        }
-        ctx->scene_geometry_parameters = parameters;
-        ctx->scene_geometry_valid = true;
+        kme::maploader::detail::generate_scene_geometry(
+            *ctx, unit_distance, min_step, max_step, max_angle_degrees, max_chord_error);
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());

@@ -1016,6 +1016,7 @@ int App::run_debug_headless_new_element_edit(
          << "commit=" << (options.commit ? 1 : 0) << "\n"
          << "memory_apply_only=" << (options.commit ? 0 : 1) << "\n"
          << "mixed_save_scope=exclusive_temporary_fixtures\n"
+         << "input_source_scope=" << (options.commit ? "explicit_commit" : "memory_only") << "\n"
          << "stage=load-start\n";
     out->flush();
 
@@ -2683,8 +2684,8 @@ int App::run_debug_headless_new_element_edit(
                  << "commit_gradient_transition_edit_id=" << commit_gradient_transition_id << "\n"
                  << "commit_gradient_primary_edit_id=" << commit_gradient_primary_id << "\n";
             const bool commit_ok = app.save_pending_edits(false);
-            *out << "commit_save_ok=" << (commit_ok ? 1 : 0) << "\n"
-                 << "committed_file=" << target_file << "\n";
+            *out << "commit_save_ok=" << (commit_ok ? 1 : 0) << "\n";
+            if (commit_ok) *out << "committed_file=" << target_file << "\n";
             check("commit_save_path_ok",
                   commit_ok && app.pending_edit_changes_.empty() &&
                       app.model_.curve_rows.size() == baseline_curve_count + 2 &&
@@ -4305,11 +4306,11 @@ int App::run_debug_headless_resource_list_insert(
             app.ensure_table_cache();
             check("structure_drafts_initialized",
                   app.initialize_editable_list_draft_rows(edit, spec));
-            if (edit.visible_rows.empty()) {
+            if (edit.rows.empty()) {
                 throw std::runtime_error("Structure List contains no editable rows");
             }
             const EditableListDraftRow& original =
-                edit.rows[edit.visible_rows.front()];
+                edit.rows.front();
             const std::string original_key = original.values.empty()
                 ? std::string{}
                 : original.values.front();
@@ -4326,17 +4327,17 @@ int App::run_debug_headless_resource_list_insert(
             constexpr const char* below_key = "kmeHeadlessStructureBelow";
             check("structure_insert_above_draft",
                   app.insert_editable_list_row(edit, spec, 0, true));
-            EditableListDraftRow& above = edit.rows[edit.visible_rows.front()];
+            EditableListDraftRow& above = edit.rows.front();
             above.values[0] = above_key;
             check("structure_insert_below_draft",
                   app.insert_editable_list_row(edit, spec, 1, false));
             EditableListDraftRow& below =
-                edit.rows[edit.visible_rows[2]];
+                edit.rows[2];
             below.values[0] = below_key;
             const EditableListDraftRow& final_above =
-                edit.rows[edit.visible_rows.front()];
+                edit.rows.front();
             const EditableListDraftRow& final_below =
-                edit.rows[edit.visible_rows[2]];
+                edit.rows[2];
             check("structure_insert_field_counts",
                   final_above.values.size() == 2 &&
                       final_below.values.size() == 2);
@@ -4382,9 +4383,9 @@ int App::run_debug_headless_resource_list_insert(
             check("signal_drafts_initialized",
                   app.initialize_editable_list_draft_rows(edit, spec));
             int target_row = -1;
-            for (size_t index = 0; index < edit.visible_rows.size(); ++index) {
+            for (size_t index = 0; index < edit.rows.size(); ++index) {
                 const EditableListDraftRow& candidate =
-                    edit.rows[edit.visible_rows[index]];
+                    edit.rows[index];
                 if (candidate.secondary_structure_field_count != 0 &&
                     candidate.primary_structure_field_count != 0 &&
                     candidate.values.size() > 1 &&
@@ -4397,8 +4398,7 @@ int App::run_debug_headless_resource_list_insert(
                 throw std::runtime_error(
                     "Signal Aspects List contains no editable main/glare pair");
             }
-            const EditableListDraftRow& original = edit.rows[
-                edit.visible_rows[static_cast<size_t>(target_row)]];
+            const EditableListDraftRow& original = edit.rows[static_cast<size_t>(target_row)];
             const std::string original_key = original.values[0];
             const std::string structure_key = original.values[1];
             const std::string target_file = original.target_source_file;
@@ -4409,16 +4409,14 @@ int App::run_debug_headless_resource_list_insert(
             constexpr const char* below_key = "kmeHeadlessSignalBelow";
             check("signal_insert_above_draft",
                   app.insert_editable_list_row(edit, spec, target_row, true));
-            EditableListDraftRow& above = edit.rows[
-                edit.visible_rows[static_cast<size_t>(target_row)]];
+            EditableListDraftRow& above = edit.rows[static_cast<size_t>(target_row)];
             above.values[0] = above_key;
             above.values[1] = structure_key;
             const int original_after_above = target_row + 1;
             check("signal_insert_below_pair_draft",
                   app.insert_editable_list_row(
                       edit, spec, original_after_above, false));
-            EditableListDraftRow& below = edit.rows[
-                edit.visible_rows[static_cast<size_t>(original_after_above + 1)]];
+            EditableListDraftRow& below = edit.rows[static_cast<size_t>(original_after_above + 1)];
             below.values[0] = below_key;
             below.values[1] = structure_key;
             check("signal_add_glare_draft",
@@ -4427,8 +4425,7 @@ int App::run_debug_headless_resource_list_insert(
             check("signal_cancel_new_glare_draft",
                   app.delete_editable_list_secondary_row(
                       edit, spec, original_after_above + 1));
-            const EditableListDraftRow& glare_cancelled = edit.rows[
-                edit.visible_rows[static_cast<size_t>(original_after_above + 1)]];
+            const EditableListDraftRow& glare_cancelled = edit.rows[static_cast<size_t>(original_after_above + 1)];
             check("signal_new_glare_cancelled_without_delete",
                   glare_cancelled.values.size() == 6 &&
                       glare_cancelled.secondary_structure_field_count == 0 &&
@@ -4436,10 +4433,8 @@ int App::run_debug_headless_resource_list_insert(
             check("signal_readd_glare_draft",
                   app.add_editable_list_secondary_row(
                       edit, spec, original_after_above + 1));
-            const EditableListDraftRow& final_above = edit.rows[
-                edit.visible_rows[static_cast<size_t>(target_row)]];
-            EditableListDraftRow& below_with_glare = edit.rows[
-                edit.visible_rows[static_cast<size_t>(original_after_above + 1)]];
+            const EditableListDraftRow& final_above = edit.rows[static_cast<size_t>(target_row)];
+            EditableListDraftRow& below_with_glare = edit.rows[static_cast<size_t>(original_after_above + 1)];
             check("signal_insert_field_counts",
                   final_above.values.size() == 6 &&
                       below_with_glare.values.size() == 11 &&
@@ -5025,11 +5020,11 @@ int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOp
     const auto alternate_map = directory / "alternate.txt";
     const auto single_scenario = directory / "single.txt";
     const auto multiple_scenario = directory / "multiple.txt";
-    const std::array<const char*, 15> fixture_names{
+    const std::array<const char*, 17> fixture_names{
         "map.txt", "alternate.txt", "single.txt", "multiple.txt", "new-disabled.txt",
         "new-enabled.txt", "new-empty.txt", "new-load-disabled.txt", "new-load-enabled.txt",
         "settings.ini", "history.ini", "layout.ini", "csv/csv_owntrack.csv",
-        "csv/csv_other.csv", "csv"};
+        "csv/csv_other.csv", "csv", "preview.txt", "preview-child.txt"};
     const auto read_bytes = [](const std::filesystem::path& path) {
         std::ifstream input(path, std::ios::binary);
         if (!input) throw std::runtime_error("cannot read " + wide_to_utf8(path.wstring()));
@@ -5327,6 +5322,28 @@ int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOp
             require("edit_metadata_promotes_preview", app.edit_registry_loaded_ &&
                 app.handle_ != preview_handle && same_path(app.file_path_, fixture_map));
 
+            const auto preview_path = directory / "preview.txt";
+            const auto preview_child = directory / "preview-child.txt";
+            create(preview_path, "BveTs Map 2.02:utf-8\r\ninclude 'preview-child.txt';\r\n");
+            create(preview_child, "BveTs Map 2.02:utf-8\r\n0;\r\nStructure['test'].Put(0,1,0,0,0,0,0,0,0);\r\n");
+            app.edit_mode_enabled_ = false;
+            app.open_document(utf8(preview_path), false);
+            require("included_structure_preview_ready", wait_for_map(std::nullopt) &&
+                app.model_.structures.size() == 1 && app.model_.structures.front().edit_id.empty());
+            void* const unchanged_preview = app.handle_;
+            {
+                std::ofstream child(preview_child, std::ios::binary | std::ios::trunc);
+                child << "BveTs Map 2.02:utf-8\r\n0;\r\nStructure['test'].Put(0,2,0,0,0,0,0,0,0);\r\n";
+                child.close();
+                require("preview_child_changed", static_cast<bool>(child));
+            }
+            app.edit_mode_enabled_ = true;
+            app.begin_edit_metadata_load();
+            app.stop_loader();
+            app.poll_loader();
+            require("changed_include_edit_metadata_discarded", app.handle_ == unchanged_preview &&
+                !app.edit_registry_loaded_ && app.model_.structures.front().edit_id.empty());
+
             app.open_document(utf8(single_scenario), false);
             select_route(0);
             require("unconsumed_result_reset_allows_reopen", wait_for_map(std::nullopt) &&
@@ -5504,14 +5521,18 @@ int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOp
         *out << "exception=" << e.what() << "\n";
         ++failed;
     }
-    try {
-        bool unchanged = !protected_sources.empty();
-        for (const auto& file : protected_sources) unchanged = (read_bytes(file.first) == file.second) && unchanged;
-        check("real_sources_unchanged", unchanged);
-        *out << "protected_real_source_count=" << protected_sources.size() << "\n";
-    } catch (const std::exception& e) {
-        *out << "source_verification_error=" << e.what() << "\n";
-        ++failed;
+    *out << "protected_real_source_count=" << protected_sources.size() << "\n";
+    if (protected_sources.empty()) {
+        *out << "real_sources_unchanged=NOT_RUN\n";
+    } else {
+        try {
+            const bool unchanged = std::all_of(protected_sources.begin(), protected_sources.end(),
+                [&](const auto& file) { return read_bytes(file.first) == file.second; });
+            check("real_sources_unchanged", unchanged);
+        } catch (const std::exception& e) {
+            *out << "source_verification_error=" << e.what() << "\n";
+            ++failed;
+        }
     }
     bool cleaned = true;
     for (const char* name : fixture_names) {
@@ -5702,7 +5723,7 @@ int App::run_debug_headless_fresh_resource_list_workflow(
             check("empty_structure_drafts_initialized",
                   app.initialize_editable_list_draft_rows(
                       structure_edit, k_structure_model_edit_spec) &&
-                      structure_edit.visible_rows.empty());
+                      structure_edit.rows.empty());
             check("empty_list_first_row_inserted",
                   app.insert_editable_list_row(
                       structure_edit, k_structure_model_edit_spec, -1, false) &&
@@ -5728,7 +5749,7 @@ int App::run_debug_headless_fresh_resource_list_workflow(
             check("station_drafts_initialized_with_existing_row",
                   app.initialize_editable_list_draft_rows(
                       station_edit, k_station_definition_edit_spec) &&
-                      station_edit.visible_rows.size() == 1);
+                      station_edit.rows.size() == 1);
             if (station_edit.rows.size() == 1) {
                 EditableListDraftRow& row = station_edit.rows.front();
                 if (row.values.size() > 1) row.values[1] = "After";
@@ -5813,8 +5834,8 @@ int App::run_debug_headless_fresh_resource_list_workflow(
             const auto signal_visible_row = [&](const std::string& key) {
                 require_signal("signal_fixture_draft_initialized",
                     app.initialize_editable_list_draft_rows(signal_edit, signal_spec));
-                for (size_t i = 0; i < signal_edit.visible_rows.size(); ++i) {
-                    const auto& row = signal_edit.rows[signal_edit.visible_rows[i]];
+                for (size_t i = 0; i < signal_edit.rows.size(); ++i) {
+                    const auto& row = signal_edit.rows[i];
                     if (!row.deleted && !row.values.empty() && row.values[0] == key) {
                         return static_cast<int>(i);
                     }
@@ -5823,7 +5844,7 @@ int App::run_debug_headless_fresh_resource_list_workflow(
             };
             const auto signal_draft = [&](const std::string& key) -> EditableListDraftRow& {
                 const int visible = signal_visible_row(key);
-                return signal_edit.rows[signal_edit.visible_rows[static_cast<size_t>(visible)]];
+                return signal_edit.rows[static_cast<size_t>(visible)];
             };
             const auto signal_value = [&](const std::string& key, const std::string& field) {
                 for (const TableRow& row : app.model_.signal_aspects) {
@@ -5839,7 +5860,7 @@ int App::run_debug_headless_fresh_resource_list_workflow(
                     app.initialize_editable_list_draft_rows(signal_edit, signal_spec));
                 require_signal("signal_fixture_row_inserted",
                     app.insert_editable_list_row(signal_edit, signal_spec,
-                        static_cast<int>(signal_edit.visible_rows.size()) - 1, false));
+                        static_cast<int>(signal_edit.rows.size()) - 1, false));
                 auto& row = signal_edit.rows.back();
                 row.values[0] = key;
                 row.values[1] = "stNew";

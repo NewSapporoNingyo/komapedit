@@ -37,7 +37,26 @@
 
 #include "datatable_internal.h"
 
+ImU32 App::editable_row_bg_color(const std::string& edit_id, ImU32 highlight) const {
+    if (row_is_pending_delete(edit_id)) return datatable_internal::k_pending_delete_row_color;
+    if (row_has_pending_edit(edit_id)) return datatable_internal::k_pending_edit_row_color;
+    return highlight;
+}
+
 namespace datatable_internal {
+
+const std::vector<std::string>& signal_aspect_column_headers() {
+    static const auto headers = [] {
+        std::vector<std::string> result;
+        result.reserve(k_max_signal_aspect_table_columns);
+        for (const auto& column : k_signal_aspect_fixed_columns) result.emplace_back(column.header);
+        for (size_t key = 1; key <= k_max_signal_aspect_structure_key_columns; ++key) {
+            result.push_back("structureKey" + std::to_string(key));
+        }
+        return result;
+    }();
+    return headers;
+}
 
 std::string normalize_train_lookup_key(const std::string& key) {
     return ascii_lower(trim_gui_ascii_copy(key));

@@ -50,8 +50,8 @@ std::string ascii_lower(std::string text) {
     return text;
 }
 
-std::string extension_hint(const std::string& path_utf8) {
-    std::string ext = path_to_utf8(path_from_utf8(path_utf8).extension());
+std::string extension_hint(const std::filesystem::path& path) {
+    std::string ext = path_to_utf8(path.extension());
     ext = ascii_lower(ext);
     if (!ext.empty() && ext.front() == '.') ext.erase(ext.begin());
     return ext;
@@ -77,11 +77,8 @@ std::string resolved_texture_path(const std::filesystem::path& model_dir, const 
 }
 
 void free_mesh(MlMeshData& model) {
-    if (model.materials) {
-        for (size_t i = 0; i < model.material_count; ++i) {
-            std::free(model.materials[i].texture_path);
-            model.materials[i].texture_path = nullptr;
-        }
+    for (size_t i = 0; i < model.material_count; ++i) {
+        std::free(model.materials[i].texture_path);
     }
     std::free(model.vertices);
     std::free(model.indices);
@@ -140,7 +137,7 @@ void assign_bounds(MlMeshData& out) {
         radius_squared = std::max(radius_squared, dx * dx + dy * dy + dz * dz);
     }
     const double radius = std::sqrt(radius_squared);
-    if (!std::isfinite(radius) || radius > std::numeric_limits<float>::max()) {
+    if (radius > std::numeric_limits<float>::max()) {
         throw std::runtime_error("model bounds radius is outside the supported float range");
     }
     for (int axis = 0; axis < 3; ++axis) {
@@ -155,7 +152,7 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
     const std::filesystem::path input_path = path_from_utf8(path_utf8);
     const std::string bytes = read_binary_file(input_path);
     if (bytes.empty()) throw std::runtime_error("file is empty: " + path_utf8);
-    const std::string hint = extension_hint(path_utf8);
+    const std::string hint = extension_hint(input_path);
     std::filesystem::path model_path = input_path;
     std::error_code ec;
     std::filesystem::path abs_model_path = std::filesystem::absolute(model_path, ec);
@@ -206,14 +203,15 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
     out.vertices = static_cast<MlVertex*>(std::malloc(sizeof(MlVertex) * vertex_count));
     out.indices = static_cast<unsigned int*>(std::malloc(sizeof(unsigned int) * index_count));
     out.parts = static_cast<MlMeshPart*>(std::malloc(sizeof(MlMeshPart) * part_count));
-    out.material_count = std::max<size_t>(scene->mNumMaterials, 1);
-    out.materials = static_cast<MlMaterial*>(std::calloc(out.material_count, sizeof(MlMaterial)));
+    const size_t material_count = std::max<size_t>(scene->mNumMaterials, 1);
+    out.materials = static_cast<MlMaterial*>(std::calloc(material_count, sizeof(MlMaterial)));
     if (!out.vertices || !out.indices || !out.parts || !out.materials) {
         throw std::runtime_error("memory allocation failed");
     }
     out.vertex_count = vertex_count;
     out.index_count = index_count;
     out.part_count = part_count;
+    out.material_count = material_count;
 
     for (size_t i = 0; i < out.material_count; ++i) {
         out.materials[i].diffuse[0] = 1.0f;
@@ -295,20 +293,21 @@ ML_API unsigned int ml_api_version(void) {
 }
 
 ML_API int ml_load_model(const char* path, MlMeshData* out_model) {
+    if (!out_model) {
+        set_last_error("output pointer is null");
+        return 0;
+    }
+    *out_model = {};
     try {
-        if (!out_model) throw std::runtime_error("output pointer is null");
-        *out_model = {};
         if (!path || !*path) throw std::runtime_error("model path is empty");
         *out_model = load_with_assimp(path);
         set_last_error({});
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
-        if (out_model) free_mesh(*out_model);
         return 0;
     } catch (...) {
         set_last_error("unknown model loader error");
-        if (out_model) free_mesh(*out_model);
         return 0;
     }
 }

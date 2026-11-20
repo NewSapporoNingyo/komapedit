@@ -957,6 +957,18 @@ struct SourceContextEnvironment {
     double exit_distance = 0.0;
 };
 
+struct MapContext;
+struct EditableTarget;
+
+struct EditableTargetLocation {
+    const char* row_kind;
+    size_t storage_index;
+    size_t row_index;
+    EditableTarget (*restore)(const MapContext&, const EditableTargetLocation&);
+};
+
+using EditableTargetIndex = std::unordered_map<std::string, EditableTargetLocation>;
+
 struct MapContext {
     std::filesystem::path rootpath;
     std::string rootpath_utf8;
@@ -1043,7 +1055,6 @@ struct MapContext {
     std::array<double, 3> cp_arbdistribution{0.0, 0.0, 0.0};
     std::array<double, 3> cp_arbdistribution_default{0.0, 0.0, 0.0};
     std::array<double, 2> cp_defaultrange{0.0, 0.0};
-    bool has_cp_arbdistribution = false;
     bool cp_arbdistribution_explicit = false;
     std::unique_ptr<MapSnapshotStorage> map_snapshot;
     std::unique_ptr<SceneGeometrySnapshotStorage> scene_snapshot;
@@ -1070,6 +1081,7 @@ struct MapContext {
     std::unordered_map<std::string, std::string> disk_native_element_edit_id_to_stable;
     std::unordered_map<std::string, std::string> disk_source_hashes_for_stable_ids;
     mutable std::unordered_map<std::string, std::string> element_edit_id_cache;
+    std::unique_ptr<EditableTargetIndex> editable_target_index;
     std::vector<ParsedStatement> parsed_statements;
     std::vector<MapDiagnostic> diagnostics;
     std::vector<DeferredKeyReference> deferred_key_references;
@@ -1236,15 +1248,9 @@ void put_other(MapContext& ctx, const Value& track_key, const std::string& eleme
 void relocate(MapContext& ctx);
 size_t validate_control_point_distribution(double start, double end, double step);
 void generate_geometry(MapContext& ctx, double unitdist,
-                       bool has_arb, double arb_start, double arb_end, double arb_step,
-                       const std::vector<double>* extra_controlpoints = nullptr,
-                       bool generate_auxiliary_buffers = true);
-std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
-                                                       const Matrix& baseline,
-                                                       double min_step,
-                                                       double max_step,
-                                                       double max_angle_degrees,
-                                                       double max_chord_error);
+                       bool has_arb, double arb_start, double arb_end, double arb_step);
+void generate_scene_geometry(MapContext& ctx, double unitdist, double min_step, double max_step,
+                             double max_angle_degrees, double max_chord_error);
 
 const KvMapSnapshot& build_map_snapshot(MapContext& ctx);
 const KvSceneGeometrySnapshot& build_scene_geometry_snapshot(MapContext& ctx);
@@ -1663,9 +1669,6 @@ struct MapEditReport {
 std::vector<MapEditChange> copy_edit_batch(const KvEditBatch& batch);
 const KvEditTargetSnapshot& build_edit_target_snapshot(MapContext& ctx,
                                                        const std::string& edit_id);
-MapEditReport build_edit_report(MapContext& ctx,
-                                const std::vector<MapEditChange>& changes,
-                                bool write_files);
 MapEditReport plan_staged_edit_batch(MapContext& ctx,
                                      const std::vector<MapEditChange>& changes);
 void finalize_direct_disk_apply(MapContext& ctx, MapEditReport& report);

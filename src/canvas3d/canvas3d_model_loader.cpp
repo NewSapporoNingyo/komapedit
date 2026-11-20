@@ -332,6 +332,9 @@ void Canvas3D::Impl::stop_scene_loader() {
     if (scene_worker.joinable()) scene_worker.join();
     scene_worker_running.store(false);
     scene_cancel.store(false);
+    queued_scene_model_requests.clear();
+    active_scene_model_requests.clear();
+    clear_pending_scene_model_uploads();
 }
 
 CpuModelData Canvas3D::Impl::copy_cpu_model(const std::string& path, const MlMeshData& data) {
@@ -424,15 +427,21 @@ void Canvas3D::Impl::build_scene_model_group(SceneModelLoadGroup& group) {
 }
 
 void Canvas3D::Impl::start_scene_model_worker(std::vector<SceneModelLoadRequest> requests) {
-    if (requests.empty()) return;
-    if (scene_worker.joinable()) {
-        if (scene_worker_running.load()) return;
-        scene_worker.join();
-    }
-    std::map<std::string, std::vector<SceneModelLoadRequest>> requests_by_source;
     for (auto& request : requests) {
+        if (active_scene_model_requests.count(request.key) == 0) {
+            queued_scene_model_requests.try_emplace(request.key, std::move(request));
+        }
+    }
+    if (scene_worker_running.load() || !active_scene_model_requests.empty() ||
+        queued_scene_model_requests.empty()) return;
+    if (scene_worker.joinable()) scene_worker.join();
+
+    std::map<std::string, std::vector<SceneModelLoadRequest>> requests_by_source;
+    for (auto& [key, request] : queued_scene_model_requests) {
+        active_scene_model_requests.insert(key);
         requests_by_source[request.source_path].push_back(std::move(request));
     }
+    queued_scene_model_requests.clear();
 
     std::list<SceneModelLoadGroup> groups;
     std::vector<decltype(groups)::iterator> work;
@@ -518,11 +527,12 @@ void Canvas3D::Impl::start_scene_model_worker(std::vector<SceneModelLoadRequest>
         scene_model_worker_count_value.store(0);
         scene_worker_running.store(false);
         const std::string error = "failed to start scene model worker: " + std::string(exception.what());
-        for (auto& entry : scene_models) {
-            if (entry.second.state != SceneModelGpu::State::Pending) continue;
-            entry.second.state = SceneModelGpu::State::Failed;
-            entry.second.error = error;
+        for (const auto& key : active_scene_model_requests) {
+            auto& model = scene_models.at(key);
+            model.state = SceneModelGpu::State::Failed;
+            model.error = error;
         }
+        active_scene_model_requests.clear();
         log_scene_worker_failure({"[warn]canvas3D.cpp: ", error});
         notify_scene_loading_progress();
     }
@@ -695,6 +705,7 @@ void Canvas3D::Impl::upload_pending_scene_models() {
         pending.swap(scene_pending_uploads);
     }
     for (const auto& group : pending) {
+        for (const auto& request : group.requests) active_scene_model_requests.erase(request.key);
         if (group.outputs.empty()) {
             const auto fail_group = [&](std::string_view error) {
                 for (const auto& request : group.requests) {
@@ -731,6 +742,7 @@ void Canvas3D::Impl::upload_pending_scene_models() {
             }
         }
     }
+    start_scene_model_worker({});
     maybe_log_scene_model_load_summary();
 }
 

@@ -187,7 +187,6 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
     };
     auto reset_scene_worker_state = [&]() {
         stop_scene_loader();
-        clear_pending_scene_model_uploads();
         for (auto& entry : scene_models) release_scene_model(entry.second);
         scene_models.clear();
         scene_cancel.store(false);
@@ -212,6 +211,16 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
     };
 
     try {
+        std::string shader_error;
+        debug_scene_marker_compile_failure = true;
+        const bool failed_as_expected = !ensure_scene_pipeline(shader_error) &&
+            !shader_error.empty() && !scene_marker_vertex_shader && !scene_marker_pixel_shader &&
+            !scene_marker_pick_pixel_shader && !scene_marker_mask_pixel_shader &&
+            !scene_marker_input_layout && !scene_marker_constant_buffer && !scene_marker_pick_constant_buffer;
+        shader_error.clear();
+        result.shader_pipeline_retry = failed_as_expected && ensure_scene_pipeline(shader_error) &&
+            scene_marker_vertex_shader && scene_marker_mask_pixel_shader && scene_marker_pick_constant_buffer;
+
         result.model_bounds = model_bounds_contract();
         CpuModelData radius_overflow;
         const float maximum_coordinate = std::numeric_limits<float>::max();
@@ -559,6 +568,32 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
         reset_scene_worker_state();
 
         ModelLoaderClient::debug_reset_counts();
+        SceneModelLoadRequest later = keep_request;
+        later.key = "added-during-load";
+        scene_models.try_emplace(keep_request.key);
+        scene_models.try_emplace(later.key);
+        active_scene_model_requests.insert(keep_request.key);
+        start_artificial_worker();
+        start_scene_model_worker({keep_request, later, later});
+        const bool queued_once = queued_scene_model_requests.size() == 1 &&
+            queued_scene_model_requests.count(later.key) == 1;
+        scene_cancel.store(true);
+        scene_worker.join();
+        scene_cancel.store(false);
+        auto& failed_group = scene_pending_uploads.emplace_back();
+        failed_group.requests.push_back(keep_request);
+        failed_group.error = "injected initial batch failure";
+        upload_pending_scene_models();
+        if (scene_worker.joinable()) scene_worker.join();
+        upload_pending_scene_models();
+        result.active_worker_queue = queued_once &&
+            scene_models.at(keep_request.key).state == SceneModelGpu::State::Failed &&
+            scene_models.at(later.key).state == SceneModelGpu::State::Ready &&
+            queued_scene_model_requests.empty() && active_scene_model_requests.empty();
+        record_release_counts();
+        reset_scene_worker_state();
+
+        ModelLoaderClient::debug_reset_counts();
         Canvas3DScene reload_fixture;
         reload_fixture.max_distance = 1.0;
         Canvas3DModelInstance reload_instance;
@@ -630,6 +665,69 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
             !scene_worker_running.load() && result.full_model_load_count == 2 && ready_with_width(2.0f);
         record_release_counts();
         clear_scene();
+
+        ModelLoaderClient::debug_reset_counts();
+        Canvas3DScene between_scene;
+        between_scene.max_distance = 25.0;
+        between_scene.tracks = {
+            {"0", {{0.0, 0.0, 0.0, 0.0}, {25.0, 0.0, 25.0, 0.0}}},
+            {"right", {{0.0, 2.0, 0.0, 0.0}, {25.0, 2.0, 25.0, 0.0}}},
+        };
+        auto& object = between_scene.objects.emplace_back();
+        object.kind = Canvas3DSceneObjectKind::Structure;
+        object.structure_put_between = true;
+        object.edit_id = "between-reload";
+        auto& instance = between_scene.instances.emplace_back();
+        instance.model_path = valid_model_path;
+        instance.object_index = 0;
+        instance.put_between = true;
+        instance.distance = 5.0;
+        instance.put_between_track_key1 = "0";
+        instance.put_between_track_key2 = "right";
+        const auto target = put_between_target_from_instance(object.edit_id, instance);
+        std::string reload_error;
+        if (!load_scene(std::move(between_scene), reload_error, false, false)) {
+            throw std::runtime_error(reload_error);
+        }
+        const auto finish_models = [&] {
+            if (scene_worker.joinable()) scene_worker.join();
+            upload_pending_scene_models();
+        };
+        const auto finish_preview = [&] {
+            for (int attempt = 0; attempt < 500; ++attempt) {
+                apply_scene_put_between_preview_result();
+                if (!scene_structure_edit.preview_model_key.empty()) return true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            return false;
+        };
+        finish_models();
+        const bool camera_ready = reset_scene_camera_pose_at_distance(8.0);
+        const auto before_camera = scene_camera_pose();
+        auto draft = target;
+        draft.distance = 12.0;
+        const bool initial_preview = set_scene_placement_edit_target(draft, true) && finish_preview();
+        const auto preview_key = scene_structure_edit.preview_model_key;
+        const auto reload_generation = scene_geometry_generation;
+        if (!reload_scene_models(reload_error)) throw std::runtime_error(reload_error);
+        const bool temporary_removed = scene_models.count(preview_key) == 0 &&
+            scene_structure_edit.preview_model_key.empty();
+        finish_models();
+        const auto reloaded_stats = scene_stats();
+        const bool preview_resumed = finish_preview();
+        const auto final_stats = scene_stats();
+        const auto after_camera = scene_camera_pose();
+        result.put_between_model_reload = camera_ready && initial_preview && temporary_removed && preview_resumed &&
+            scene_geometry_generation == reload_generation && scene_structure_edit.active &&
+            scene_structure_edit.current.distance == draft.distance &&
+            scene_structure_edit.completed.distance == draft.distance &&
+            scene_structure_edit.preview_model_key == preview_key &&
+            before_camera.distance == after_camera.distance && before_camera.x == after_camera.x &&
+            before_camera.y == after_camera.y && before_camera.z == after_camera.z &&
+            !reloaded_stats.loading && !final_stats.loading && final_stats.model_path_count == 2 &&
+            final_stats.model_ready_count == 2 && final_stats.model_failed_count == 0;
+        clear_scene();
+        record_release_counts();
     } catch (const std::exception& error) {
         result.error = error.what();
         stop_scene_put_between_preview_worker();

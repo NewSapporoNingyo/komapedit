@@ -28,19 +28,11 @@ struct LastPos {
     double gauge = 0.0;
 };
 
+template <typename Event>
 class TrackPointer {
 public:
-    TrackPointer(const std::vector<OwnTrackEvent>& data, std::string target)
-        : data_(&data), target_(std::move(target)) {
-        ix_max_ = static_cast<int>(data.size()) - 1;
-        next_ = seek(0);
-    }
-
-    TrackPointer(const std::vector<OtherTrackEvent>& data, std::string target)
-        : other_data_(&data), target_(std::move(target)), other_(true) {
-        ix_max_ = static_cast<int>(data.size()) - 1;
-        next_ = seek(0);
-    }
+    TrackPointer(const std::vector<Event>& data, std::string_view target)
+        : data_(data), target_(target), next_(seek(0)) {}
 
     int last() const { return last_; }
     int next() const { return next_; }
@@ -61,7 +53,6 @@ public:
     }
 
     int seekoriginofcontinuous(int index) const {
-        if (index < 0) return -1;
         while (index >= 0) {
             const auto& e = event(index);
             if (e.key == target_ && !e.value.is_continue()) return index;
@@ -70,35 +61,22 @@ public:
         return -1;
     }
 
-    const OwnTrackEvent& event(int index) const {
-        if (other_) {
-            temp_.distance = (*other_data_)[index].distance;
-            temp_.key = (*other_data_)[index].key;
-            temp_.value = (*other_data_)[index].value;
-            temp_.flag = (*other_data_)[index].flag;
-            return temp_;
-        }
-        return (*data_)[index];
-    }
+    const Event& event(int index) const { return data_[index]; }
 
 private:
-    int seek(int ix0) const {
-        int ix = ix0;
-        while (ix <= ix_max_) {
+    int seek(int ix) const {
+        const int count = static_cast<int>(data_.size());
+        while (ix < count) {
             if (event(ix).key == target_) return ix;
             ++ix;
         }
         return -1;
     }
 
-    const std::vector<OwnTrackEvent>* data_ = nullptr;
-    const std::vector<OtherTrackEvent>* other_data_ = nullptr;
-    std::string target_;
-    bool other_ = false;
-    int ix_max_ = -1;
+    const std::vector<Event>& data_;
+    std::string_view target_;
     int last_ = -1;
-    int next_ = -1;
-    mutable OwnTrackEvent temp_;
+    int next_;
 };
 
 std::pair<double, double> rotate_xy(double x, double y, double theta) {
@@ -560,27 +538,25 @@ std::vector<double> build_event_projected_distances(
     return result;
 }
 
+template <typename Event>
 class CantProcessor {
 public:
-    CantProcessor(TrackPointer pointer, const std::vector<OwnTrackEvent>& data, double last_cant)
-        : pointer_(std::move(pointer)), own_data_(&data), cant_value_(last_cant) {}
-
-    CantProcessor(TrackPointer pointer, const std::vector<OtherTrackEvent>& data, double last_cant)
-        : pointer_(std::move(pointer)), other_data_(&data), other_(true), cant_value_(last_cant) {}
+    CantProcessor(TrackPointer<Event> pointer, double last_cant)
+        : pointer_(pointer), cant_value_(last_cant) {}
 
     double process(double dist, const std::string& func) {
         while (pointer_.over_nextpoint(dist)) {
             int origin = pointer_.seekoriginofcontinuous(pointer_.next());
             if (origin >= 0) {
-                cant_value_ = as_number(event(origin).value);
+                cant_value_ = as_number(pointer_.event(origin).value);
             }
             pointer_.seeknext();
         }
 
         if (pointer_.last() < 0 || pointer_.next() < 0) return cant_value_;
-        OwnTrackEvent next = event(pointer_.next());
+        const Event& next = pointer_.event(pointer_.next());
         if (next.value.is_continue()) return cant_value_;
-        OwnTrackEvent last = event(pointer_.last());
+        const Event& last = pointer_.event(pointer_.last());
         if (next.flag == "i" || last.flag == "bt") {
             double next_value = as_number(next.value);
             if (cant_value_ != next_value) {
@@ -592,29 +568,14 @@ public:
     }
 
 private:
-    const OwnTrackEvent& event(int index) const {
-        if (other_) {
-            temp_.distance = (*other_data_)[index].distance;
-            temp_.key = (*other_data_)[index].key;
-            temp_.value = (*other_data_)[index].value;
-            temp_.flag = (*other_data_)[index].flag;
-            return temp_;
-        }
-        return (*own_data_)[index];
-    }
-
     double transition(double L, double c1, double c2, const std::string& func, double l) const {
         if (L == 0.0) return c2;
         if (func == "sin") return (c2 - c1) / 2.0 * (std::sin(k_pi / L * l - k_pi / 2.0) + 1.0) + c1;
         return (c2 - c1) / L * l + c1;
     }
 
-    TrackPointer pointer_;
-    const std::vector<OwnTrackEvent>* own_data_ = nullptr;
-    const std::vector<OtherTrackEvent>* other_data_ = nullptr;
-    bool other_ = false;
+    TrackPointer<Event> pointer_;
     double cant_value_ = 0.0;
-    mutable OwnTrackEvent temp_;
 };
 
 std::vector<double> sorted_unique(std::vector<double> values) {
@@ -687,56 +648,32 @@ double round_minus2(double value) {
     return std::round(value / 100.0) * 100.0;
 }
 
-void generate_owntrack(MapContext& ctx, double unitdist,
-                       bool has_arb, double arb_start, double arb_end, double arb_step,
-                       const std::vector<double>* extra_controlpoints = nullptr) {
+struct TrackGeometry {
+    Matrix owntrack;
+    std::map<std::string, Matrix> othertracks;
+    std::array<double, 3> distribution;
+    std::array<double, 3> default_distribution;
+    double owntrack_seconds = 0.0;
+    std::vector<std::pair<std::string, double>> othertrack_seconds;
+};
+
+static void generate_owntrack(const MapContext& ctx, TrackGeometry& geometry, double unitdist,
+                              bool has_arb, const std::array<double, 3>& arbitrary_distribution,
+                              const std::vector<double>& extra_controlpoints) {
     std::vector<double> list_cp = ctx.controlpoints;
     if (list_cp.empty()) list_cp.push_back(0.0);
-    if (extra_controlpoints) {
-        list_cp.insert(list_cp.end(), extra_controlpoints->begin(), extra_controlpoints->end());
-    }
+    list_cp.insert(list_cp.end(), extra_controlpoints.begin(), extra_controlpoints.end());
     const auto bounds = std::minmax_element(list_cp.begin(), list_cp.end());
-    double cp_min = *bounds.first;
-    double cp_max = *bounds.second;
-    double equaldist_unit = unitdist > 0.0 ? unitdist : 25.0;
-    const double boundary_margin = 500.0;
+    const double start = ctx.station_position.empty() ? *bounds.first : ctx.station_position.begin()->first;
+    const double end = ctx.station_position.empty() ? *bounds.second : ctx.station_position.rbegin()->first;
+    constexpr double boundary_margin = 500.0;
+    geometry.default_distribution = {std::max(0.0, round_minus2(start) - boundary_margin),
+                                     round_minus2(end) + boundary_margin,
+                                     unitdist > 0.0 ? unitdist : 25.0};
+    geometry.distribution = has_arb ? arbitrary_distribution : geometry.default_distribution;
+    const auto& [distribution_start, distribution_end, distribution_step] = geometry.distribution;
+    append_arange(list_cp, distribution_start, distribution_end, distribution_step);
 
-    if (has_arb) {
-        ctx.has_cp_arbdistribution = true;
-        ctx.cp_arbdistribution = {arb_start, arb_end, arb_step};
-        if (!ctx.station_position.empty()) {
-            double min_station = ctx.station_position.begin()->first;
-            double max_station = ctx.station_position.rbegin()->first;
-            ctx.cp_arbdistribution_default = {std::max(0.0, round_minus2(min_station) - boundary_margin),
-                                              round_minus2(max_station) + boundary_margin,
-                                              equaldist_unit};
-        } else {
-            ctx.cp_arbdistribution_default = {std::max(0.0, round_minus2(cp_min) - boundary_margin),
-                                              round_minus2(cp_max) + boundary_margin,
-                                              equaldist_unit};
-        }
-        ctx.cp_defaultrange = {ctx.cp_arbdistribution_default[0],
-                               ctx.cp_arbdistribution_default[1]};
-        append_arange(list_cp, arb_start, arb_end, arb_step);
-    } else if (!ctx.station_position.empty()) {
-        double min_station = ctx.station_position.begin()->first;
-        double max_station = ctx.station_position.rbegin()->first;
-        double start = std::max(0.0, round_minus2(min_station) - boundary_margin);
-        double end = round_minus2(max_station) + boundary_margin;
-        append_arange(list_cp, start, end, equaldist_unit);
-        ctx.has_cp_arbdistribution = true;
-        ctx.cp_arbdistribution = {start, end, equaldist_unit};
-        ctx.cp_arbdistribution_default = ctx.cp_arbdistribution;
-        ctx.cp_defaultrange = {start, end};
-    } else {
-        double start = std::max(0.0, round_minus2(cp_min) - boundary_margin);
-        double end = round_minus2(cp_max) + boundary_margin;
-        append_arange(list_cp, start, end, equaldist_unit);
-        ctx.has_cp_arbdistribution = true;
-        ctx.cp_arbdistribution = {start, end, equaldist_unit};
-        ctx.cp_arbdistribution_default = ctx.cp_arbdistribution;
-        ctx.cp_defaultrange = {start, end};
-    }
     list_cp = sorted_unique(list_cp);
 
     const std::vector<GradientProjectionSample> gradient_projection =
@@ -747,7 +684,6 @@ void generate_owntrack(MapContext& ctx, double unitdist,
     TrackPointer radius_p(ctx.own_track, "radius");
     TrackPointer turn_p(ctx.own_track, "turn");
     TrackPointer interpolate_p(ctx.own_track, "interpolate_func");
-    TrackPointer cant_p(ctx.own_track, "cant");
     TrackPointer center_p(ctx.own_track, "center");
     TrackPointer gauge_p(ctx.own_track, "gauge");
 
@@ -757,9 +693,9 @@ void generate_owntrack(MapContext& ctx, double unitdist,
         double radius = 0.0;
     } rlp;
 
-    CantProcessor cant_gen(std::move(cant_p), ctx.own_track, lp.cant);
-    ctx.owntrack_buffer.clear(11);
-    ctx.owntrack_buffer.reserve_rows(list_cp.size());
+    CantProcessor cant_gen(TrackPointer(ctx.own_track, "cant"), lp.cant);
+    geometry.owntrack.clear(11);
+    geometry.owntrack.reserve_rows(list_cp.size());
 
     for (size_t controlpoint_index = 0; controlpoint_index < list_cp.size();
          ++controlpoint_index) {
@@ -794,83 +730,42 @@ void generate_owntrack(MapContext& ctx, double unitdist,
             radius_p.seeknext();
         }
 
-        double c_theta = lp.theta;
-        double c_ds = projection.projected_distance - lp.projected_distance;
-        double x = 0.0, y = 0.0, tau = 0.0, radius = lp.radius;
-
-        if (radius_p.last() < 0) {
-            if (radius_p.next() < 0 || lp.radius == 0.0) {
-                x = std::cos(c_theta) * c_ds;
-                y = std::sin(c_theta) * c_ds;
-            } else {
-                auto res = circular_curve(lp.radius, c_theta, c_ds);
-                x = res.x; y = res.y; tau = res.tau; radius = lp.radius;
-            }
-        } else if (radius_p.next() < 0) {
-            if (lp.radius == 0.0) {
-                x = std::cos(c_theta) * c_ds;
-                y = std::sin(c_theta) * c_ds;
-            } else {
-                auto res = circular_curve(lp.radius, c_theta, c_ds);
-                x = res.x; y = res.y; tau = res.tau;
-            }
-            radius = lp.radius;
-        } else {
-            const auto& next = radius_p.event(radius_p.next());
-            if (next.value.is_continue()) {
-                if (lp.radius == 0.0) {
-                    x = std::cos(c_theta) * c_ds;
-                    y = std::sin(c_theta) * c_ds;
-                } else {
-                    auto res = circular_curve(lp.radius, c_theta, c_ds);
-                    x = res.x; y = res.y; tau = res.tau;
-                }
-                radius = lp.radius;
-            } else if (next.flag == "i" || radius_p.event(radius_p.last()).flag == "bt") {
-                double next_radius = as_number(next.value);
-                if (rlp.radius != next_radius) {
-                    const double transition_start =
-                        event_projected_distances[static_cast<size_t>(radius_p.last())];
-                    const double transition_end =
-                        event_projected_distances[static_cast<size_t>(radius_p.next())];
-                    const double total = transition_end - transition_start;
-                    const double last_l = lp.projected_distance - transition_start;
-                    const double cur_l = projection.projected_distance - transition_start;
-                    if (total == 0.0) {
-                        radius = dist >= next.distance ? next_radius : rlp.radius;
-                    } else {
-                        CurveResult pos_last = transition_curve(
-                            total, rlp.radius, next_radius, rlp.theta,
-                            lp.interpolate_func, last_l);
-                        CurveResult pos_cur = transition_curve(
-                            total, rlp.radius, next_radius, rlp.theta,
-                            lp.interpolate_func, cur_l);
-                        x = pos_cur.x - pos_last.x;
-                        y = pos_cur.y - pos_last.y;
-                        tau = pos_cur.tau - pos_last.tau;
-                        radius = pos_cur.radius;
+        const double step_length = projection.projected_distance - lp.projected_distance;
+        auto [x, y, tau, radius] = [&]() -> CurveResult {
+            bool straight = lp.radius == 0.0;
+            if (radius_p.last() >= 0 && radius_p.next() >= 0) {
+                const auto& next = radius_p.event(radius_p.next());
+                if (!next.value.is_continue() &&
+                    (next.flag == "i" || radius_p.event(radius_p.last()).flag == "bt")) {
+                    const double next_radius = as_number(next.value);
+                    if (rlp.radius != next_radius) {
+                        const double transition_start =
+                            event_projected_distances[static_cast<size_t>(radius_p.last())];
+                        const double transition_end =
+                            event_projected_distances[static_cast<size_t>(radius_p.next())];
+                        const double total = transition_end - transition_start;
+                        if (total == 0.0) {
+                            return {0.0, 0.0, 0.0, dist >= next.distance ? next_radius : rlp.radius};
+                        }
+                        const auto before = transition_curve(total, rlp.radius, next_radius,
+                            rlp.theta, lp.interpolate_func, lp.projected_distance - transition_start);
+                        const auto after = transition_curve(total, rlp.radius, next_radius,
+                            rlp.theta, lp.interpolate_func, projection.projected_distance - transition_start);
+                        return {after.x - before.x, after.y - before.y, after.tau - before.tau,
+                                after.radius};
                     }
-                } else if (next_radius != 0.0) {
-                    auto res = circular_curve(lp.radius, c_theta, c_ds);
-                    x = res.x; y = res.y; tau = res.tau; radius = lp.radius;
-                } else {
-                    x = std::cos(c_theta) * c_ds;
-                    y = std::sin(c_theta) * c_ds;
-                    radius = lp.radius;
+                    straight = next_radius == 0.0;
                 }
-            } else {
-                if (lp.radius == 0.0) {
-                    x = std::cos(c_theta) * c_ds;
-                    y = std::sin(c_theta) * c_ds;
-                } else {
-                    auto res = circular_curve(lp.radius, c_theta, c_ds);
-                    x = res.x; y = res.y; tau = res.tau;
-                }
-                radius = lp.radius;
             }
-        }
+            if (straight) {
+                return {std::cos(lp.theta) * step_length, std::sin(lp.theta) * step_length,
+                        0.0, lp.radius};
+            }
+            const auto step = circular_curve(lp.radius, lp.theta, step_length);
+            return {step.x, step.y, step.tau, lp.radius};
+        }();
 
-        if (turn_p.next() >= 0 && turn_p.on_nextpoint(dist)) {
+        if (turn_p.on_nextpoint(dist)) {
             tau += std::atan(as_number(turn_p.event(turn_p.next()).value));
             turn_p.seeknext();
         }
@@ -888,7 +783,7 @@ void generate_owntrack(MapContext& ctx, double unitdist,
         lp.center = center_tmp;
         lp.gauge = gauge_tmp;
 
-        ctx.owntrack_buffer.push({dist, lp.x, lp.y, lp.z, lp.theta, lp.radius, lp.gradient,
+        geometry.owntrack.push({dist, lp.x, lp.y, lp.z, lp.theta, lp.radius, lp.gradient,
                                   lp.interpolate_func == "sin" ? 0.0 : 1.0,
                                   lp.cant, lp.center, lp.gauge});
     }
@@ -943,10 +838,11 @@ struct OtherTrackBuildResult {
     bool has_buffer = false;
 };
 
-Matrix build_othertrack_buffer(const MapContext& ctx, const std::string& trackkey, bool& has_buffer) {
+Matrix build_othertrack_buffer(const MapContext& ctx, const Matrix& owntrack_buffer,
+                               const std::string& trackkey, bool& has_buffer) {
     const auto& data = ctx.othertrack.at(trackkey);
     has_buffer = false;
-    if (data.empty() || ctx.owntrack_buffer.rows == 0) return {};
+    if (data.empty() || owntrack_buffer.rows == 0) return {};
 
     TrackPointer x_position_p(data, "x.position");
     TrackPointer x_radius_p(data, "x.radius");
@@ -967,7 +863,7 @@ Matrix build_othertrack_buffer(const MapContext& ctx, const std::string& trackke
     std::string func_last = "line";
     std::string func_next = "line";
 
-    auto init_numeric = [](TrackPointer& p, double& last, double& next) {
+    auto init_numeric = [](const TrackPointer<OtherTrackEvent>& p, double& last, double& next) {
         if (p.next() < 0) return;
         const auto& e = p.event(p.next());
         double v = e.value.is_continue() ? 0.0 : as_number(e.value);
@@ -989,12 +885,12 @@ Matrix build_othertrack_buffer(const MapContext& ctx, const std::string& trackke
         func_last = func_next = e.value.is_continue() ? "line" : as_text(e.value);
     }
 
-    CantProcessor cant_gen(std::move(cant_p), data, cant_initial);
+    CantProcessor cant_gen(cant_p, cant_initial);
     Matrix result;
     result.clear(8);
-    result.reserve_rows(ctx.owntrack_buffer.rows);
+    result.reserve_rows(owntrack_buffer.rows);
 
-    auto advance_over = [](TrackPointer& p, double& last, double& next, double dist) {
+    auto advance_over = [](TrackPointer<OtherTrackEvent>& p, double& last, double& next, double dist) {
         while (p.over_nextpoint(dist)) {
             p.seeknext();
             last = next;
@@ -1004,7 +900,7 @@ Matrix build_othertrack_buffer(const MapContext& ctx, const std::string& trackke
             }
         }
     };
-    auto advance_on = [](TrackPointer& p, double& last, double& next, double dist) {
+    auto advance_on = [](TrackPointer<OtherTrackEvent>& p, double& last, double& next, double dist) {
         while (p.on_nextpoint(dist)) {
             p.seeknext();
             last = next;
@@ -1017,8 +913,8 @@ Matrix build_othertrack_buffer(const MapContext& ctx, const std::string& trackke
 
     // Child tracks keep their first defined value before the first explicit point.
     // The initial values above already hold that first point, so emit the full own-track range.
-    for (size_t r = 0; r < ctx.owntrack_buffer.rows; ++r) {
-        const double* element = &ctx.owntrack_buffer.data[r * ctx.owntrack_buffer.cols];
+    for (size_t r = 0; r < owntrack_buffer.rows; ++r) {
+        const double* element = &owntrack_buffer.data[r * owntrack_buffer.cols];
         double dist = element[0];
 
         advance_over(x_position_p, x_position_last, x_position_next, dist);
@@ -1083,11 +979,7 @@ void relocate(MapContext& ctx) {
         std::stable_sort(rows.begin(), rows.end(),
                          [](const auto& a, const auto& b) { return a.distance < b.distance; });
         if (!rows.empty()) {
-            ctx.othertrack_range[kv.first] = {rows.front().distance, rows.front().distance};
-            for (const auto& e : rows) {
-                ctx.othertrack_range[kv.first].first = std::min(ctx.othertrack_range[kv.first].first, e.distance);
-                ctx.othertrack_range[kv.first].second = std::max(ctx.othertrack_range[kv.first].second, e.distance);
-            }
+            ctx.othertrack_range[kv.first] = {rows.front().distance, rows.back().distance};
         }
     }
     auto by_distance = [](const auto& a, const auto& b) { return a.distance < b.distance; };
@@ -1150,7 +1042,7 @@ void append_scene_model_distance(std::vector<double>& values, double distance, d
     if (span > 1.0) append_controlpoint_if_in_range(values, distance + span, min_distance, max_distance);
 }
 
-std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
+static std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
                                                        const Matrix& baseline,
                                                        double min_step,
                                                        double max_step,
@@ -1257,24 +1149,15 @@ std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
     return values;
 }
 
-void generate_geometry(MapContext& ctx, double unitdist,
-                       bool has_arb, double arb_start, double arb_end, double arb_step,
-                       const std::vector<double>* extra_controlpoints,
-                       bool generate_auxiliary_buffers) {
+static TrackGeometry build_track_geometry(const MapContext& ctx, double unitdist,
+                                          bool has_arb, const std::array<double, 3>& distribution,
+                                          const std::vector<double>& extra_controlpoints) {
     KME_MAPLOADER_LOG_INFO("calculating track geometry");
-    ctx.scene_geometry_valid = false;
-    ctx.unit_distance = unitdist;
-    ctx.cp_arbdistribution_explicit = has_arb;
-    ctx.othertrack_buffers.clear();
-    ctx.timing.owntrack_seconds = 0.0;
-    ctx.timing.othertrack_seconds.clear();
-    ctx.timing.snapshot_seconds = 0.0;
-    ctx.load_timing_logged = false;
+    TrackGeometry geometry;
     {
-        ScopedTimer timer(&ctx.timing.owntrack_seconds);
-        generate_owntrack(ctx, unitdist, has_arb, arb_start, arb_end, arb_step, extra_controlpoints);
+        ScopedTimer timer(&geometry.owntrack_seconds);
+        generate_owntrack(ctx, geometry, unitdist, has_arb, distribution, extra_controlpoints);
     }
-    if (generate_auxiliary_buffers) generate_curveradius(ctx);
     std::vector<std::future<OtherTrackBuildResult>> futures;
     futures.reserve(std::min(ctx.othertrack_order.size(),
                              k_max_parallel_maploader_tasks));
@@ -1285,24 +1168,57 @@ void generate_geometry(MapContext& ctx, double unitdist,
         futures.clear();
         for (size_t index = first; index < last; ++index) {
             const std::string& key = ctx.othertrack_order[index];
-            futures.push_back(launch_bounded_maploader_task([&ctx, key]() {
+            futures.push_back(launch_bounded_maploader_task([&ctx, &geometry, key]() {
                 auto started_at = SteadyClock::now();
                 OtherTrackBuildResult out;
                 out.key = key;
-                out.buffer = build_othertrack_buffer(ctx, key, out.has_buffer);
+                out.buffer = build_othertrack_buffer(ctx, geometry.owntrack, key, out.has_buffer);
                 out.seconds = elapsed_seconds_since(started_at);
                 return out;
             }));
         }
         for (auto& future : futures) {
             OtherTrackBuildResult result = future.get();
-            ctx.timing.othertrack_seconds.push_back({result.key, result.seconds});
+            geometry.othertrack_seconds.push_back({result.key, result.seconds});
             if (result.has_buffer) {
-                ctx.othertrack_buffers[result.key] = std::move(result.buffer);
+                geometry.othertracks.emplace(std::move(result.key), std::move(result.buffer));
             }
         }
     }
-    if (generate_auxiliary_buffers) build_structure_put_buffer(ctx);
+    return geometry;
+}
+
+void generate_geometry(MapContext& ctx, double unitdist,
+                       bool has_arb, double arb_start, double arb_end, double arb_step) {
+    TrackGeometry geometry = build_track_geometry(ctx, unitdist, has_arb, {arb_start, arb_end, arb_step}, {});
+    ctx.scene_geometry_valid = false;
+    ctx.unit_distance = unitdist;
+    ctx.cp_arbdistribution_explicit = has_arb;
+    ctx.cp_arbdistribution = geometry.distribution;
+    ctx.cp_arbdistribution_default = geometry.default_distribution;
+    ctx.cp_defaultrange = {geometry.default_distribution[0], geometry.default_distribution[1]};
+    ctx.owntrack_buffer = std::move(geometry.owntrack);
+    ctx.othertrack_buffers = std::move(geometry.othertracks);
+    ctx.timing.owntrack_seconds = geometry.owntrack_seconds;
+    ctx.timing.othertrack_seconds = std::move(geometry.othertrack_seconds);
+    ctx.timing.snapshot_seconds = 0.0;
+    ctx.load_timing_logged = false;
+    generate_curveradius(ctx);
+    build_structure_put_buffer(ctx);
+}
+
+void generate_scene_geometry(MapContext& ctx, double unitdist, double min_step, double max_step,
+                             double max_angle_degrees, double max_chord_error) {
+    const std::array<double, 5> parameters{unitdist, min_step, max_step, max_angle_degrees, max_chord_error};
+    if (ctx.scene_geometry_valid && ctx.scene_geometry_parameters == parameters) return;
+    invalidate_scene_geometry_snapshot(ctx, true);
+    const auto extra = build_scene_adaptive_controlpoints(
+        ctx, ctx.owntrack_buffer, min_step, max_step, max_angle_degrees, max_chord_error);
+    TrackGeometry geometry = build_track_geometry(ctx, unitdist, true, ctx.cp_arbdistribution, extra);
+    ctx.scene_owntrack_buffer = std::move(geometry.owntrack);
+    ctx.scene_othertrack_buffers = std::move(geometry.othertracks);
+    ctx.scene_geometry_parameters = parameters;
+    ctx.scene_geometry_valid = true;
 }
 
 

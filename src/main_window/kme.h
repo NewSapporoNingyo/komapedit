@@ -545,6 +545,9 @@ struct TableUiCache {
     std::vector<CachedTableRow> section_speed_limit_rows;
     size_t section_begin_value_columns = 0;
     size_t section_speed_limit_value_columns = 0;
+    std::vector<std::string> section_begin_value_headers;
+    std::vector<std::string> section_speed_limit_value_headers;
+    bool has_multiline_variable_values = false;
     std::vector<CachedVariableRow> variable_rows;
     std::vector<CachedTableRow> creator_message_rows;
     CreatorMessageTableLayout creator_message_layout;
@@ -1789,7 +1792,6 @@ struct EditableListEditState {
     bool rows_initialized = false;
     std::uint64_t next_local_draft_id = 1;
     std::vector<EditableListDraftRow> rows;
-    std::vector<size_t> visible_rows;
     std::vector<EditableListDisplayRow> display_rows;
     size_t structure_key_columns = 0;
 };
@@ -1838,27 +1840,23 @@ struct DeferredEditableListAction {
     const EditableListSpec* spec = nullptr;
     Kind kind = Kind::InsertBelow;
     int visible_row = -1;
-    int column = -1;
+    int field_column = -1;
     bool select_secondary = false;
+    int display_column = -1;
 };
 
 bool editable_list_row_has_draft(const EditableListDraftRow& row);
 const std::string& editable_list_row_identity(const EditableListDraftRow& row);
 std::string editable_list_field_name(const EditableListSpec& spec,
                                      size_t field_index);
-std::vector<size_t> editable_list_visible_row_indices(
-    const std::vector<EditableListDraftRow>& rows);
 bool move_editable_list_draft_row(
     std::vector<EditableListDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
     int visible_row, int direction);
 bool clear_editable_list_draft_cell(
     std::vector<EditableListDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
     int visible_row, int column);
 bool delete_editable_list_draft_row(
     std::vector<EditableListDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
     int visible_row);
 void rebuild_editable_list_display_rows(
     EditableListEditState& edit,
@@ -2693,6 +2691,7 @@ private:
     bool open_element_inspector(const std::string& edit_id, const std::string& row_kind);
     bool row_has_pending_edit(const std::string& edit_id) const;
     bool row_is_pending_delete(const std::string& edit_id) const;
+    ImU32 editable_row_bg_color(const std::string& edit_id, ImU32 highlight) const;
     bool edit_actions_available() const;
     void set_edit_mode_enabled(bool enabled);
     void apply_edit_mode_enabled(bool enabled);
@@ -2799,7 +2798,7 @@ private:
     void render_plots();
     void render_plan_canvas(ImVec2 size);
     std::optional<double> nearest_plan_measure_distance(
-        const PlanData& data, ImVec2 origin, ImVec2 size, ImVec2 mouse);
+        ImVec2 origin, ImVec2 size, ImVec2 mouse);
     std::vector<PlanContextMenuEntry> collect_plan_context_entries(
         const PlanData& data, ImVec2 mouse, ImVec2 origin, ImVec2 size,
         float marker_canvas_margin, double marker_hover_radius_squared,

@@ -30,6 +30,7 @@
 #include <map>
 #include <string>
 #include <system_error>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -38,7 +39,7 @@
 using namespace datatable_internal;
 
 namespace {
-template <size_t N, typename RenderSpecialCellFn>
+template <size_t N, typename RenderSpecialCellFn, typename RowColorFn = std::nullptr_t>
 void render_event_table(const char* table_id,
                         const TableColumnDef (&columns)[N],
                         int distance_column,
@@ -51,7 +52,8 @@ void render_event_table(const char* table_id,
                         int& scroll_row,
                         int& highlight_row,
                         ImU32 highlight_color,
-                        RenderSpecialCellFn render_special_cell) {
+                        RenderSpecialCellFn render_special_cell,
+                        RowColorFn pending_color = nullptr) {
     if (!ImGui::BeginTable(table_id, static_cast<int>(N),
                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                            ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
@@ -83,9 +85,11 @@ void render_event_table(const char* table_id,
         for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
             const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
             ImGui::TableNextRow();
-            if (row_index == highlight_row) {
-                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+            ImU32 color = row_index == highlight_row ? highlight_color : 0;
+            if constexpr (!std::is_same_v<RowColorFn, std::nullptr_t>) {
+                color = pending_color(row.edit_id, color);
             }
+            if (color != 0) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, color);
             if (row_index == scroll_target_row) {
                 ImGui::SetScrollHereY(0.5f);
                 scroll_row = -1;
@@ -98,7 +102,8 @@ void render_event_table(const char* table_id,
                 if (value.empty()) continue;
                 if (column == file_path_column) {
                     render_file_path_cell_with_context(
-                        value, row.open_path, open_menu_label, row.open_path);
+                        value, row.open_path, open_menu_label,
+                        row.tooltip_text.empty() ? row.open_path : row.tooltip_text);
                 } else {
                     ImGui::TextUnformatted(value.c_str());
                 }
@@ -110,7 +115,8 @@ void render_event_table(const char* table_id,
 }
 
 template <size_t N, typename CanLocateFn, typename LocateFn, typename LocateSceneFn,
-          typename CanEditFn, typename EditFn, typename DeleteFn>
+          typename CanEditFn, typename EditFn, typename DeleteFn,
+          typename RowColorFn = std::nullptr_t>
 void render_change_point_table(const char* table_id,
                                const TableColumnDef (&columns)[N],
                                int distance_column,
@@ -133,7 +139,9 @@ void render_change_point_table(const char* table_id,
                                const std::string& delete_label,
                                CanEditFn can_edit_row,
                                EditFn edit_row,
-                               DeleteFn delete_row) {
+                               DeleteFn delete_row,
+                               bool double_click_opens = false,
+                               RowColorFn pending_color = nullptr) {
     render_event_table(
         table_id, columns, distance_column, file_path_column, rows,
         distance_width, file_path_width, file_name_header, open_menu_label,
@@ -157,8 +165,12 @@ void render_change_point_table(const char* table_id,
             } else if (action == TextCellContextAction::Quaternary) {
                 delete_row(marker_index);
             }
+            if (double_click_opens && ImGui::IsItemHovered() &&
+                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                edit_row(marker_index);
+            }
             return true;
-        });
+        }, pending_color);
 }
 template <size_t N, typename CanLocateFn, typename LocateFn, typename LocateSceneFn, typename FindFn,
           typename CanEditFn, typename EditFn, typename DeleteFn>
@@ -245,86 +257,22 @@ void App::render_beacons_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("beacons", IM_ARRAYSIZE(k_beacon_columns),
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(k_beacon_columns); ++i) {
-            float width = k_beacon_columns[i].width;
-            if (i == k_beacon_distance_column) width = table_cache_.beacon_distance_width;
-            if (i == k_beacon_file_path_column) width = table_cache_.beacon_file_path_width;
-            const char* header = i == k_beacon_file_path_column
-                ? file_name_header.c_str()
-                : k_beacon_columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.beacon_rows.size());
-        if (beacon_list_scroll_row_ >= row_count) beacon_list_scroll_row_ = -1;
-        if (beacon_list_highlight_row_ >= row_count) beacon_list_highlight_row_ = -1;
-        const int scroll_target_row = beacon_list_scroll_row_;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
-        const bool can_locate_scene_preview = can_locate_scene_preview_row();
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.beacon_rows[static_cast<size_t>(row_index)];
-                ImGui::TableNextRow();
-                if (row_index == beacon_list_highlight_row_) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.5f);
-                    beacon_list_scroll_row_ = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(k_beacon_columns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == k_beacon_distance_column) {
-                        size_t marker_index = static_cast<size_t>(row_index);
-                        bool can_locate = marker_index < beacon_marker_cache_.size() &&
-                            beacon_marker_cache_[marker_index].has_value();
-                        const bool can_edit = edit_actions_available() &&
-                            marker_index < model_.beacons.size() &&
-                            !model_.beacons[marker_index].edit_id.empty();
-                        const TextCellContextAction action = render_marker_text_cell_with_context(
-                            value,
-                            tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
-                            tr("dialog.element_properties"), can_edit,
-                            tr("button.delete"), can_edit);
-                        if (action == TextCellContextAction::Primary) {
-                            locate_beacon_row_on_plan(marker_index);
-                        } else if (action == TextCellContextAction::Secondary) {
-                            locate_scene_marker_row_in_scene_preview(
-                                Canvas3DSceneMarkerListKind::Beacon, marker_index);
-                        } else if (action == TextCellContextAction::Tertiary) {
-                            request_element_inspector(model_.beacons[marker_index].edit_id, "beacon.put");
-                        } else if (action == TextCellContextAction::Quaternary) {
-                            request_element_delete(model_.beacons[marker_index].edit_id, "beacon.put");
-                        }
-                        continue;
-                    }
-                    if (value.empty()) continue;
-                    if (i == k_beacon_file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path,
-                                                           tr("menu.open_in_explorer"), row.tooltip_text);
-                    } else {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndTable();
-    }
+    const auto& rows = table_cache_.beacon_rows;
+    render_change_point_table(
+        "beacons", k_beacon_columns, k_beacon_distance_column, k_beacon_file_path_column,
+        rows, table_cache_.beacon_distance_width, table_cache_.beacon_file_path_width,
+        tr("column.file_name"), tr("menu.locate_on_plan"), tr("menu.locate_in_scene_preview"),
+        tr("menu.open_in_explorer"), beacon_list_scroll_row_, beacon_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [&](size_t index) { return index < beacon_marker_cache_.size() && beacon_marker_cache_[index].has_value(); },
+        [this](size_t index) { locate_beacon_row_on_plan(index); },
+        can_locate_scene_preview_row(),
+        [this](size_t index) { locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind::Beacon, index); },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [&](size_t index) { return edit_actions_available() && !rows[index].edit_id.empty(); },
+        [&](size_t index) { request_element_inspector(rows[index].edit_id, "beacon.put"); },
+        [&](size_t index) { request_element_delete(rows[index].edit_id, "beacon.put"); },
+        false, [this](const std::string& id, ImU32 highlight) { return editable_row_bg_color(id, highlight); });
     focus_beacons_next_ = false;
     ImGui::End();
 }
@@ -346,91 +294,22 @@ void App::render_irregularities_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("irregularities", IM_ARRAYSIZE(k_irregularity_columns),
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(k_irregularity_columns); ++i) {
-            float width = k_irregularity_columns[i].width;
-            if (i == k_irregularity_distance_column) width = table_cache_.irregularity_distance_width;
-            if (i == k_irregularity_file_path_column) width = table_cache_.irregularity_file_path_width;
-            const char* header = i == k_irregularity_file_path_column
-                ? file_name_header.c_str()
-                : k_irregularity_columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.irregularity_rows.size());
-        if (irregularity_list_scroll_row_ >= row_count) irregularity_list_scroll_row_ = -1;
-        if (irregularity_list_highlight_row_ >= row_count) irregularity_list_highlight_row_ = -1;
-        const int scroll_target_row = irregularity_list_scroll_row_;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
-        const bool can_locate_scene_preview = can_locate_scene_preview_row();
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.irregularity_rows[static_cast<size_t>(row_index)];
-                ImGui::TableNextRow();
-                if (row_is_pending_delete(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
-                } else if (row_has_pending_edit(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
-                } else if (row_index == irregularity_list_highlight_row_) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.5f);
-                    irregularity_list_scroll_row_ = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(k_irregularity_columns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                if (i == k_irregularity_distance_column) {
-                    size_t marker_index = static_cast<size_t>(row_index);
-                    const bool can_locate = marker_index < irregularity_marker_cache_.size() &&
-                        irregularity_marker_cache_[marker_index].has_value();
-                    const bool edit_enabled = edit_actions_available() && !row.edit_id.empty();
-                    const TextCellContextAction action = render_text_cell_with_context_actions(
-                        value,
-                        tr("menu.locate_on_plan"), can_locate,
-                        tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
-                        tr("dialog.element_properties"), edit_enabled,
-                        tr("button.delete"), edit_enabled);
-                    if (action == TextCellContextAction::Primary) {
-                        locate_irregularity_row_on_plan(marker_index);
-                    } else if (action == TextCellContextAction::Secondary) {
-                        locate_scene_marker_row_in_scene_preview(
-                            Canvas3DSceneMarkerListKind::Irregularity, marker_index);
-                    } else if (action == TextCellContextAction::Tertiary) {
-                        request_element_inspector(row.edit_id, "irregularity.change");
-                    } else if (action == TextCellContextAction::Quaternary) {
-                        request_element_delete(row.edit_id, "irregularity.change");
-                    }
-                    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        request_element_inspector(row.edit_id, "irregularity.change");
-                    }
-                    continue;
-                }
-                    if (value.empty()) continue;
-                    if (i == k_irregularity_file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path,
-                                                           tr("menu.open_in_explorer"), row.open_path);
-                    } else {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndTable();
-    }
+    const auto& rows = table_cache_.irregularity_rows;
+    render_change_point_table(
+        "irregularities", k_irregularity_columns, k_irregularity_distance_column, k_irregularity_file_path_column,
+        rows, table_cache_.irregularity_distance_width, table_cache_.irregularity_file_path_width,
+        tr("column.file_name"), tr("menu.locate_on_plan"), tr("menu.locate_in_scene_preview"),
+        tr("menu.open_in_explorer"), irregularity_list_scroll_row_, irregularity_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [&](size_t index) { return index < irregularity_marker_cache_.size() && irregularity_marker_cache_[index].has_value(); },
+        [this](size_t index) { locate_irregularity_row_on_plan(index); },
+        can_locate_scene_preview_row(),
+        [this](size_t index) { locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind::Irregularity, index); },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [&](size_t index) { return edit_actions_available() && !rows[index].edit_id.empty(); },
+        [&](size_t index) { request_element_inspector(rows[index].edit_id, "irregularity.change"); },
+        [&](size_t index) { request_element_delete(rows[index].edit_id, "irregularity.change"); },
+        true, [this](const std::string& id, ImU32 highlight) { return editable_row_bg_color(id, highlight); });
     focus_irregularities_next_ = false;
     ImGui::End();
 }

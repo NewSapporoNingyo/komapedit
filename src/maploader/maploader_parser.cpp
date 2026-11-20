@@ -1225,12 +1225,29 @@ private:
         return path;
     }
 
-    bool validate_statement(const std::vector<MapObject>& objects,
-                            const MapFunction& function,
+    struct StatementArguments {
+        const MapFunction& function;
+        const Value* key;
+
+        size_t size() const {
+            return function.explicit_argument_count + (key != nullptr);
+        }
+
+        const Value& operator[](size_t index) const {
+            if (!key) return function.args[index];
+            return index == 0 ? *key : function.args[index - 1];
+        }
+
+        const Value& or_null(size_t index) const {
+            static const Value null = Value::null();
+            return index < size() ? (*this)[index] : null;
+        }
+    };
+
+    bool validate_statement(const StatementArguments& arguments, const std::string& method,
                             const std::vector<std::string>& labels,
                             std::string& rule_key) {
         const std::string path = object_path(labels);
-        const std::string method = ascii_lower(function.label);
         rule_key = path + "." + method;
         const auto& rules = method_rules();
         const auto rule_it = rules.find(rule_key);
@@ -1245,7 +1262,7 @@ private:
             }
             if (known_path) {
                 add_warning(current_statement_start_, rule_key,
-                            "Unknown submethod '" + function.label + "' for '" + path + "'.");
+                            "Unknown submethod '" + arguments.function.label + "' for '" + path + "'.");
             } else {
                 add_warning(current_statement_start_, rule_key,
                             "Unknown element name '" + path + "'.");
@@ -1254,7 +1271,7 @@ private:
         }
 
         const MethodRule& rule = rule_it->second;
-        const bool has_key = !objects.empty() && objects.front().has_key;
+        const bool has_key = arguments.key != nullptr;
         if (rule.key_use == RuleKeyUse::Required && !has_key) {
             add_warning(current_statement_start_, rule_key,
                         "An element key is required.");
@@ -1266,13 +1283,7 @@ private:
             return false;
         }
 
-        const size_t key_argument_count = has_key ? 1 : 0;
-        const size_t count = function.explicit_argument_count + key_argument_count;
-        auto argument_at = [&](size_t argument_index) -> const Value& {
-            return has_key && argument_index == 0
-                       ? objects.front().key
-                       : function.args[argument_index - key_argument_count];
-        };
+        const size_t count = arguments.size();
         bool count_is_valid = rule.allowed_counts.empty()
                                   ? count >= rule.minimum_count && count <= rule.maximum_count
                                   : std::find(rule.allowed_counts.begin(), rule.allowed_counts.end(),
@@ -1298,7 +1309,7 @@ private:
         }
 
         for (size_t i = 0; i < count; ++i) {
-            const Value& argument = argument_at(i);
+            const Value& argument = arguments[i];
             if (argument.is_null()) continue;
             const RuleArgumentKind kind =
                 i < rule.argument_kinds.size() ? rule.argument_kinds[i] : rule.tail_kind;
@@ -1353,23 +1364,12 @@ private:
         ctx_.deferred_key_references.push_back(std::move(reference));
     }
 
-    void record_deferred_semantics(const std::vector<MapObject>& objects,
-                                   const MapFunction& function,
+    void record_deferred_semantics(const StatementArguments& arguments,
                                    const std::string& kind) {
-        const bool has_key = !objects.empty() && objects.front().has_key;
-        const size_t key_argument_count = has_key ? 1 : 0;
-        const size_t argument_count =
-            function.explicit_argument_count + key_argument_count;
-        auto argument_at = [&](size_t argument_index) -> const Value& {
-            return has_key && argument_index == 0
-                       ? objects.front().key
-                       : function.args[argument_index - key_argument_count];
-        };
-
         auto add_transition = [&](TransitionEventKind event_kind) {
             TransitionEvent event;
             event.kind = event_kind;
-            event.argument_count = static_cast<int>(function.explicit_argument_count);
+            event.argument_count = static_cast<int>(arguments.function.explicit_argument_count);
             event.source = diagnostic_source(current_statement_start_, kind);
             ctx_.transition_events.push_back(std::move(event));
         };
@@ -1384,29 +1384,24 @@ private:
             add_transition(TransitionEventKind::GradientEnd);
         }
 
-        if ((kind == "structure.put" || kind == "structure.put0" ||
-             kind == "structure.putbetween" || kind == "background.change") &&
-            argument_count != 0) {
-            add_deferred_key(DeferredKeyKind::Structure, argument_at(0), kind);
-        } else if (kind == "repeater.begin" && argument_count > 11) {
-            for (size_t i = 11; i < argument_count; ++i) {
-                add_deferred_key(DeferredKeyKind::Structure, argument_at(i), kind);
+        if (kind == "structure.put" || kind == "structure.put0" ||
+            kind == "structure.putbetween" || kind == "background.change") {
+            add_deferred_key(DeferredKeyKind::Structure, arguments[0], kind);
+        } else if (kind == "repeater.begin" || kind == "repeater.begin0") {
+            const size_t first_key = kind == "repeater.begin" ? 11 : 5;
+            for (size_t i = first_key; i < arguments.size(); ++i) {
+                add_deferred_key(DeferredKeyKind::Structure, arguments[i], kind);
             }
-        } else if (kind == "repeater.begin0" && argument_count > 5) {
-            for (size_t i = 5; i < argument_count; ++i) {
-                add_deferred_key(DeferredKeyKind::Structure, argument_at(i), kind);
-            }
-        } else if (kind == "station.put" && argument_count != 0) {
-            add_deferred_key(DeferredKeyKind::Station, argument_at(0), kind);
-        } else if (kind == "signal.put" && argument_count != 0) {
-            add_deferred_key(DeferredKeyKind::SignalAspect, argument_at(0), kind);
-        } else if (kind == "sound.play" && argument_count != 0) {
-            add_deferred_key(DeferredKeyKind::Sound, argument_at(0), kind);
-        } else if (kind == "sound3d.put" && argument_count != 0) {
-            add_deferred_key(DeferredKeyKind::Sound3D, argument_at(0), kind);
-        } else if ((kind == "train.enable" || kind == "train.stop") &&
-                   argument_count != 0) {
-            add_deferred_key(DeferredKeyKind::Train, argument_at(0), kind);
+        } else if (kind == "station.put") {
+            add_deferred_key(DeferredKeyKind::Station, arguments[0], kind);
+        } else if (kind == "signal.put") {
+            add_deferred_key(DeferredKeyKind::SignalAspect, arguments[0], kind);
+        } else if (kind == "sound.play") {
+            add_deferred_key(DeferredKeyKind::Sound, arguments[0], kind);
+        } else if (kind == "sound3d.put") {
+            add_deferred_key(DeferredKeyKind::Sound3D, arguments[0], kind);
+        } else if (kind == "train.enable" || kind == "train.stop") {
+            add_deferred_key(DeferredKeyKind::Train, arguments[0], kind);
         }
     }
 
@@ -1414,16 +1409,18 @@ private:
         std::vector<std::string> labels;
         labels.reserve(objects.size());
         for (const auto& object : objects) labels.push_back(ascii_lower(object.label));
+        const auto& object = objects.front();
+        const StatementArguments arguments{function, object.has_key ? &object.key : nullptr};
+        const std::string fn = ascii_lower(function.label);
         std::string statement_kind;
-        if (!validate_statement(objects, function, labels, statement_kind)) return;
+        if (!validate_statement(arguments, fn, labels, statement_kind)) return;
         const std::string& first = labels.front();
         if (first == "curve" || first == "gradient" || first == "structure" ||
             first == "background" || first == "repeater" || first == "station" ||
             first == "signal" || first == "sound" || first == "sound3d" ||
             first == "train") {
-            record_deferred_semantics(objects, function, statement_kind);
+            record_deferred_semantics(arguments, statement_kind);
         }
-        std::string fn = ascii_lower(function.label);
 
         if (first == "curve") {
             dispatch_curve(fn, function.args, function.explicit_argument_count);
@@ -1432,9 +1429,7 @@ private:
         } else if (first == "legacy") {
             dispatch_legacy(fn, function.args);
         } else if (first == "station") {
-            std::vector<Value> args = function.args;
-            if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
-            dispatch_station(fn, args, function.raw_arguments);
+            dispatch_station(fn, arguments, function.raw_arguments);
         } else if (first == "track") {
             dispatch_track(objects.front().key, labels, fn, function.args,
                            function.explicit_argument_count);
@@ -1443,40 +1438,32 @@ private:
         } else if (first == "section") {
             dispatch_section(fn, function.args);
         } else if (first == "signal") {
-            std::vector<Value> args = function.args;
-            if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
-            dispatch_signal(fn, args, objects.front().has_key,
-                            function.raw_arguments);
+            dispatch_signal(fn, arguments, function.raw_arguments);
         } else if (first == "structure") {
-            std::vector<Value> args = function.args;
-            if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
-            dispatch_structure(fn, args, function.raw_arguments);
+            dispatch_structure(fn, arguments, function.raw_arguments);
         } else if (first == "beacon") {
-            dispatch_beacon(fn, function.args);
+            dispatch_beacon(function.args);
         } else if (first == "pretrain") {
-            dispatch_pretrain(fn, function.args);
+            dispatch_pretrain(function.args);
         } else if (first == "sound" || first == "sound3d") {
             dispatch_sound(fn, function.args, first == "sound3d",
-                           objects.front().has_key, objects.front().key,
-                           function.raw_arguments);
+                           object.key, function.raw_arguments);
         } else if (first == "train") {
-            std::vector<Value> args = function.args;
-            if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
-            dispatch_train(fn, args, objects.front().has_key);
+            dispatch_train(fn, arguments);
         } else if (first == "rollingnoise") {
-            dispatch_rolling_noise(fn, function.args);
+            dispatch_rolling_noise(function.args);
         } else if (first == "flangenoise") {
-            dispatch_flange_noise(fn, function.args);
+            dispatch_flange_noise(function.args);
         } else if (first == "jointnoise") {
-            dispatch_joint_noise(fn, function.args);
+            dispatch_joint_noise(function.args);
         } else if (first == "repeater") {
             dispatch_repeater(fn, objects.front().key, function.args);
         } else if (first == "irregularity") {
-            dispatch_irregularity(fn, function.args);
+            dispatch_irregularity(function.args);
         } else if (first == "background") {
-            dispatch_background(fn, function.args);
+            dispatch_background(function.args);
         } else if (first == "adhesion") {
-            dispatch_adhesion(fn, function.args);
+            dispatch_adhesion(function.args, function.explicit_argument_count);
         } else if (first == "cabilluminance") {
             dispatch_cab_illuminance(fn, function.args);
         } else if (first == "fog") {
@@ -1630,27 +1617,28 @@ private:
         ctx_.resource_list_loads.push_back(std::move(row));
     }
 
-    void dispatch_station(const std::string& fn, const std::vector<Value>& a,
+    void dispatch_station(const std::string& fn, const StatementArguments& a,
                           const std::string& raw_arguments) {
-        if (fn == "put" && !a.empty()) {
-            std::string key = key_text(a.at(0));
+        if (fn == "put") {
+            std::string key = key_text(a[0]);
             ctx_.station_position[ctx_.distance] = key;
             StationPut row;
             row.distance = ctx_.distance;
             row.station_key = Value::str(key);
-            row.door = arg_or_null(a, 1);
-            row.margin1 = arg_or_null(a, 2);
-            row.margin2 = arg_or_null(a, 3);
+            row.door = a.or_null(1);
+            row.margin1 = a.or_null(2);
+            row.margin2 = a.or_null(3);
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             row.source = diagnostic_source(current_statement_start_, "Station.Put");
             attach_active_edit_ref(ctx_, row);
             ctx_.station_puts.push_back(std::move(row));
-        } else if (fn == "load" && !a.empty()) {
+        } else {
+            const std::string list_path = as_text(a[0]);
             record_resource_list_load(ResourceListLoadKind::Station,
-                                      as_text(a.at(0)), raw_arguments,
+                                      list_path, raw_arguments,
                                       "station.load");
-            load_resource_list(as_text(a.at(0)), "BveTs Station List ", 0.04,
+            load_resource_list(list_path, "BveTs Station List ", 0.04,
                                "station.load",
                                [&](const LoadedText& loaded) { parse_station_list(loaded); });
         }
@@ -1927,35 +1915,34 @@ private:
         }
     }
 
-    void dispatch_signal(const std::string& fn, const std::vector<Value>& a,
-                         bool has_signal_key,
+    void dispatch_signal(const std::string& fn, const StatementArguments& a,
                          const std::string& raw_arguments) {
-        if (fn == "load" && !has_signal_key && !a.empty()) {
-            std::string list_path_text = as_text(a.at(0));
+        if (fn == "load") {
+            std::string list_path_text = as_text(a[0]);
             record_resource_list_load(ResourceListLoadKind::Signal,
                                       list_path_text, raw_arguments,
                                       "signal.load");
             load_resource_list(list_path_text, "BveTs Signal Aspects List ", 2.0,
                                "signal.load",
                                [&](const LoadedText& loaded) { parse_signal_aspect_list(loaded); });
-        } else if (fn == "speedlimit" && !has_signal_key) {
+        } else if (fn == "speedlimit") {
             SectionSpeedLimit row;
             row.distance = ctx_.distance;
             row.method = "Signal.SpeedLimit";
-            row.speeds = a;
+            row.speeds = a.function.args;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             attach_active_edit_ref(ctx_, row);
             ctx_.section_speed_limits.push_back(std::move(row));
-        } else if (fn == "put" && has_signal_key && a.size() >= 4) {
+        } else {
             SignalPut row;
             row.distance = ctx_.distance;
             row.signal_aspect_key = a[0];
             row.section = a[1];
             row.track_key = a[2];
             row.x = as_number(a[3]);
-            row.y = a.size() > 4 ? as_number(a[4]) : 0.0;
-            if (a.size() >= 11) {
+            row.y = as_number(a[4]);
+            if (a.size() == 11) {
                 row.z = as_number(a[5]);
                 row.rx = as_number(a[6]);
                 row.ry = as_number(a[7]);
@@ -1970,8 +1957,7 @@ private:
         }
     }
 
-    void dispatch_beacon(const std::string& fn, const std::vector<Value>& a) {
-        if (fn != "put" || a.size() < 3) return;
+    void dispatch_beacon(const std::vector<Value>& a) {
         BeaconPut row;
         row.distance = ctx_.distance;
         row.type = a[0];
@@ -1983,8 +1969,7 @@ private:
         ctx_.beacons.push_back(std::move(row));
     }
 
-    void dispatch_pretrain(const std::string& fn, const std::vector<Value>& a) {
-        if (fn != "pass" || a.empty()) return;
+    void dispatch_pretrain(const std::vector<Value>& a) {
         PreTrainPass row;
         row.distance = ctx_.distance;
         row.pass_time = a[0];
@@ -1994,13 +1979,13 @@ private:
         ctx_.pretrains.push_back(std::move(row));
     }
 
-    void dispatch_structure(const std::string& fn, const std::vector<Value>& a,
+    void dispatch_structure(const std::string& fn, const StatementArguments& a,
                             const std::string& raw_arguments) {
         if (fn == "load") {
             StructureLoad row;
             row.distance = ctx_.distance;
             row.method = "Load";
-            row.load_file_path = a.empty() ? Value::str("") : a[0];
+            row.load_file_path = a[0];
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             attach_active_noneditable_ref(ctx_, row);
@@ -2012,7 +1997,7 @@ private:
             load_resource_list(list_path_text, "BveTs Structure List ", 1.0,
                                "structure.load",
                                [&](const LoadedText& loaded) { parse_structure_list(loaded); });
-        } else if (fn == "put" && a.size() >= 10) {
+        } else if (fn == "put") {
             StructurePut row;
             row.distance = ctx_.distance;
             row.method = "Put";
@@ -2025,7 +2010,7 @@ private:
             row.order = ctx_.next_parse_order();
             attach_active_edit_ref(ctx_, row);
             ctx_.structure_puts.push_back(row);
-        } else if (fn == "put0" && a.size() >= 4) {
+        } else if (fn == "put0") {
             StructurePut row;
             row.distance = ctx_.distance;
             row.method = "Put0";
@@ -2036,14 +2021,14 @@ private:
             row.order = ctx_.next_parse_order();
             attach_active_edit_ref(ctx_, row);
             ctx_.structure_puts.push_back(row);
-        } else if (fn == "putbetween" && a.size() >= 3) {
+        } else {
             StructurePut row;
             row.distance = ctx_.distance;
             row.method = "PutBetween";
             row.structure_key = a[0];
             row.track_key1 = a[1];
             row.track_key2 = a[2];
-            row.flag = a.size() > 3 ? as_number(a[3]) : 0.0;
+            row.flag = as_number(a.or_null(3));
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             attach_active_edit_ref(ctx_, row);
@@ -2052,9 +2037,9 @@ private:
     }
 
     void dispatch_sound(const std::string& fn, const std::vector<Value>& a,
-                        bool is_3d, bool has_key, const Value& sound_key,
+                        bool is_3d, const Value& sound_key,
                         const std::string& raw_arguments) {
-        if (fn == "load" && !has_key && !a.empty()) {
+        if (fn == "load") {
             std::string list_path_text = as_text(a.at(0));
             record_resource_list_load(
                 is_3d ? ResourceListLoadKind::Sound3D : ResourceListLoadKind::Sound,
@@ -2064,7 +2049,7 @@ private:
                 list_path_text, "BveTs Sound List ", 2.0,
                 is_3d ? "sound3d.load" : "sound.load",
                 [&](const LoadedText& loaded) { parse_sound_list(loaded, is_3d); });
-        } else if (!is_3d && fn == "play" && has_key) {
+        } else if (fn == "play") {
             MapSoundPlay row;
             row.distance = ctx_.distance;
             row.sound_key = sound_key;
@@ -2072,7 +2057,7 @@ private:
             row.order = ctx_.next_parse_order();
             attach_active_edit_ref(ctx_, row);
             ctx_.map_sounds.push_back(std::move(row));
-        } else if (is_3d && fn == "put" && has_key && a.size() >= 2) {
+        } else {
             MapSound3DPut row;
             row.distance = ctx_.distance;
             row.sound_key = sound_key;
@@ -2120,12 +2105,12 @@ private:
         ctx_.other_trains.push_back(std::move(row));
     }
 
-    void dispatch_train(const std::string& fn, const std::vector<Value>& a, bool has_train_key) {
-        if (fn == "add" && !has_train_key && a.size() >= 4) {
-            add_other_train_definition("Add", a[0], a[1], a[2], a[3]);
-        } else if (fn == "load" && has_train_key && a.size() >= 4) {
+    void dispatch_train(const std::string& fn, const StatementArguments& a) {
+        if (fn == "add") {
+            if (!a.key) add_other_train_definition("Add", a[0], a[1], a[2], a[3]);
+        } else if (fn == "load") {
             add_other_train_definition("Load", a[0], a[1], a[2], a[3]);
-        } else if (fn == "enable" && has_train_key && a.size() >= 2) {
+        } else if (fn == "enable") {
             OtherTrainEnable row;
             row.distance = ctx_.distance;
             row.train_key = a[0];
@@ -2135,7 +2120,7 @@ private:
             row.source = diagnostic_source(current_statement_start_, "train.enable");
             attach_active_noneditable_ref(ctx_, row);
             ctx_.other_train_enables.push_back(std::move(row));
-        } else if (fn == "stop" && has_train_key && a.size() >= 5) {
+        } else {
             OtherTrainStop row;
             row.distance = ctx_.distance;
             row.train_key = a[0];
@@ -2150,8 +2135,7 @@ private:
         }
     }
 
-    void dispatch_rolling_noise(const std::string& fn, const std::vector<Value>& a) {
-        if (fn != "change" || a.empty()) return;
+    void dispatch_rolling_noise(const std::vector<Value>& a) {
         RollingNoiseChange row;
         row.distance = ctx_.distance;
         row.index = a[0];
@@ -2161,8 +2145,7 @@ private:
         ctx_.rolling_noises.push_back(std::move(row));
     }
 
-    void dispatch_flange_noise(const std::string& fn, const std::vector<Value>& a) {
-        if (fn != "change" || a.empty()) return;
+    void dispatch_flange_noise(const std::vector<Value>& a) {
         FlangeNoiseChange row;
         row.distance = ctx_.distance;
         row.index = a[0];
@@ -2172,8 +2155,7 @@ private:
         ctx_.flange_noises.push_back(std::move(row));
     }
 
-    void dispatch_joint_noise(const std::string& fn, const std::vector<Value>& a) {
-        if (fn != "play" || a.empty()) return;
+    void dispatch_joint_noise(const std::vector<Value>& a) {
         JointNoisePlay row;
         row.distance = ctx_.distance;
         row.index = a[0];
@@ -2211,8 +2193,7 @@ private:
         ctx_.repeaters.push_back(std::move(row));
     }
 
-    void dispatch_irregularity(const std::string& fn, const std::vector<Value>& a) {
-        if (fn != "change" || a.size() < 6) return;
+    void dispatch_irregularity(const std::vector<Value>& a) {
         IrregularityChange row;
         row.distance = ctx_.distance;
         row.x = as_number(a[0]);
@@ -2227,8 +2208,8 @@ private:
         ctx_.irregularities.push_back(row);
     }
 
-    void dispatch_background(const std::string& fn, const std::vector<Value>& a) {
-        if (fn != "change" || a.empty() || a[0].is_null()) return;
+    void dispatch_background(const std::vector<Value>& a) {
+        if (a[0].is_null()) return;
         BackgroundChange row;
         row.distance = ctx_.distance;
         row.structure_key = a[0];
@@ -2238,12 +2219,11 @@ private:
         ctx_.backgrounds.push_back(std::move(row));
     }
 
-    void dispatch_adhesion(const std::string& fn, const std::vector<Value>& a) {
-        if (fn != "change" || a.empty()) return;
+    void dispatch_adhesion(const std::vector<Value>& a, size_t count) {
         AdhesionChange row;
         row.distance = ctx_.distance;
         row.a = a[0];
-        if (a.size() >= 3) {
+        if (count == 3) {
             row.b = a[1];
             row.c = a[2];
         }

@@ -36,10 +36,10 @@ Assimp 需要单独安装。使用 vcpkg 时，设置 `VCPKG_ROOT` 并安装与�
 
 ```bat
 set VCPKG_ROOT=C:\path\to\vcpkg
-%VCPKG_ROOT%\vcpkg install assimp:x64-mingw-dynamic
+"%VCPKG_ROOT%\vcpkg.exe" install assimp:x64-mingw-dynamic
 ```
 
-设置 `VCPKG_ROOT` 后，构建脚本会自动使用 vcpkg。未设置 `VCPKG_DEFAULT_TRIPLET` 时默认使用 `x64-mingw-dynamic`；MSVC 用户应明确选择 `x64-windows` 等合适 triplet。`install_Assimp.bat` 是面向 MinGW 的辅助脚本，可能需要填写本机 vcpkg 路径；不得提交该本机路径。
+设置 `VCPKG_ROOT` 后，构建脚本会自动使用 vcpkg，默认 triplet 为 `x64-mingw-dynamic`。MSVC 用户通过 `VCPKG_DEFAULT_TRIPLET` 选择 `x64-windows` 等对应的 triplet。MinGW 辅助脚本 `install_Assimp.bat` 使用 `VCPKG_ROOT` 安装 `assimp:x64-mingw-dynamic`。
 
 ## 构建与测试
 
@@ -294,7 +294,7 @@ ctest --test-dir build --output-on-failure
 - **距离表达式调整**：表达式扫描函数识别 predefined `distance`、顶层加减号和安全数值加数；`find_safe_numeric_distance_addend()`、`apply_delta_to_distance_addend()`、`adjust_distance_expression_by_delta()` 优先保留变量表达式，只在安全时修改常量项，否则生成距离消歧建议。
 - **参数与 CSV 构造**：BVE 参数分割/引用、数值/optional/value/key 帮助函数保留未改 raw arg；CSV 解析、等价比较和 `build_editable_csv_list_statement()` 保持分隔、尾部字段与编码可写性。
 - **逐类语句生成器**：`build_structure_model/sound_list/station_list/signal_aspect_statement()` 负责列表行；`build_station_put/structure_put/signal_put/repeater_statement()` 处理显式方法/参数形状转换，其中 Structure 与 Repeater 支持普通形式和零偏移形式双向转换；其余 `build_*` 覆盖曲线、坡度、他轨道、Section、限速、应答器、声音/噪声和环境效果，维持原方法与参数形状。
-- **目标发现与编辑目标快照**：模板化 `match_edit_ref()`、`find_simple_target()` 和 `find_editable_target()` 在 MapContext 强类型行中定位 edit id；`build_edit_target_snapshot()` 输出字段、原值、raw arg、约束、sourceHash 和 expectedSourceHash。
+- **目标与目标快照**使用 MapContext 首次查找时建立的索引。每个 edit ID 对应强类型行或语句的索引。`build_edit_target_snapshot()` 返回字段、原值、原始实参、约束、`sourceHash` 和 `expectedSourceHash`。
 - **插入验证**：`validate_insert_field_names()`、`validate_insert_method()`、`validate_insert_change()` 校验 row kind、方法和结构化字段；`build_insert_statement()` 据此生成普通 BVE 语句。
 - **距离块规划**：`DistanceSectionAnalysis/PlanningIndex` 按物理文件、Include 调用实例和距离段建立索引，规划初始块、普通间隙、末块及 EOF。明确末段内的移动可沿该段方向扩展；新建优先使用已有唯一位置，歧义位置交由用户选择。候选筛选共用变量和物理实例检查，选定方案在应用或写盘前执行完整语义验证。
 - **报告与事务写盘**：`build_edit_report_snapshot()` 投影补丁、消歧和提交信息；hash/临时文件函数创建同目录暂存文件；`replace_files_transactionally()` 按阶段替换并在失败时回滚，`TransactionalWriteError` 保留主错误与回滚错误。
@@ -635,7 +635,7 @@ maploader 持有源码及编辑身份，GUI 通过类型化请求操作工作副
 | `kv_edit_reset_memory()` / GUI“撤销” | 丢弃内存覆盖，恢复磁盘基线 |
 | GUI“重新加载” | 确认未保存更改后重新读取磁盘 |
 
-`sourceHash` 标识工作副本；`expectedSourceHash` 在多次 Apply/Delete 期间保持为磁盘并发基线。应用或保存前完整重解析，校验每个目标值、非目标元素及最终变量绑定；合法编辑可改变最终 `distance`。
+`sourceHash` 标识工作副本。`expectedSourceHash` 在多次 Apply 和 Delete 期间始终标识磁盘基线。规划时对每个涉及的物理文件核验一次磁盘字节，涵盖已有内存修改的文件。预览和编辑元数据的物理源集合及字节哈希一致后，编辑器才合并两者。Apply 和 Save 完整重解析候选源码，校验目标值、其他元素及最终变量绑定。合法编辑可改变最终 `distance`。
 
 保存后，GUI 验证提交报告中的所有行绑定，再更新源码位置、散列和文件长度。有稳定 edit ID 的行按 ID 匹配，无 ID 的行按行索引匹配。
 
@@ -756,14 +756,14 @@ build\komapedit.exe --debug-headless-station-list-edit <map-path> --headless-out
 build\komapedit.exe --debug-headless-station-put-margin-edit <map-path> --headless-output build\station-put-margin-edit.txt
 build\komapedit.exe --debug-headless-edit-roundtrip <map-path> --headless-output build\edit-roundtrip.txt
 build\komapedit.exe --debug-headless-edit-bench <map-path> --scene off|on --repeat 5 --unit-distance 25 --headless-output build\edit-bench.txt
-build\komapedit.exe --debug-headless-own-track-edit [map-path] --headless-output build\own-track-edit.txt
-build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --headless-output build\other-track-edit.txt
-build\komapedit.exe --debug-headless-distance-edit-batch [map-path] --headless-output build\distance-edit-batch.txt
+build\komapedit.exe --debug-headless-own-track-edit <map-path> --headless-output build\own-track-edit.txt
+build\komapedit.exe --debug-headless-other-track-edit <map-path> [--commit] --headless-output build\other-track-edit.txt
+build\komapedit.exe --debug-headless-distance-edit-batch <map-path> --headless-output build\distance-edit-batch.txt
 build\komapedit.exe --debug-headless-auto-insert-diagnostics <fixture-directory> [--unit-distance M] --headless-output build\auto-insert-diagnostics.txt
-build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-output build\repeater-edit-batch.txt
+build\komapedit.exe --debug-headless-repeater-edit-batch <map-path> --headless-output build\repeater-edit-batch.txt
 build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
 build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
-build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
+build\komapedit.exe --debug-headless-insert-edit <map-path> --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
 build\komapedit.exe --debug-headless-include-delete <map-path> [--index N] [--commit] --headless-output build\include-delete.txt
 build\komapedit.exe --debug-headless-include-replace <map-path> --new-path <file> [--index N] [--commit] --headless-output build\include-replace.txt
 build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
@@ -779,7 +779,7 @@ build\komapedit.exe --debug-headless-light-edit <map-path> --headless-output bui
 build\komapedit.exe --debug-headless-pretrain-edit <map-path> --headless-output build\headless-pretrain-edit.txt
 build\komapedit.exe --debug-headless-legacy-fog-edit <map-path> --unit-distance 25 --headless-output build\headless-legacy-fog-edit.txt
 build\komapedit.exe --debug-headless-sparse-new-element <map-path> --headless-output build\sparse-new-element.txt
-build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
+build\komapedit.exe --debug-headless-section-edit-batch <map-path> [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
 build\komapedit.exe --debug-headless-touch-input --headless-output build\headless-touch-input.txt
 build\komapedit.exe --debug-headless-settings-persistence --headless-output build\settings-persistence.txt

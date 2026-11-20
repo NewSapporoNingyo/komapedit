@@ -52,8 +52,7 @@ using SignalColumnShapes = std::vector<SignalColumnShape>;
 
 SignalColumnShapes signal_column_shapes(const EditableListEditState& edit) {
     SignalColumnShapes result;
-    for (size_t index : edit.visible_rows) {
-        const auto& row = edit.rows.at(index);
+    for (const auto& row : edit.rows) {
         if (!row.deleted) result.push_back({row.primary_structure_field_count,
             row.secondary_structure_field_count, row.values});
     }
@@ -166,11 +165,11 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
         };
         const auto row_at = [&](App& app, int visible) -> EditableListDraftRow& {
             auto& edit = app.signal_aspect_edit_;
-            return edit.rows.at(edit.visible_rows.at(static_cast<size_t>(visible)));
+            return edit.rows.at(static_cast<size_t>(visible));
         };
         const auto row_named = [&](App& app, const std::string& key) {
             shapes(app);
-            for (size_t i = 0; i < app.signal_aspect_edit_.visible_rows.size(); ++i)
+            for (size_t i = 0; i < app.signal_aspect_edit_.rows.size(); ++i)
                 if (row_at(app, static_cast<int>(i)).values.at(0) == key) return static_cast<int>(i);
             throw std::runtime_error("missing signal fixture row " + key);
         };
@@ -284,6 +283,31 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
                 require("hidden_columns_retained", app.table_cache_.signal_aspect_structure_key_columns == 512 &&
                     app.table_cache_.signal_aspect_column_headers.size() == 511 &&
                     row_at(app, 6).values.back() == "s2");
+                const auto measured_widths = app.table_cache_.signal_aspect_column_widths;
+                auto& edit = app.signal_aspect_edit_;
+                for (size_t i = 3; i < edit.rows.size(); ++i) edit.rows[i].deleted = true;
+                rebuild_editable_list_display_rows(edit, k_signal_aspect_edit_spec);
+                render(app);
+                require("draft_shrink_preserves_measured_widths", edit.structure_key_columns == 3 &&
+                    app.table_cache_.signal_aspect_column_widths == measured_widths);
+                for (size_t i = 3; i < edit.rows.size(); ++i) edit.rows[i].deleted = false;
+                rebuild_editable_list_display_rows(edit, k_signal_aspect_edit_spec);
+                render(app);
+                require("draft_expand_recovers_measured_widths", edit.structure_key_columns == 512 &&
+                    app.table_cache_.signal_aspect_column_widths == measured_widths);
+
+                const auto clear_cell = [&](int field, bool secondary) {
+                    app.pending_editable_list_actions_.push_back({&edit, &k_signal_aspect_edit_spec,
+                        DeferredEditableListAction::Kind::ClearCell, 0, field, secondary, 2});
+                    app.run_pending_editable_list_actions();
+                    return edit.selected_row == 0 && edit.selected_column == 2 &&
+                        edit.selected_secondary_row == secondary && row_at(app, 0).values[field].empty();
+                };
+                require("clear_glare_keeps_display_column", clear_cell(4, true));
+                row_at(app, 0).values[4] = "s2";
+                require("clear_primary_keeps_display_column", clear_cell(1, false));
+                row_at(app, 0).values[1] = "s1";
+
                 act(app, SignalAspectColumnAction::Append, 0, true, "glare_append");
                 require("glare_append_independent", row_at(app, 0).primary_structure_field_count == 3 &&
                     row_at(app, 0).secondary_structure_field_count == 3);
@@ -292,7 +316,6 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
                     app.signal_aspect_edit_));
 
                 // Commit a live cell before deciding whether deletion needs confirmation.
-                auto& edit = app.signal_aspect_edit_;
                 edit.editing_edit_id = editable_list_row_identity(row_at(app, 0));
                 edit.editing_column = 3;
                 edit.editing_baseline.clear();
@@ -348,7 +371,7 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
                     require("stale_value_revert", app.revert_all_pending_edits());
                     require("stale_value_baseline", shapes(app) == baseline);
 
-                    const size_t deleted_index = edit.visible_rows.at(1);
+                    const size_t deleted_index = 1;
                     const auto deleted_values = edit.rows.at(deleted_index).values;
                     const size_t deleted_main = edit.rows.at(deleted_index).primary_structure_field_count;
                     require("pending_row_delete", app.delete_editable_list_row(edit, k_signal_aspect_edit_spec, 1));
