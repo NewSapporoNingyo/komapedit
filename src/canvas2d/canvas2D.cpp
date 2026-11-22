@@ -847,12 +847,22 @@ void App::render_mode_grid_controls() {
     ImGui::AlignTextToFramePadding();
     ImGui::Text("%s:", tr("frame.grid").c_str());
     ImGui::SameLine();
-    int grid = grid_mode_ == GridMode::Fixed ? 0 : (grid_mode_ == GridMode::Movable ? 1 : 2);
-    if (ImGui::RadioButton(tr("grid.fixed").c_str(), &grid, 0)) grid_mode_ = GridMode::Fixed;
+    const GridMode previous_grid_mode = grid_mode_;
+    if (toolbar_icons_.button(toolbar_icons::Icon::GridFixed, tr("grid.fixed").c_str(),
+                              previous_grid_mode == GridMode::Fixed)) {
+        grid_mode_ = GridMode::Fixed;
+    }
     ImGui::SameLine();
-    if (ImGui::RadioButton(tr("grid.movable").c_str(), &grid, 1)) grid_mode_ = GridMode::Movable;
+    if (toolbar_icons_.button(toolbar_icons::Icon::GridMovable, tr("grid.movable").c_str(),
+                              previous_grid_mode == GridMode::Movable)) {
+        grid_mode_ = GridMode::Movable;
+    }
     ImGui::SameLine();
-    if (ImGui::RadioButton(tr("grid.none").c_str(), &grid, 2)) grid_mode_ = GridMode::None;
+    if (toolbar_icons_.button(toolbar_icons::Icon::GridNone, tr("grid.none").c_str(),
+                              previous_grid_mode == GridMode::None)) {
+        grid_mode_ = GridMode::None;
+    }
+    if (grid_mode_ != previous_grid_mode) wake_main_window();
     ImGui::PopID();
 }
 

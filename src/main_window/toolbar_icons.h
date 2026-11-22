@@ -13,10 +13,27 @@
 struct ID3D11Device;
 struct ID3D11ShaderResourceView;
 struct IWICImagingFactory;
+struct ImVec2;
 
 namespace toolbar_icons {
 
-enum class Icon { Move, Measure, Select, MileageSelect, Translate, Rotate, Edit, Apply, Count };
+enum class Icon {
+    Move, Measure, Select, MileageSelect, Translate, Rotate, Edit, Apply,
+    Open,
+    Reload,
+    ReloadGeometry,
+    AddMapElement,
+    Save,
+    Revert,
+    GridFixed,
+    GridMovable,
+    GridNone,
+    Clear,
+    Copy,
+    Find,
+    FindUnused,
+    Count
+};
 
 inline constexpr std::array<int, 9> source_sizes{16, 20, 24, 28, 32, 40, 48, 64, 80};
 
@@ -26,6 +43,7 @@ struct Size {
 };
 
 Size size_for_dpi(float dpi_scale);
+ImVec2 button_size(Size size);
 
 class LoadError final : public std::runtime_error {
 public:
@@ -39,7 +57,7 @@ public:
     Cache(const Cache&) = delete;
     Cache& operator=(const Cache&) = delete;
 
-    bool button(Icon icon, const char* tooltip, bool selected);
+    bool button(Icon icon, const char* tooltip, bool selected = false);
 
 private:
     ID3D11ShaderResourceView* texture(Icon icon, std::size_t source_index);

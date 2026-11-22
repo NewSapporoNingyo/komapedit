@@ -82,6 +82,8 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 namespace {
 
+constexpr char k_distance_jump_arrow[] = u8"→";
+
 std::string_view source_file_name(std::string_view source_path) noexcept {
     const size_t separator = source_path.find_last_of("\\/");
     return separator == std::string_view::npos ? source_path : source_path.substr(separator + 1);
@@ -1020,7 +1022,8 @@ void App::render_toolbar() {
     const ImVec4 toolbar_bg = main_bar_background_color();
     const bool operation_pending = edit_ui_operation_pending();
 
-    const float button_height = ImGui::GetFrameHeight();
+    const auto icon_size = toolbar_icons::size_for_dpi(ImGui::GetMainViewport()->DpiScale);
+    const float button_height = toolbar_icons::button_size(icon_size).y;
     const float toolbar_padding_y = button_height * 0.25f;
     const float toolbar_height = button_height + toolbar_padding_y * 2.0f;
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
@@ -1035,7 +1038,7 @@ void App::render_toolbar() {
         };
 
         ImGui::BeginDisabled(operation_pending);
-        if (ImGui::Button(tr("button.open").c_str())) {
+        if (toolbar_icons_.button(toolbar_icons::Icon::Open, tr("button.open").c_str())) {
             std::string p = open_map_dialog();
             if (!p.empty()) open_document(p, true);
         }
@@ -1047,14 +1050,18 @@ void App::render_toolbar() {
              (has_model_ && !file_path_.empty()) ||
              (model_preview_canvas_ && model_preview_canvas_->has_model()));
         ImGui::BeginDisabled(!can_reload);
-        if (ImGui::Button(tr("button.reload").c_str())) reload_current_map_and_model_preview();
+        if (toolbar_icons_.button(toolbar_icons::Icon::Reload, tr("button.reload").c_str())) {
+            reload_current_map_and_model_preview();
+        }
         ImGui::EndDisabled();
 
         ImGui::SameLine();
         const bool can_reload_geometry = !operation_pending && !load_state_.running &&
             ((!scenario_source_path_.empty()) || (has_model_ && !file_path_.empty()));
         ImGui::BeginDisabled(!can_reload_geometry);
-        if (ImGui::Button(tr("button.reload_geometry").c_str())) reload_current_map_geometry();
+        if (toolbar_icons_.button(toolbar_icons::Icon::ReloadGeometry, tr("button.reload_geometry").c_str())) {
+            reload_current_map_geometry();
+        }
         ImGui::EndDisabled();
 
         render_section_separator();
@@ -1067,7 +1074,7 @@ void App::render_toolbar() {
 
         ImGui::SameLine();
         ImGui::BeginDisabled(operation_pending || !edit_actions_available());
-        if (ImGui::Button(tr("button.add_map_element").c_str())) {
+        if (toolbar_icons_.button(toolbar_icons::Icon::AddMapElement, tr("button.add_map_element").c_str())) {
             open_new_element_wizard();
         }
         ImGui::EndDisabled();
@@ -1077,7 +1084,7 @@ void App::render_toolbar() {
                              !(edit_actions_available() || scenario_edit_actions_available()) ||
                              !(has_pending_edits() || has_scenario_unsaved_changes()) ||
                              has_unapplied_editable_list_drafts());
-        if (ImGui::Button(tr("button.save").c_str())) {
+        if (toolbar_icons_.button(toolbar_icons::Icon::Save, tr("button.save").c_str())) {
             request_edit_ui_operation(PendingEditUiOperation::Save);
         }
         ImGui::EndDisabled();
@@ -1086,7 +1093,7 @@ void App::render_toolbar() {
         ImGui::BeginDisabled(operation_pending ||
                              !(edit_actions_available() || scenario_edit_actions_available()) ||
                              !has_unsaved_edit_state());
-        if (ImGui::Button(tr("button.revert").c_str())) {
+        if (toolbar_icons_.button(toolbar_icons::Icon::Revert, tr("button.revert").c_str())) {
             popups_.revert_all_edits_confirm = true;
         }
         ImGui::EndDisabled();
@@ -1228,7 +1235,7 @@ void App::render_station_jump_combo() {
     ImGui::BeginDisabled(!can_jump);
     const ImGuiStyle& style = ImGui::GetStyle();
     const float reserved_width =
-        distance_jump_control_width(tr("label.distance_jump").c_str(), tr("button.jump").c_str()) + style.ItemSpacing.x;
+        distance_jump_control_width(tr("label.distance_jump").c_str(), k_distance_jump_arrow) + style.ItemSpacing.x;
     const float available_width = ImGui::GetContentRegionAvail().x;
     float combo_width = std::min(360.0f, available_width);
     if (available_width > reserved_width + 120.0f) {
@@ -1273,7 +1280,12 @@ void App::render_distance_jump_control() {
     ImGui::SameLine();
     const bool can_jump = has_track && valid_distance;
     ImGui::BeginDisabled(!can_jump);
-    if (ImGui::Button(tr("button.jump").c_str()) || (enter_pressed && can_jump)) {
+    const auto icon_size = toolbar_icons::size_for_dpi(ImGui::GetWindowDpiScale());
+    const bool jump_pressed = ImGui::Button(k_distance_jump_arrow, ImVec2(0.0f, toolbar_icons::button_size(icon_size).y));
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", tr("button.jump").c_str());
+    }
+    if (jump_pressed || (enter_pressed && can_jump)) {
         jump_to_distance(distance);
     }
     ImGui::EndDisabled();
@@ -1286,7 +1298,7 @@ void App::render_console() {
         ImGui::End();
         return;
     }
-    if (ImGui::Button(tr("button.clear").c_str())) {
+    if (toolbar_icons_.button(toolbar_icons::Icon::Clear, tr("button.clear").c_str())) {
         std::lock_guard<std::mutex> lock(log_mutex_);
         logs_.clear();
         ++log_revision_;
@@ -1294,7 +1306,7 @@ void App::render_console() {
         warn_count_.store(0, std::memory_order_relaxed);
     }
     ImGui::SameLine();
-    if (ImGui::Button(tr("button.copy").c_str())) {
+    if (toolbar_icons_.button(toolbar_icons::Icon::Copy, tr("button.copy").c_str())) {
         std::string console_text;
         {
             std::lock_guard<std::mutex> lock(log_mutex_);

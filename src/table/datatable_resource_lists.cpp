@@ -40,7 +40,8 @@ using namespace datatable_internal;
 
 namespace {
 template <typename RunFindFn, typename RunUnusedFn, typename StepFn, typename StatusTextFn>
-void render_table_find_panel(TableFindState& state,
+void render_table_find_panel(toolbar_icons::Cache& icons,
+                             TableFindState& state,
                              const char* id,
                              const std::string& find_label,
                              const std::string& partial_label,
@@ -67,7 +68,8 @@ void render_table_find_panel(TableFindState& state,
         const float arrow_button_width = ImGui::GetFrameHeight();
         const float partial_width = radio_button_width_for_label(partial_label);
         const float exact_width = radio_button_width_for_label(exact_label);
-        const float unused_width = button_width_for_label(unused_label);
+        const auto icon_size = toolbar_icons::size_for_dpi(ImGui::GetWindowDpiScale());
+        const float unused_width = toolbar_icons::button_size(icon_size).x;
         const float step_controls_width = width_after_previous_item({
             arrow_button_width,
             arrow_button_width,
@@ -81,7 +83,7 @@ void render_table_find_panel(TableFindState& state,
         });
         ImGui::Spacing();
         ImGui::Indent(indent);
-        if (ImGui::Button(find_label.c_str())) run_find();
+        if (icons.button(toolbar_icons::Icon::Find, find_label.c_str())) run_find();
         float input_available_width = ImGui::GetContentRegionAvail().x - right_padding;
         const float available_after_find = available_width_after_current_item(right_padding);
         if (available_after_find >= k_find_input_min_width) {
@@ -117,7 +119,7 @@ void render_table_find_panel(TableFindState& state,
             if (state.has_run || !blank_ascii(state.query)) run_find();
         }
         same_line_if_next_item_fits(unused_width, right_padding);
-        if (ImGui::Button(unused_label.c_str())) run_unused();
+        if (icons.button(toolbar_icons::Icon::FindUnused, unused_label.c_str())) run_unused();
         render_status_line(status_text());
         ImGui::Unindent(indent);
     }
@@ -847,7 +849,7 @@ void App::render_structure_models_window() {
     ensure_table_cache();
 
     render_table_find_panel(
-        structure_model_find_,
+        toolbar_icons_, structure_model_find_,
         "structure_model",
         tr("button.find"),
         tr("find.partial_match"),
@@ -881,7 +883,7 @@ void App::render_sound_file_find_panel(bool is_3d) {
     TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
 
     render_table_find_panel(
-        state,
+        toolbar_icons_, state,
         is_3d ? "sound_3d_file" : "sound_file",
         tr("button.find"),
         tr("find.partial_match"),
@@ -1028,7 +1030,7 @@ void App::render_signal_aspects_window() {
     if (stale_find_results) reset_signal_aspect_find_results();
 
     render_table_find_panel(
-        signal_aspect_find_,
+        toolbar_icons_, signal_aspect_find_,
         "signal_aspect",
         tr("button.find"),
         tr("find.partial_match"),

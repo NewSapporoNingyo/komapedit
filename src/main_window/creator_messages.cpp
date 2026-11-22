@@ -306,9 +306,10 @@ void App::render_creator_messages_window() {
         ImGui::EndDisabled();
     }
     bool find = false;
+    const auto icon_size = toolbar_icons::size_for_dpi(ImGui::GetWindowDpiScale());
     const float arrow_width = ImGui::GetFrameHeight();
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float controls_width = button_width_for_label(tr("button.find")) +
+    const float controls_width = toolbar_icons::button_size(icon_size).x +
         2.0f * (spacing + arrow_width);
     const float available_width = ImGui::GetContentRegionAvail().x;
     const bool single_line = available_width >= 80.0f + spacing + controls_width;
@@ -317,7 +318,7 @@ void App::render_creator_messages_window() {
     if (ImGui::InputText("##CreatorMessageFind", creator_message_find_.query,
                         IM_ARRAYSIZE(creator_message_find_.query), ImGuiInputTextFlags_EnterReturnsTrue)) find = true;
     if (single_line) ImGui::SameLine();
-    if (ImGui::Button(tr("button.find").c_str())) find = true;
+    if (toolbar_icons_.button(toolbar_icons::Icon::Find, tr("button.find").c_str())) find = true;
     ImGui::SameLine();
     ImGui::BeginDisabled(creator_message_find_.matches.empty());
     if (ImGui::Button("↑##CreatorMessageFindPrevious", ImVec2(arrow_width, 0))) step_table_find(creator_message_find_, -1);

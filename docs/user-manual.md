@@ -119,6 +119,8 @@ Signal markers in the Plan are controlled by the `Show` checkbox in each `Ground
 
 ### 3. Toolbar
 
+Hover over an icon to see its action name. The circular arrows with a wave mark Reload Track Geometry. The plus sign with a cube marks Add Map Element.
+
 - **Open**: Selects and opens a map or scenario file.
 - **Reload**: Reads the map again, refreshes an active 3D scene, and reloads the current single-model preview. It is the same as pressing `F5`.
 - **Reload Track Geometry**: Reads the map again and updates geometry and placements, reusing loaded 3D scene models and preserving the camera position where possible. Use it to refresh the preview after editing route code externally.
@@ -127,7 +129,7 @@ Signal markers in the Plan are controlled by the `Show` checkbox in each `Ground
 - **Save**: Writes applied map changes and Scenario changes to their source files. The shortcut is `Ctrl+Shift+S`. Apply resource-list and Custom Messages drafts in their respective tables first.
 - **Revert**: After confirmation, discards all pending changes, resource-list and Custom Messages drafts, and Scenario changes, restoring the in-memory working copy to its state at the last save.
 - **Station Jump**: Selects a station and moves the 2D View to it. If the 3D scene is running, its camera also moves.
-- **Jump to distance(m)**: Enter a number and click `Jump`, or press `Enter` in the input box. If the 3D scene is running, its camera also moves.
+- **Jump to distance(m)**: Enter a number and click `→`, or press `Enter` in the input box. If the 3D scene is running, its camera also moves.
 
 The global shortcuts are `F5` for Reload and `Ctrl+Shift+S` for Save. See sections 5 and 9 for 2D and 3D canvas controls.
 
@@ -144,13 +146,13 @@ The Console shows complete loading, parsing, model, and editing logs. Check it f
 
 Apply, Save, and Delete show their total execution time in the status bar. Per-stage timings appear in the Console's `edit timing:` records.
 
-- **Clear**: Removes all log messages and resets the error and warning counts.
-- **Copy**: Copies the full log to the clipboard for use in a bug report.
+- Click the eraser (**Clear**) to remove all log messages and reset the error and warning counts.
+- Click the two-page icon (**Copy**) to copy the full log to the clipboard.
 - The log follows new messages while at the bottom; scroll up to stay on earlier messages.
 
 ### 5. 2D Canvas
 
-At the top of the 2D View, click the hand for `Move` or the ruler for `Measure`. An outline marks the active mode, and hovering over a button shows its name. A `Fixed` grid stays in place on screen; a `Movable` grid pans, zooms, and rotates with the map; `None` hides the grid. Drag the splitter between the Plan and the charts below up or down to adjust their heights. Drag the splitter between the two charts left or right to adjust their widths.
+At the top of the 2D View, click the hand for `Move` or the ruler for `Measure`. The grid with a lock (`Fixed`) stays in place on screen. The grid with four-way arrows (`Movable`) pans, zooms, and rotates with the map. The empty square (`None`) hides the grid. An outline marks the active mode and grid setting. Hover over a button to see its name. Drag the splitter between the Plan and the charts below up or down to adjust their heights. Drag the splitter between the two charts left or right to adjust their widths.
 
 #### Plan: Move Mode
 
@@ -200,8 +202,8 @@ The image path and alignment settings are saved for the current map or Scenario 
 
 - Open the required table from `Map Info List`. Right-click a mileage cell that has a locate menu to move to that position in the Plan or a running 3D scene.
 - Right-click a source-file or resource-file path to open its directory. Hover over a path to see the original argument and resolved absolute path when available.
-- In the Structure List, Signal Aspects List, Sound File List, and 3D Sound File List tables, expand `Find`, choose partial or exact matching, enter a query, and press `Enter` or click `Find`. Use the up and down arrows to move between results. English text matching is case-insensitive.
-- `Search unused...` highlights definitions that the current map does not reference. Structure searches include placements, Repeaters, backgrounds, signals, and other-train references. Ordinary sound searches include station arrival/departure sounds and account for current list drafts.
+- In the Structure List, Signal Aspects List, Sound File List, and 3D Sound File List tables, expand `Find`, choose partial or exact matching, enter a query, and press `Enter` or click the magnifying glass. Use the up and down arrows to move between results. English text matching is case-insensitive.
+- The magnifying glass with an open box (`Search unused...`) highlights definitions that the current map does not reference. Structure searches include placements, Repeaters, backgrounds, signals, and other-train references. Ordinary sound searches include station arrival/departure sounds and account for current list drafts.
 - In a map-placement row, right-click a resource key to jump to the matching Structure List, Signal Aspects List, or sound definition.
 - With editing enabled, right-click an editable element's cell for `Properties/Edit` or `Delete`. Some tables also open `Properties/Edit` on double-click.
 
@@ -449,7 +451,7 @@ Messages are stored as ordinary BVE `//` comments. Contents are literal, preserv
 
 Opening a map or Scenario displays messages from the root map and its loaded Includes, with paging for multiple messages. Repeated references to the same file show each message once. Select `Do not show again` and confirm to remember that choice for the root map.
 
-Open `Auxiliary Info -> Other -> Custom Messages` at any time to view the source file, line number, and content. Enter a keyword and press `Enter` or click `Find` to search source filenames or message contents. Use the up and down arrows to move between results.
+Open `Auxiliary Info -> Other -> Custom Messages` at any time to view the source file, line number, and content. Enter a keyword and press `Enter` or click the magnifying glass to search source filenames or message contents. Use the up and down arrows to move between results.
 
 With editing enabled, double-click a content cell to edit it; `Enter` or leaving the cell stages the draft, while `Esc` cancels the current input. Choose `Delete Entire Row` from the cell's context menu to stage deletion. Click the tab's `Apply`, then toolbar `Save`.
 

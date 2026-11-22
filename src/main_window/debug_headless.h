@@ -10,6 +10,19 @@
 #include <vector>
 
 #ifndef NDEBUG
+class ScopedComApartment {
+public:
+    ScopedComApartment();
+    ~ScopedComApartment();
+    ScopedComApartment(const ScopedComApartment&) = delete;
+    ScopedComApartment& operator=(const ScopedComApartment&) = delete;
+
+    bool ready() const;
+
+private:
+    long result_;
+};
+
 struct HeadlessLoadOptions {
     bool requested = false;
     std::string path;

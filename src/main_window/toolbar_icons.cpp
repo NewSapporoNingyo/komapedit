@@ -38,6 +38,19 @@ constexpr std::array<IconResource, static_cast<std::size_t>(Icon::Count)> resour
     {IDR_TOOLBAR_ROTATE, "rotate"},
     {IDR_TOOLBAR_EDIT, "edit"},
     {IDR_TOOLBAR_APPLY, "apply"},
+    {IDR_TOOLBAR_OPEN, "open"},
+    {IDR_TOOLBAR_RELOAD, "reload"},
+    {IDR_TOOLBAR_RELOAD_GEOMETRY, "reload-geometry"},
+    {IDR_TOOLBAR_ADD_MAP_ELEMENT, "add-map-element"},
+    {IDR_TOOLBAR_SAVE, "save"},
+    {IDR_TOOLBAR_REVERT, "revert"},
+    {IDR_TOOLBAR_GRID_FIXED, "grid-fixed"},
+    {IDR_TOOLBAR_GRID_MOVABLE, "grid-movable"},
+    {IDR_TOOLBAR_GRID_NONE, "grid-none"},
+    {IDR_TOOLBAR_CLEAR, "clear"},
+    {IDR_TOOLBAR_COPY, "copy"},
+    {IDR_TOOLBAR_FIND, "find"},
+    {IDR_TOOLBAR_FIND_UNUSED, "find-unused"},
 }};
 
 } // namespace
@@ -47,6 +60,13 @@ Size size_for_dpi(float dpi_scale) {
     const auto source = std::lower_bound(source_sizes.begin(), source_sizes.end(), pixels);
     const auto index = static_cast<std::size_t>(source - source_sizes.begin());
     return {pixels, std::min(index, source_sizes.size() - 1)};
+}
+
+ImVec2 button_size(Size size) {
+    const float pixels = static_cast<float>(size.display_pixels);
+    const ImVec2 padding = ImGui::GetStyle().FramePadding;
+    return ImVec2(pixels + 2.0f * padding.x,
+                  std::max(ImGui::GetFrameHeight(), pixels + 2.0f * padding.y));
 }
 
 Cache::~Cache() {
@@ -137,17 +157,16 @@ ID3D11ShaderResourceView* Cache::texture(Icon icon, std::size_t source_index) {
 }
 
 bool Cache::button(Icon icon, const char* tooltip, bool selected) {
-    const Size size = size_for_dpi(ImGui::GetWindowDpiScale());
+    const float dpi_scale = ImGui::GetWindowDpiScale();
+    const Size size = size_for_dpi(dpi_scale);
     const float pixels = static_cast<float>(size.display_pixels);
     const ImGuiStyle& style = ImGui::GetStyle();
-    const ImVec2 button_size(pixels + 2.0f * style.FramePadding.x,
-                            std::max(ImGui::GetFrameHeight(), pixels + 2.0f * style.FramePadding.y));
     ImGui::PushID(resources[static_cast<std::size_t>(icon)].name);
     ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[selected ? ImGuiCol_FrameBgActive : ImGuiCol_FrameBg]);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                          style.Colors[selected ? ImGuiCol_FrameBgActive : ImGuiCol_FrameBgHovered]);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, style.Colors[ImGuiCol_FrameBgActive]);
-    const bool pressed = ImGui::Button("##toolbar_icon", button_size);
+    const bool pressed = ImGui::Button("##toolbar_icon", button_size(size));
     ImGui::PopStyleColor(3);
     ImGui::PopID();
 
@@ -160,7 +179,7 @@ bool Cache::button(Icon icon, const char* tooltip, bool selected) {
         auto* draw_list = ImGui::GetWindowDrawList();
         if (selected) {
             draw_list->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_CheckMark),
-                               style.FrameRounding, ImGui::GetWindowDpiScale());
+                               style.FrameRounding, dpi_scale);
         }
         const auto id = reinterpret_cast<ImTextureID>(texture(icon, size.source_index));
         draw_list->AddImage(id, origin, ImVec2(origin.x + pixels, origin.y + pixels),

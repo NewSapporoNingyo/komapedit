@@ -12,6 +12,9 @@
 #include "implot.h"
 
 #include <windows.h>
+#include <d3d11.h>
+#include <wrl/client.h>
+
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -123,6 +126,13 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
     io.Fonts->Build();
     ImGui::NewFrame();
     try {
+        const ScopedComApartment com_apartment;
+        require("icon_com_apartment_ready", com_apartment.ready());
+        Microsoft::WRL::ComPtr<ID3D11Device> device;
+        require("icon_warp_device_created",
+                SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
+                                            nullptr, 0, D3D11_SDK_VERSION,
+                                            device.GetAddressOf(), nullptr, nullptr)));
         UserSettings settings;
         settings.language = Language::En;
         const auto open = [&](App& app, const std::string& path) {
@@ -192,13 +202,14 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
             // Dear ImGui tables may change column count only between frames.
             ImGui::EndFrame();
             ImGui::NewFrame();
+            ImGui::SetNextWindowSize(ImVec2(840.0f, 480.0f));
             app.show_signal_aspects_window_ = true;
             app.render_signal_aspects_window();
             require("render_table_column_cap", app.table_cache_.signal_aspect_column_headers.size() <= 511);
         };
         protected_sources.emplace(options.path, signal_columns_bytes(fs::u8path(options.path)));
         {
-            App app(nullptr, settings, 1.0f, false, false);
+            App app(device.Get(), settings, 1.0f, false, false);
             *out << "stage=real_document_open\n";
             out->flush();
             open(app, options.path);
@@ -272,7 +283,7 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
             out->flush();
             SignalColumnShapes saved_shapes;
             {
-                App app(nullptr, settings, 1.0f, false, false);
+                App app(device.Get(), settings, 1.0f, false, false);
                 open(app, map.u8string());
                 const auto baseline = shapes(app);
                 require("fixture_source_widths", baseline.size() == 7 && baseline[0].main == 3 &&
@@ -491,7 +502,7 @@ int App::run_debug_headless_signal_aspect_columns(const HeadlessSignalAspectColu
                     signal_columns_bytes(structures) == structures_before);
             }
             {
-                App reload(nullptr, settings, 1.0f, false, false);
+                App reload(device.Get(), settings, 1.0f, false, false);
                 open(reload, map.u8string());
                 require("save_fresh_reload_shape_values", shapes(reload) == saved_shapes);
                 require("save_fresh_reload_clean", reload.pending_edit_changes_.empty() &&

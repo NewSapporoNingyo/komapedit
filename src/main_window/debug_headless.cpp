@@ -54,24 +54,16 @@
 #include <utility>
 #include <vector>
 #ifndef NDEBUG
-class ScopedComApartment {
-public:
-    ScopedComApartment() : result_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {
-        should_uninitialize_ = SUCCEEDED(result_);
-    }
+ScopedComApartment::ScopedComApartment()
+    : result_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {}
 
-    ~ScopedComApartment() {
-        if (should_uninitialize_) CoUninitialize();
-    }
+ScopedComApartment::~ScopedComApartment() {
+    if (SUCCEEDED(result_)) CoUninitialize();
+}
 
-    bool ready() const {
-        return SUCCEEDED(result_) || result_ == RPC_E_CHANGED_MODE;
-    }
-
-private:
-    HRESULT result_ = E_FAIL;
-    bool should_uninitialize_ = false;
-};
+bool ScopedComApartment::ready() const {
+    return SUCCEEDED(result_) || result_ == RPC_E_CHANGED_MODE;
+}
 
 std::vector<std::string> command_line_args_utf8() {
     int argc = 0;
