@@ -51,6 +51,10 @@ constexpr std::array<IconResource, static_cast<std::size_t>(Icon::Count)> resour
     {IDR_TOOLBAR_COPY, "copy"},
     {IDR_TOOLBAR_FIND, "find"},
     {IDR_TOOLBAR_FIND_UNUSED, "find-unused"},
+    {IDR_TOOLBAR_MODEL_LIST, "model-list"},
+    {IDR_TOOLBAR_BACKGROUND_COLOR, "background-color"},
+    {IDR_TOOLBAR_RELOAD_SCENE_MODELS, "reload-scene-models"},
+    {IDR_TOOLBAR_CLOSE, "close"},
 }};
 
 } // namespace

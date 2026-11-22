@@ -106,7 +106,7 @@ ctest --test-dir build --output-on-failure
 
 ### 工具栏图标资源
 
-主工具栏、2D 和 3D 视图、控制台及表格查找共用 [`icons/toolbar/`](../icons/toolbar/) 中的图标资源。修改 16 单位画布的 SVG 后，导出九档透明 PNG。在仓库根目录中可用 Inkscape 重新导出移动图标。
+主工具栏、2D 视图、3D 模型预览和场景预览、属性/编辑、控制台及表格查找共用 [`icons/toolbar/`](../icons/toolbar/) 中的图标资源。修改 16 单位画布的 SVG 后，导出九档透明 PNG。在仓库根目录中可用 Inkscape 重新导出移动图标。
 
 ```powershell
 foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {

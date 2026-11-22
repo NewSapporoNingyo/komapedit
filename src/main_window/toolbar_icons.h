@@ -32,6 +32,10 @@ enum class Icon {
     Copy,
     Find,
     FindUnused,
+    ModelList,
+    BackgroundColor,
+    ReloadSceneModels,
+    Close,
     Count
 };
 

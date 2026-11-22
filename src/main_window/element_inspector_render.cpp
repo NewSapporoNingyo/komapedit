@@ -546,11 +546,11 @@ void App::render_element_inspector() {
     if (section_inspector) {
         render_section_values_edit_ui(inspector_);
     }
-    if (ImGui::Button(tr("button.apply").c_str())) {
+    if (toolbar_icons_.button(toolbar_icons::Icon::Apply, tr("button.apply").c_str())) {
         request_edit_ui_operation(PendingEditUiOperation::ApplyInspector);
     }
     ImGui::SameLine();
-    if (ImGui::Button(tr("button.close").c_str())) {
+    if (toolbar_icons_.button(toolbar_icons::Icon::Close, tr("button.close").c_str())) {
         cancel_distance_resolution_workflow();
         clear_scene_placement_edit_target();
         inspector_.open = false;

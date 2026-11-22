@@ -106,7 +106,7 @@ Keep build directories, cloned `third_party` trees, generated settings/CSV/test 
 
 ### Toolbar icon assets
 
-The main toolbar, 2D and 3D views, Console, and table search share the icon assets in [`icons/toolbar/`](../icons/toolbar/). Edit the 16-unit SVG and export its transparent PNGs at each of the nine pixel sizes. For example, regenerate the Move icon from the repository root with Inkscape.
+The main toolbar, 2D views, 3D model and scene previews, Properties/Edit, Console, and table search share the icon assets in [`icons/toolbar/`](../icons/toolbar/). Edit the 16-unit SVG and export its transparent PNGs at each of the nine pixel sizes. For example, regenerate the Move icon from the repository root with Inkscape.
 
 ```powershell
 foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {

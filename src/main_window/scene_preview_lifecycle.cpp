@@ -332,11 +332,15 @@ void App::render_scene_preview_window() {
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!scene_preview_started_ || load_state_.running || !has_model_);
-        if (ImGui::Button(tr("button.reload_scene_models").c_str())) reload_scene_preview_models();
+        if (toolbar_icons_.button(toolbar_icons::Icon::ReloadSceneModels, tr("button.reload_scene_models").c_str())) {
+            reload_scene_preview_models();
+        }
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!scene_preview_started_);
-        if (ImGui::Button(tr("button.close").c_str())) stop_scene_preview();
+        if (toolbar_icons_.button(toolbar_icons::Icon::Close, tr("button.close").c_str())) {
+            stop_scene_preview();
+        }
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
@@ -614,24 +618,32 @@ void App::render_model_preview_window() {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(item_spacing_x * 1.35f, 0.0f));
 
         ImGui::BeginDisabled(show_structure_models_window_);
-        if (ImGui::Button(tr("button.model_list").c_str())) show_structure_models_window_ = true;
+        if (toolbar_icons_.button(toolbar_icons::Icon::ModelList, tr("button.model_list").c_str())) {
+            show_structure_models_window_ = true;
+        }
         ImGui::EndDisabled();
         ImGui::SameLine();
 
-        if (ImGui::Button(tr("button.open_file").c_str())) open_model_preview_file();
+        if (toolbar_icons_.button(toolbar_icons::Icon::Open, tr("button.open_file").c_str())) {
+            open_model_preview_file();
+        }
         ImGui::SameLine();
 
         ImGui::BeginDisabled(!has_preview_model);
-        if (ImGui::Button(tr("button.reload").c_str())) reload_model_preview();
+        if (toolbar_icons_.button(toolbar_icons::Icon::Reload, tr("button.reload").c_str())) {
+            reload_model_preview();
+        }
         ImGui::EndDisabled();
         ImGui::SameLine();
 
         ImGui::BeginDisabled(!has_preview_model);
-        if (ImGui::Button(tr("button.clear").c_str())) model_preview_canvas_->clear_model();
+        if (toolbar_icons_.button(toolbar_icons::Icon::Clear, tr("button.clear").c_str())) {
+            model_preview_canvas_->clear_model();
+        }
         ImGui::EndDisabled();
         ImGui::SameLine();
 
-        if (ImGui::Button(tr("button.background_color").c_str())) {
+        if (toolbar_icons_.button(toolbar_icons::Icon::BackgroundColor, tr("button.background_color").c_str())) {
             ImGui::OpenPopup("model_preview_bg_color_popup");
         }
         if (ImGui::BeginPopup("model_preview_bg_color_popup")) {

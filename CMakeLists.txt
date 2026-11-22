@@ -361,7 +361,8 @@ if(WIN32)
     foreach(icon IN ITEMS
             move measure select mileage-select translate rotate edit apply
             open reload reload-geometry add-map-element save revert
-            grid-fixed grid-movable grid-none clear copy find find-unused)
+            grid-fixed grid-movable grid-none clear copy find find-unused
+            model-list background-color reload-scene-models close)
         foreach(size IN ITEMS 16 20 24 28 32 40 48 64 80)
             list(APPEND komapedit_toolbar_pngs "${CMAKE_CURRENT_SOURCE_DIR}/icons/toolbar/${icon}-${size}.png")
         endforeach()
