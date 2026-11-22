@@ -104,6 +104,18 @@ Runtime output layout:
 
 Keep build directories, cloned `third_party` trees, generated settings/CSV/test output, and temporary route, map, and model fixtures outside Git tracking.
 
+### Toolbar icon assets
+
+The 2D and 3D mode buttons use the assets in [`icons/toolbar/`](../icons/toolbar/). Edit the 16-unit SVG and export its transparent PNGs at each of the nine pixel sizes. For example, regenerate the Move icon from the repository root with Inkscape.
+
+```powershell
+foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
+    inkscape icons/toolbar/move.svg --export-area-page "--export-width=$size" "--export-height=$size" --export-background-opacity=0 "--export-filename=icons/toolbar/move-$size.png"
+}
+```
+
+Commit the SVG and its PNGs together. CMake makes the PNGs inputs of the resource compiler, and `komapedit.rc` embeds them as `RCDATA` in the EXE. The shared toolbar cache picks the smallest asset covering the window's DPI-scaled size, up to an 80 px source, and supplies WIC-decoded alpha masks to ImGui for theme tinting.
+
 ## Source map
 
 | Area | Main files and responsibilities |
@@ -371,6 +383,7 @@ This section describes the main responsibilities of files in `include/` and `src
 - `gui_kme.cpp` manages `App` construction, destruction, and log callbacks; `kme.h` declares shared EXE state and cross-translation-unit interfaces.
 - `win32_dx11_bootstrap.cpp` owns the D3D11 device and render targets, `WndProc()`, the window message loop, and `main()`.
 - `gui_common_utils.cpp` centralizes fonts, theme/log colors, encoding conversion, numeric formatting, paths, and distance-jump controls; `background_image.cpp` owns WIC decoding, background texture rebuilding, and background persistence in history.
+- `toolbar_icons.cpp` owns the shared DPI-aware mode buttons and their embedded WIC/D3D11 texture cache.
 - `map_snapshot_hydration.cpp` builds `MapModel`, row metadata, Station edit IDs, speed-limit caches, and transition links from typed snapshots, and copies Scenario snapshots for both loading and saving; `map_load_pipeline.cpp` handles Map/Scenario detection, Scenario draft baselines, Route candidates, asynchronous map loading, entry history, result application, metadata merging, load timing, and geometry regeneration.
 - `edit_ledger.cpp` handles typed batches and reports, ledger synchronization, local previews, deletion, Save, Revert, and closing; `distance_resolution_workflow.cpp` handles distance-resolution requests and resuming Apply.
 - `edit_benchmark.cpp` provides the separate Debug edit benchmark: real inputs are used for in-memory Apply/Delete/Revert with byte protection; Save runs on regular-file copies in an exclusive temporary directory that preserves relative dependencies. It also checks refresh coalescing, rollback, and stage-timing contracts.

@@ -104,6 +104,18 @@ ctest --test-dir build --output-on-failure
 
 构建目录、克隆的 `third_party` 源码树、生成的设置/CSV/测试输出及临时线路、地图和模型夹具应保持在 Git 跟踪范围之外。
 
+### 工具栏图标资源
+
+2D 和 3D 模式按钮共用 [`icons/toolbar/`](../icons/toolbar/) 中的资源。修改 16 单位画布的 SVG 后，导出九档透明 PNG。在仓库根目录中可用 Inkscape 重新导出移动图标。
+
+```powershell
+foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
+    inkscape icons/toolbar/move.svg --export-area-page "--export-width=$size" "--export-height=$size" --export-background-opacity=0 "--export-filename=icons/toolbar/move-$size.png"
+}
+```
+
+提交时将 SVG 和对应的 PNG 一起纳入变更。CMake 将 PNG 列为资源编译的输入，`komapedit.rc` 将它们作为 `RCDATA` 编入 EXE。共享工具栏缓存按当前窗口的 DPI 选择能覆盖显示尺寸的最小图源，图源上限为 80 px。WIC 解码后的 Alpha 遮罩由 ImGui 按主题着色。
+
 ## 源码分区
 
 | 区域 | 主要文件与职责 |
@@ -371,6 +383,7 @@ ctest --test-dir build --output-on-failure
 - `gui_kme.cpp` 管理 `App` 构造、析构与日志回调；`kme.h` 声明 EXE 内共享状态和跨翻译单元接口。
 - `win32_dx11_bootstrap.cpp` 拥有 D3D11 设备/渲染目标、`WndProc()`、窗口消息循环和 `main()`。
 - `gui_common_utils.cpp` 集中字体、主题/日志颜色、编码转换、数值格式、路径及里程跳转控件帮助函数；`background_image.cpp` 拥有 WIC 解码、背景纹理重建与 history 背景持久化。
+- `toolbar_icons.cpp` 负责共享的 DPI 自适应模式按钮与嵌入式 WIC/D3D11 纹理缓存。
 - `map_snapshot_hydration.cpp` 从 typed snapshot 构建 `MapModel`、行元数据、Station edit id、限速缓存与过渡关联，并为加载和保存共用 Scenario 快照复制；`map_load_pipeline.cpp` 处理 Map/Scenario 探测、Scenario 草稿基线与 Route 候选、异步地图加载、入口历史、结果应用、元数据合并、加载计时和几何再生成。
 - `edit_ledger.cpp` 处理 typed 批次/报告、账本同步、本地预览、删除、保存/撤销/关闭；`distance_resolution_workflow.cpp` 处理距离消歧请求与继续应用。
 - `edit_benchmark.cpp` 承载独立的 Debug 编辑性能入口：真实输入只做内存 Apply/Delete/Revert 与字节保护，Save 仅在保持相对依赖布局的排他临时普通文件副本中运行，同时检查刷新合并、回滚和阶段计时契约。

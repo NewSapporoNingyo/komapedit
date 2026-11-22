@@ -9,6 +9,7 @@
 
 #include "multilanguage.h"
 #include "operation_timing.h"
+#include "toolbar_icons.h"
 #include "../canvas2d/canvas2d_view_state.h"
 
 #include "imgui.h"
@@ -2036,6 +2037,7 @@ private:
     std::string edit_timing_outcome_;
     const char* edit_timing_status_key_ = "status.ready";
     ID3D11Device* device_ = nullptr;
+    toolbar_icons::Cache toolbar_icons_;
     float dpi_scale_ = 1.0f;
     bool viewports_enabled_ = false;
     Translation i18n_;

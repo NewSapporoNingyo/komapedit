@@ -150,7 +150,7 @@ Apply, Save, and Delete show their total execution time in the status bar. Per-s
 
 ### 5. 2D Canvas
 
-At the top of the 2D View, choose `Move` or `Measure` mode. A `Fixed` grid stays in place on screen; a `Movable` grid pans, zooms, and rotates with the map; `None` hides the grid. Drag the splitter between the Plan and the charts below up or down to adjust their heights. Drag the splitter between the two charts left or right to adjust their widths.
+At the top of the 2D View, click the hand for `Move` or the ruler for `Measure`. An outline marks the active mode, and hovering over a button shows its name. A `Fixed` grid stays in place on screen; a `Movable` grid pans, zooms, and rotates with the map; `None` hides the grid. Drag the splitter between the Plan and the charts below up or down to adjust their heights. Drag the splitter between the two charts left or right to adjust their widths.
 
 #### Plan: Move Mode
 
@@ -305,6 +305,8 @@ The top of the window has `Start 3D Scene Preview`, `Reload (Models)`, and `Clos
 
 - `Reload (Models)` reads the scene models again while keeping the current map and camera position.
 - `Close` releases the current scene but can leave the preview window open.
+
+Beside `Mode`, use the hand, pointer, or track pin to switch to `Move`, `Select`, or `Mileage Select`. An outline marks the active mode, and hovering over a button shows its name.
 
 #### Move Mode and Shortcuts
 

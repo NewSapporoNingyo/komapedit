@@ -342,25 +342,25 @@ void App::render_scene_preview_window() {
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(tr("frame.mode").c_str());
         ImGui::SameLine();
-        Canvas3DSceneInteractionMode scene_mode = scene_preview_canvas_
-            ? scene_preview_canvas_->scene_interaction_mode()
-            : Canvas3DSceneInteractionMode::Move;
-        if (ImGui::RadioButton((tr("mode.pan") + "##scene_preview_move").c_str(),
-                               scene_mode == Canvas3DSceneInteractionMode::Move)) {
+        const auto previous_mode = scene_preview_canvas_->scene_interaction_mode();
+        auto scene_mode = previous_mode;
+        if (toolbar_icons_.button(toolbar_icons::Icon::Move, tr("mode.pan").c_str(),
+                                  previous_mode == Canvas3DSceneInteractionMode::Move)) {
             scene_mode = Canvas3DSceneInteractionMode::Move;
-            if (scene_preview_canvas_) scene_preview_canvas_->set_scene_interaction_mode(scene_mode);
         }
         ImGui::SameLine();
-        if (ImGui::RadioButton((tr("mode.select") + "##scene_preview_select").c_str(),
-                               scene_mode == Canvas3DSceneInteractionMode::Select)) {
+        if (toolbar_icons_.button(toolbar_icons::Icon::Select, tr("mode.select").c_str(),
+                                  previous_mode == Canvas3DSceneInteractionMode::Select)) {
             scene_mode = Canvas3DSceneInteractionMode::Select;
-            if (scene_preview_canvas_) scene_preview_canvas_->set_scene_interaction_mode(scene_mode);
         }
         ImGui::SameLine();
-        if (ImGui::RadioButton((tr("mode.mileage_select") + "##scene_preview_mileage_select").c_str(),
-                               scene_mode == Canvas3DSceneInteractionMode::MileageSelect)) {
+        if (toolbar_icons_.button(toolbar_icons::Icon::MileageSelect, tr("mode.mileage_select").c_str(),
+                                  previous_mode == Canvas3DSceneInteractionMode::MileageSelect)) {
             scene_mode = Canvas3DSceneInteractionMode::MileageSelect;
-            if (scene_preview_canvas_) scene_preview_canvas_->set_scene_interaction_mode(scene_mode);
+        }
+        if (previous_mode != scene_mode) {
+            scene_preview_canvas_->set_scene_interaction_mode(scene_mode);
+            wake_main_window();
         }
         ImGui::PopStyleVar();
         if (scene_preview_started_ && scene_preview_dirty_ && has_model_ && !load_state_.running) {

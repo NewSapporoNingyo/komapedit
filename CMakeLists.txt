@@ -282,6 +282,7 @@ add_executable(komapedit
     src/main_window/win32_dx11_bootstrap.cpp
     src/main_window/gui_common_utils.cpp
     src/main_window/background_image.cpp
+    src/main_window/toolbar_icons.cpp
     src/main_window/map_snapshot_hydration.cpp
     src/main_window/map_load_pipeline.cpp
     src/main_window/edit_ledger.cpp
@@ -356,6 +357,14 @@ set_target_properties(komapedit PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${KOMAPEDIT_RUNTIME_OUTPUT_DIRECTORY}"
 )
 if(WIN32)
+    set(komapedit_toolbar_pngs)
+    foreach(icon IN ITEMS move measure select mileage-select translate rotate edit apply)
+        foreach(size IN ITEMS 16 20 24 28 32 40 48 64 80)
+            list(APPEND komapedit_toolbar_pngs "${CMAKE_CURRENT_SOURCE_DIR}/icons/toolbar/${icon}-${size}.png")
+        endforeach()
+    endforeach()
+    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/komapedit.rc"
+        APPEND PROPERTY OBJECT_DEPENDS "${komapedit_toolbar_pngs}")
     target_sources(komapedit PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/komapedit.rc
     )

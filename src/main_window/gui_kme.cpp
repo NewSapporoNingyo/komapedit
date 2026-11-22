@@ -78,7 +78,8 @@ std::ostream* g_debug_plan_benchmark_log = nullptr;
 #endif
 
 App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled, bool has_saved_layout)
-    : device_(device), dpi_scale_(dpi_scale), viewports_enabled_(viewports_enabled), settings_(std::move(settings)),
+    : device_(device), toolbar_icons_(device), dpi_scale_(dpi_scale), viewports_enabled_(viewports_enabled),
+      settings_(std::move(settings)),
       has_saved_layout_(has_saved_layout) {
     g_app = this;
     kv_set_log_callback(&App::log_callback);

@@ -834,7 +834,8 @@ int main(int, char**) {
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
 
-    {
+    int exit_code = EXIT_SUCCESS;
+    try {
         App app(g_pd3dDevice, std::move(settings), scale, viewports_enabled, has_saved_layout);
 
         bool done = false;
@@ -914,7 +915,10 @@ int main(int, char**) {
         if (!save_imgui_layout(layout_path)) {
             app.add_log_at(__FILE__, LogSeverity::Warning, "Failed to save ImGui layout on exit.");
         }
-    } // Join application workers before tearing down their Win32/D3D environment.
+    } catch (const toolbar_icons::LoadError& error) {
+        MessageBoxA(hwnd, error.what(), "komapedit", MB_OK | MB_ICONERROR);
+        exit_code = EXIT_FAILURE;
+    }
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -922,5 +926,5 @@ int main(int, char**) {
     ImGui::DestroyContext();
 
     cleanup_main_window();
-    return 0;
+    return exit_code;
 }

@@ -828,12 +828,20 @@ void App::render_mode_grid_controls() {
     ImGui::AlignTextToFramePadding();
     ImGui::Text("%s:", tr("frame.mode").c_str());
     ImGui::SameLine();
-    Mode previous_mode = mode_;
-    int mode = mode_ == Mode::Pan ? 0 : 1;
-    if (ImGui::RadioButton(tr("mode.pan").c_str(), &mode, 0)) mode_ = Mode::Pan;
+    const Mode previous_mode = mode_;
+    if (toolbar_icons_.button(toolbar_icons::Icon::Move, tr("mode.pan").c_str(),
+                              previous_mode == Mode::Pan)) {
+        mode_ = Mode::Pan;
+    }
     ImGui::SameLine();
-    if (ImGui::RadioButton(tr("mode.measure").c_str(), &mode, 1)) mode_ = Mode::Measure;
-    if (previous_mode != mode_ && mode_ == Mode::Pan) clear_measure();
+    if (toolbar_icons_.button(toolbar_icons::Icon::Measure, tr("mode.measure").c_str(),
+                              previous_mode == Mode::Measure)) {
+        mode_ = Mode::Measure;
+    }
+    if (previous_mode != mode_) {
+        if (mode_ == Mode::Pan) clear_measure();
+        wake_main_window();
+    }
 
     ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
     ImGui::AlignTextToFramePadding();
