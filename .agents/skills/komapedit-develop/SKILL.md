@@ -22,6 +22,7 @@ description: Plan and implement scoped feature or behavior changes in komapedit.
 - Use `komapedit-station-edit-workflow` for `Station.List` or `Station.Put` behavior.
 - Use `komapedit-ui-persistence` for settings, visibility, docking, and persisted controls.
 - Use `komapedit-trilingual-ui-menu-change` for small localized UI/menu changes.
+- Use `komapedit-interface-icons` for adding or replacing interface control icons and packaging their DPI assets.
 - Use `komapedit-debug-headless-validation` to select the smallest convincing runtime proof.
 
 Read every triggered skill before changing files.

@@ -28,6 +28,8 @@
 
 [`komapedit-develop`](../.agents/skills/komapedit-develop/SKILL.md) 适合功能新增或行为调整。
 
+添加或替换控件图标时，使用 [`komapedit-interface-icons`](../.agents/skills/komapedit-interface-icons/SKILL.md)。在需求中注明控件、对应操作以及 DPI 和提示文字的验收要求。
+
 ```text
 使用 $komapedit-develop。
 需求：[功能、受影响工作流、约束与验收标准]

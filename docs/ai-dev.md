@@ -28,6 +28,8 @@ The repository provides four workflows: everyday development, bug fixing, code m
 
 [`komapedit-develop`](../.agents/skills/komapedit-develop/SKILL.md) is suitable for new features or behavior changes.
 
+Use [`komapedit-interface-icons`](../.agents/skills/komapedit-interface-icons/SKILL.md) when adding or replacing a control icon. Specify the control, its action, and the DPI and tooltip checks for acceptance.
+
 ```text
 Use $komapedit-develop.
 Request: [feature, affected workflow, constraints, and acceptance criteria]

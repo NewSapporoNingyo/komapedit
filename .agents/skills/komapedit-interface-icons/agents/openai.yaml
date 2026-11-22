@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit Interface Icons"
+  short_description: "Add or replace DPI-aware interface icons"
+  default_prompt: "Use $komapedit-interface-icons to add or replace the requested control icons and verify their appearance, DPI scaling, and packaging."

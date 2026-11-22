@@ -192,6 +192,7 @@ All project skills live under `.agents/skills/<name>/SKILL.md`.
 | `komapedit-station-edit-workflow` | `Station.List`/`Station.Put` identity, drafts, source order, markers, and writeback |
 | `komapedit-ui-persistence` | `settings.ini`, `history.ini`, `imgui.ini`, canonical schemas, defaults, visibility, and current 2D/3D controls |
 | `komapedit-trilingual-ui-menu-change` | Focused multilingual UI, menu, label, and link changes |
+| `komapedit-interface-icons` | Interface control icons, SVG and PNG resources, shared rendering, and DPI acceptance |
 | `komapedit-doc-sync-validation` | Final doc-only scope, parity, encoding, table, and link validation |
 
 ## Build and validation baseline
