@@ -773,6 +773,8 @@ struct Canvas3D::Impl {
     bool scene_structure_gizmo_consumes_left_input() const;
 
     bool scene_placement_rotation_available() const;
+    std::optional<Canvas3DPlacementGizmoMode> scene_placement_gizmo_mode() const;
+    bool set_scene_placement_gizmo_mode(Canvas3DPlacementGizmoMode mode);
     bool update_scene_rotation_projection(int width, int height);
     struct SceneRotationHit {
         Canvas3DSceneDragAxis axis;

@@ -617,6 +617,7 @@ void App::render_popups() {
         if (ImGui::Button(tr("button.ok").c_str())) {
             set_inspector_coordinate_offsets_enabled(inspector_, false);
             ImGui::CloseCurrentPopup();
+            wake_main_window();
         }
         ImGui::SameLine();
         if (ImGui::Button(tr("button.cancel").c_str())) {
@@ -644,6 +645,7 @@ void App::render_popups() {
             inspector_.pending_signal_full_form_field.clear();
             inspector_.pending_signal_full_form_value.clear();
             ImGui::CloseCurrentPopup();
+            wake_main_window();
         }
         ImGui::SameLine();
         if (ImGui::Button(tr("button.cancel").c_str())) {

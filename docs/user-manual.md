@@ -309,6 +309,7 @@ The top of the window has `Start 3D Scene Preview`, `Reload (Models)`, and `Clos
 - `Close` releases the current scene but can leave the preview window open.
 
 Beside `Mode`, use the hand, pointer, or track pin to switch to `Move`, `Select`, or `Mileage Select`. An outline marks the active mode, and hovering over a button shows its name.
+The `Translate` and `Rotate` icons to their right control the placement gizmo. See [Live Adjustment in the 3D Scene](#live-adjustment-in-the-3d-scene).
 
 #### Move Mode and Shortcuts
 
@@ -402,7 +403,8 @@ Use `Add Coordinate Offsets` or `Remove Coordinate Offsets` to switch between `S
 
 Open `Properties/Edit` and drag a supported object's gizmo to adjust its draft, then apply and save as described above.
 
-- For `Structure.Put`, full-form `Signal.Put`, and `Repeater.Begin`, right-click a translation arrow and select **Rotate**. Drag the X, Y, or Z ring to adjust `rx`, `ry`, or `rz`. Hold **Shift** to snap in 15° steps from the starting angle. Press **Esc** during a drag to restore the previous draft. Right-click a ring and select **Translate** to return to the arrows.
+- For `Structure.Put`, full-form `Signal.Put`, and `Repeater.Begin`, the gizmo starts in **Translate** mode. Use **Rotate** in the scene toolbar to show the X, Y, and Z rings, or **Translate** to return to the arrows. An outline marks the active mode, and only the other button is available. Both buttons are disabled when Properties/Edit is closed, the scene cannot use the current draft, or the target supports position editing only.
+- Drag the X, Y, or Z ring to adjust `rx`, `ry`, or `rz`. Hold **Shift** to snap in 15° steps from the starting angle. Press **Esc** during a drag to restore the previous draft.
   The three rings share a radius. A tilted ring shows its near arc, and a ring facing the camera shows the full circle. At a crossing, the highlighted arc is the one the mouse will drag. If the red and green rings coincide, each occupies half of the visible arc.
 - For `Sound3D[soundKey].Put(x, y)`, X/Y adjust the relative position in 0.001 m steps, and Z adjusts mileage in whole meters.
 - `Structure.Put0` and `Repeater.Begin0` use Z to adjust mileage in whole meters. Add coordinate offsets in `Properties/Edit` to enable translation and rotation. For short-form `Signal.Put`, edit an extended field and confirm the full-form conversion to enable rotation.

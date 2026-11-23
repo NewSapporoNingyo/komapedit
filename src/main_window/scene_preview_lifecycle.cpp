@@ -366,19 +366,35 @@ void App::render_scene_preview_window() {
             scene_preview_canvas_->set_scene_interaction_mode(scene_mode);
             wake_main_window();
         }
-        ImGui::PopStyleVar();
         if (scene_preview_started_ && scene_preview_dirty_ && has_model_ && !load_state_.running) {
             const bool preserve_loaded_models = scene_preview_preserve_models_on_rebuild_;
             const bool preserve_camera = scene_preview_preserve_camera_on_rebuild_;
             rebuild_scene_preview(preserve_loaded_models, preserve_camera);
         }
+        const auto gizmo_mode = sync_scene_placement_edit_from_inspector()
+            ? scene_preview_canvas_->scene_placement_gizmo_mode() : std::nullopt;
+        const auto render_gizmo_button = [&](toolbar_icons::Icon icon, const char* label,
+                                             Canvas3DPlacementGizmoMode mode) {
+            const bool selected = gizmo_mode == mode;
+            ImGui::BeginDisabled(!gizmo_mode || selected);
+            if (toolbar_icons_.button(icon, tr(label).c_str(), selected) &&
+                scene_preview_canvas_->set_scene_placement_gizmo_mode(mode)) {
+                wake_main_window();
+            }
+            ImGui::EndDisabled();
+        };
+        ImGui::SameLine(0.0f, item_spacing_x * 2.0f);
+        render_gizmo_button(toolbar_icons::Icon::Translate, "menu.scene_gizmo_translate",
+                            Canvas3DPlacementGizmoMode::Translate);
+        ImGui::SameLine();
+        render_gizmo_button(toolbar_icons::Icon::Rotate, "menu.scene_gizmo_rotate",
+                            Canvas3DPlacementGizmoMode::Rotate);
+        ImGui::PopStyleVar();
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + toolbar_padding_y);
         ImVec2 avail = ImGui::GetContentRegionAvail();
         Canvas3DSceneUiText scene_ui_text;
         scene_ui_text.mileage = tr("info.mileage").c_str();
         scene_ui_text.unit_m = tr("unit.m").c_str();
-        scene_ui_text.gizmo_translate = tr("menu.scene_gizmo_translate").c_str();
-        scene_ui_text.gizmo_rotate = tr("menu.scene_gizmo_rotate").c_str();
         scene_ui_text.add_map_element_at_mileage =
             tr("menu.add_map_element_at_current_mileage").c_str();
         scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect").c_str();
@@ -443,7 +459,6 @@ void App::render_scene_preview_window() {
         Canvas3DSceneContextMenuOptions context_menu_options;
         context_menu_options.element_properties_enabled = edit_actions_available();
         context_menu_options.new_element_enabled = edit_actions_available();
-        sync_scene_placement_edit_from_inspector();
         sync_scene_preview_marker_visibility();
         Canvas3DSceneFrameResult scene_result;
         {

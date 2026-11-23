@@ -380,6 +380,22 @@ bool Canvas3D::Impl::scene_placement_rotation_available() const {
         scene_structure_edit.current.placement_rotation_gizmo;
 }
 
+std::optional<Canvas3DPlacementGizmoMode> Canvas3D::Impl::scene_placement_gizmo_mode() const {
+    if (!scene_placement_rotation_available()) return std::nullopt;
+    return scene_structure_edit.rotation_mode ? Canvas3DPlacementGizmoMode::Rotate
+                                              : Canvas3DPlacementGizmoMode::Translate;
+}
+
+bool Canvas3D::Impl::set_scene_placement_gizmo_mode(Canvas3DPlacementGizmoMode mode) {
+    if (!scene_placement_rotation_available() ||
+        scene_structure_edit.dragging_gizmo != SceneGizmoTarget::None ||
+        scene_structure_edit.rotation_waiting_for_release) {
+        return false;
+    }
+    scene_structure_edit.rotation_mode = mode == Canvas3DPlacementGizmoMode::Rotate;
+    return true;
+}
+
 bool Canvas3D::Impl::update_scene_rotation_projection(int width, int height) {
     SceneRotationGizmo& gizmo = scene_structure_edit.rotation_gizmo;
     for (SceneRotationRing& ring : gizmo.rings) {

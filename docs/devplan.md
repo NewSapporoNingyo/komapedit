@@ -17,7 +17,7 @@ S1–S2 记录已完成的阶段。S3–S23 扩展编辑与预设、插件与发
 
 | 位置 | 现有基础 | 后续开发重点 |
 | --- | --- | --- |
-| [三维操纵器](../src/canvas3d/canvas3d_scene_gizmo.cpp)、[场景交互](../src/canvas3d/canvas3d_scene_ui.cpp) | 位移与里程拖动、三轴旋转、操纵器右键切换、场景里程选点和新建元素入口 | 图标工具栏、他轨道变化点操纵器与布景落位 |
+| [三维操纵器](../src/canvas3d/canvas3d_scene_gizmo.cpp)、[场景交互](../src/canvas3d/canvas3d_scene_ui.cpp) | 位移与里程拖动、三轴旋转、工具栏切换操纵器模式、场景里程选点和新建元素入口 | 他轨道变化点操纵器与布景落位 |
 | [新建向导](../src/main_window/new_element_wizard.cpp)、[文件内容与创建](../src/main_window/app_dialogs.cpp)、[延迟创建请求](../src/main_window/element_inspector_data.cpp) | 分别创建地图、场景和五类资源列表，生成文件头、场景正文与引用 | 一次创建相互引用的空白项目 |
 | [2D 画布](../src/canvas2d/canvas2D.cpp)、[标记缓存](../src/canvas2d/canvas2d_marker_cache.cpp)、[快照接收](../src/main_window/map_snapshot_hydration.cpp) | 移动与测量模式、曲线阴影与半径文字、曲线、坡度及他轨道标记 | 自轨道端点拖动、半径滚轮、画布参数草稿和他轨道变化点拖动 |
 | [模型预览](../src/canvas3d/canvas3d_model_preview.cpp)、[预览窗口与加载流程](../src/main_window/scene_preview_lifecycle.cpp) | 从布景列表或文件打开单个模型，使用独立相机和渲染目标 | 模型组合与预设落位、参考网格及轴向标注 |
@@ -68,11 +68,11 @@ S4 的地图语句编辑与 S5 的外部文档编辑分别交付。S11 的固定
 
 ## S1 三维布景旋转操纵器（已完成）
 
-右击放置手柄可在平移与旋转间切换。`Structure.Put`、`Repeater.Begin` 和完整式 `Signal.Put` 的三个旋转环直接编辑检查器的 `rx`、`ry`、`rz`。Shift 按起始角每 15° 吸附，Esc 恢复本次手势前的草稿。简式使用原有转换控件与确认。旋转草稿实时更新局部预览，沿用应用、还原和保存流程。[操作说明](user-manual_zhcn.md#在-3d-场景中实时调整)
+`Structure.Put`、`Repeater.Begin` 和完整式 `Signal.Put` 的三个旋转环直接编辑检查器的 `rx`、`ry`、`rz`。Shift 按起始角每 15° 吸附，Esc 恢复本次手势前的草稿。简式使用原有转换控件与确认。旋转草稿实时更新局部预览，沿用应用、还原和保存流程。[操作说明](user-manual_zhcn.md#在-3d-场景中实时调整)
 
 Debug 场景契约验证了带坡度、超高和非零初始角的三轴变换、连续跨界、吸附和取消。SSER 完整副本的 GUI 验证覆盖信号三轴拖动、简式转换、站台柱区段预览及站内布景的应用、保存和重开。
 
-[S3.2](#s3-2) 将操纵器的平移与旋转切换移至 3D 场景工具栏。
+[S3.2](#s3-2) 已将操纵器的平移与旋转切换移至 3D 场景工具栏。
 
 <a id="s2"></a>
 
@@ -104,15 +104,17 @@ Debug 场景契约验证了带坡度、超高和非零初始角的三轴变换�
 
 <a id="s3-2"></a>
 
-### S3.2 3D 画布操纵器平移／旋转的按钮切换
+### S3.2 3D 画布操纵器平移／旋转的按钮切换（已实现）
 
-1. 在 3D 场景预览的视图模式组旁放置相邻的“平移”“旋转”图标按钮。每帧用 `sync_scene_placement_edit_from_inspector()` 同步属性目标，再通过 `Canvas3D` 读取旋转资格和当前 `rotation_mode`。属性未打开、目标未同步成功或仅支持位置编辑时，两键禁用。目标可旋转时，当前模式键选中且禁用，另一键可点击。新目标从平移模式开始。
-2. 复用[现有旋转资格判断](../src/main_window/element_inspector_data.cpp)，覆盖完整式 `Structure.Put`、`Repeater.Begin` 和 `Signal.Put`。`Put0` 和 `Begin0` 沿用检查器的坐标偏移控件，简式 `Signal.Put` 沿用现有转换确认。按钮沿用“平移”“旋转”的六语文本。
-3. 从[场景交互](../src/canvas3d/canvas3d_scene_ui.cpp)移除操纵器专用右键弹窗及其输入分支。元素、标记和里程的右键操作继续使用各自的入口。
+3D 场景工具栏的视图模式组右侧提供“平移”和“旋转”图标。每帧同步检查器目标后，`Canvas3D` 提供旋转资格与当前模式。新目标从平移模式开始，当前模式键带选中描边并禁用。属性关闭、同步失败或目标仅支持位置编辑时，两键均禁用。
+
+完整式 `Structure.Put`、`Repeater.Begin` 和 `Signal.Put` 支持两种模式。`Put0` 和 `Begin0` 通过检查器的坐标偏移控件转换，简式 `Signal.Put` 通过确认框转换。元素、标记和里程各用自己的右键菜单。[操作说明](user-manual_zhcn.md#在-3d-场景中实时调整)
 
 **验收**
 
-在场景中检查属性打开与关闭、目标切换、简式转换及仅支持位置编辑的目标。验证两键的选中和禁用状态、三轴旋转拖动、Esc 取消，以及元素、标记和里程的右键操作。
+实机验证了属性开关、目标切换、同步失败与恢复、简式转换、仅位置目标、鼠标与键盘切换、三轴旋转和三类右键入口。100% 和 150% 单屏缩放下检查了按钮外观，并核对六语提示。
+
+Debug headless 契约通过模式切换、三轴变换、15° 吸附及取消恢复检查。待实机复核拖动中同时按住 Shift 和拖动中按 Esc 的两种操作。
 
 <a id="s3-3"></a>
 

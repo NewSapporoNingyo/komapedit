@@ -50,6 +50,11 @@ enum class Canvas3DSceneInteractionMode {
     MileageSelect,
 };
 
+enum class Canvas3DPlacementGizmoMode {
+    Translate,
+    Rotate,
+};
+
 enum class Canvas3DSceneObjectKind {
     Generic,
     Structure,
@@ -372,8 +377,6 @@ struct Canvas3DSceneMapRefreshOptions {
 struct Canvas3DSceneUiText {
     const char* mileage = "Mileage";
     const char* unit_m = "m";
-    const char* gizmo_translate = "Translate";
-    const char* gizmo_rotate = "Rotate";
     const char* add_map_element_at_mileage = "Add Map Element at Current Mileage";
     const char* switch_signal_aspect = "Switch Signal Aspect";
     const char* element_properties = "Properties/Edit";
@@ -591,6 +594,8 @@ public:
                                         bool show_gizmo);
     bool update_scene_repeater_segment(const Canvas3DPlacementEditTarget& target);
     void clear_scene_placement_edit_target();
+    std::optional<Canvas3DPlacementGizmoMode> scene_placement_gizmo_mode() const;
+    bool set_scene_placement_gizmo_mode(Canvas3DPlacementGizmoMode mode);
     Canvas3DSceneFrameResult render_scene_preview(
         ImVec2 size,
         const Canvas3DSceneUiText& ui_text = Canvas3DSceneUiText{},

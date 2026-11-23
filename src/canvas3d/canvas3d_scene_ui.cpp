@@ -546,7 +546,6 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
     ImGui::InvisibleButton("ScenePreview3DCanvas", avail,
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     bool hovered = ImGui::IsItemHovered();
-    const bool gizmo_popup_open = ImGui::IsPopupOpen("ScenePreviewGizmoContext");
     const bool context_popup_open =
         ImGui::IsPopupOpen("ScenePreviewObjectContext") ||
         ImGui::IsPopupOpen("ScenePreviewMarkerContext") ||
@@ -575,8 +574,7 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
     if (scene_active) {
         render_scene_preview_target(
             width, height, mouse_local,
-            (hovered || context_popup_open) && !gizmo_popup_open &&
-                !scene_structure_gizmo_consumes_left_input(),
+            (hovered || context_popup_open) && !scene_structure_gizmo_consumes_left_input(),
             hovered && !loading_before_render);
     } else {
         std::string error;
@@ -635,21 +633,12 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
     const bool right_click = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
-    const bool over_mode_gizmo = scene_placement_rotation_available() &&
-        (scene_structure_edit.hovered_gizmo == SceneGizmoTarget::Placement ||
-         scene_structure_edit.hovered_gizmo == SceneGizmoTarget::Rotation);
-    const bool gizmo_context = !stats.loading && right_click && over_mode_gizmo;
-    if (gizmo_context && scene_structure_edit.dragging_gizmo == SceneGizmoTarget::None &&
-        !scene_structure_edit.rotation_waiting_for_release) {
-        scene_structure_edit.gizmo_popup_open = true;
-        ImGui::OpenPopup("ScenePreviewGizmoContext");
-    }
     ImVec2 long_press_pos;
     const bool touch_context =
-        select_mode && !stats.loading && !gizmo_context &&
+        select_mode && !stats.loading &&
         (scene_hovered_object_index >= 0 || marker_context_available) &&
         touch_input::consume_long_press_in_rect(origin, end, &long_press_pos);
-    if (!stats.loading && select_mode && !gizmo_context &&
+    if (!stats.loading && select_mode &&
         (scene_hovered_object_index >= 0 || marker_context_available) &&
         (right_click || touch_context)) {
         if (scene_hovered_object_index >= 0) {
@@ -660,29 +649,10 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
             ImGui::OpenPopup("ScenePreviewMarkerContext");
         }
     }
-    if (!stats.loading && mileage_select_mode && !gizmo_context && right_click && scene_hovered_mileage) {
+    if (!stats.loading && mileage_select_mode && right_click && scene_hovered_mileage) {
         scene_context_mileage = scene_hovered_mileage;
         ImGui::OpenPopup("ScenePreviewMileageContext");
     }
-    if (ImGui::BeginPopup("ScenePreviewGizmoContext")) {
-        if (!scene_structure_edit.gizmo_popup_open || !scene_placement_rotation_available() ||
-            stats.loading) {
-            ImGui::CloseCurrentPopup();
-        } else {
-            const std::string translate = std::string(ui_text.gizmo_translate) + "###GizmoTranslate";
-            const std::string rotate = std::string(ui_text.gizmo_rotate) + "###GizmoRotate";
-            if (ImGui::RadioButton(translate.c_str(), !scene_structure_edit.rotation_mode)) {
-                scene_structure_edit.rotation_mode = false;
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::RadioButton(rotate.c_str(), scene_structure_edit.rotation_mode)) {
-                scene_structure_edit.rotation_mode = true;
-                ImGui::CloseCurrentPopup();
-            }
-        }
-        ImGui::EndPopup();
-    }
-    if (!ImGui::IsPopupOpen("ScenePreviewGizmoContext")) scene_structure_edit.gizmo_popup_open = false;
     result.context_action = render_scene_context_popup(ui_text, context_menu_options);
     if (result.context_action.kind == Canvas3DSceneContextActionKind::None) {
         result.context_action = render_scene_marker_context_popup(

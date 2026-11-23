@@ -2749,7 +2749,7 @@ private:
     void rebind_other_editable_list_drafts(const EditableListEditState* applied);
     void reset_editable_list_find_results(const EditableListSpec& spec);
     bool navigate_repeater_inspector(bool toward_next);
-    void sync_scene_placement_edit_from_inspector();
+    bool sync_scene_placement_edit_from_inspector();
     void apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& update);
     bool update_scene_placement_instance_from_model(const std::string& edit_id,
                                                     const std::string& row_kind);

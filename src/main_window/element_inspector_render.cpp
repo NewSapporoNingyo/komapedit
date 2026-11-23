@@ -262,9 +262,13 @@ void App::render_map_element_field_inputs(
             set_edit_field_buffer(field, previous_value);
             inspector.signal_full_form_prompt_requested = true;
         }
-        if (ImGui::IsItemDeactivatedAfterEdit() &&
+        const bool deactivated_after_edit = ImGui::IsItemDeactivatedAfterEdit();
+        if (deactivated_after_edit &&
             !validate_and_canonicalize_edit_field(field, true)) {
             set_program_status("status.edit.invalid_number");
+        }
+        if ((input_changed || deactivated_after_edit) && &inspector == &inspector_) {
+            wake_main_window();
         }
         if (inspector.row_kind == "preTrain.pass" && field.key == "passTime" &&
             ImGui::IsItemHovered()) {
@@ -452,6 +456,7 @@ void App::render_element_inspector() {
         if (closed) {
             cancel_distance_resolution_workflow();
             clear_scene_placement_edit_target();
+            wake_main_window();
         }
         return;
     }
@@ -520,6 +525,7 @@ void App::render_element_inspector() {
             } else {
                 inspector_.coordinate_offset_discard_prompt_requested = true;
             }
+            wake_main_window();
         }
         if (repeater_inspector) {
             ImGui::SameLine();
@@ -552,7 +558,6 @@ void App::render_element_inspector() {
     ImGui::SameLine();
     if (toolbar_icons_.button(toolbar_icons::Icon::Close, tr("button.close").c_str())) {
         cancel_distance_resolution_workflow();
-        clear_scene_placement_edit_target();
         inspector_.open = false;
     }
 
@@ -562,5 +567,8 @@ void App::render_element_inspector() {
          distance_resolution_workflow_.retry_requested)) {
         cancel_distance_resolution_workflow();
     }
-    if (!inspector_.open) clear_scene_placement_edit_target();
+    if (!inspector_.open) {
+        clear_scene_placement_edit_target();
+        wake_main_window();
+    }
 }

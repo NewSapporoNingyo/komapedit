@@ -220,6 +220,14 @@ void Canvas3D::clear_scene_placement_edit_target() {
     impl_->clear_scene_placement_edit_target();
 }
 
+std::optional<Canvas3DPlacementGizmoMode> Canvas3D::scene_placement_gizmo_mode() const {
+    return impl_->scene_placement_gizmo_mode();
+}
+
+bool Canvas3D::set_scene_placement_gizmo_mode(Canvas3DPlacementGizmoMode mode) {
+    return impl_->set_scene_placement_gizmo_mode(mode);
+}
+
 Canvas3DSceneFrameResult Canvas3D::render_scene_preview(
     ImVec2 size,
     const Canvas3DSceneUiText& ui_text,

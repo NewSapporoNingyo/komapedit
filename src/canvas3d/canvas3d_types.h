@@ -409,7 +409,6 @@ struct SceneStructureEditState {
     SceneRotationGizmo rotation_gizmo;
     SceneRotationDrag rotation_drag;
     bool rotation_mode = false;
-    bool gizmo_popup_open = false;
     bool rotation_waiting_for_release = false;
     SceneGizmoTarget hovered_gizmo = SceneGizmoTarget::None;
     SceneGizmoTarget dragging_gizmo = SceneGizmoTarget::None;

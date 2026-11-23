@@ -1785,6 +1785,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     }
 
     restore_repeater_inspector_draft(inspector_);
+    wake_main_window();
     return true;
 }
 
@@ -1823,7 +1824,7 @@ void App::clear_scene_placement_edit_target() {
     if (scene_preview_canvas_) scene_preview_canvas_->clear_scene_placement_edit_target();
 }
 
-void App::sync_scene_placement_edit_from_inspector() {
+bool App::sync_scene_placement_edit_from_inspector() {
     const bool structure_target = inspector_.row_kind == "structure.put";
     const bool structure_between_target = inspector_.row_kind == "structure.between";
     const bool signal_target = inspector_.row_kind == "signal.put";
@@ -1833,7 +1834,7 @@ void App::sync_scene_placement_edit_from_inspector() {
         (!structure_target && !structure_between_target && !signal_target &&
          !repeater_target && !sound3d_target)) {
         clear_scene_placement_edit_target();
-        return;
+        return false;
     }
 
     const std::vector<TableRow>& rows = structure_target ? model_.structures :
@@ -1845,7 +1846,7 @@ void App::sync_scene_placement_edit_from_inspector() {
         row_index < rows.size() && rows[row_index].edit_id == inspector_.edit_id;
     if (!cache_hit && !find_row_index_by_edit_id(rows, inspector_.edit_id, row_index)) {
         clear_scene_placement_edit_target();
-        return;
+        return false;
     }
 #ifndef NDEBUG
     if (!cache_hit) ++inspector_.model_row_cache_scans;
@@ -1866,7 +1867,7 @@ void App::sync_scene_placement_edit_from_inspector() {
     const std::string model_track_key = target.track_key;
     if (const MapElementEditFieldState* distance_field =
             find_inspector_field(inspector_, "distance")) {
-        if (!parse_gui_edit_number(edit_field_buffer_text(*distance_field), &target.distance)) return;
+        if (!parse_gui_edit_number(edit_field_buffer_text(*distance_field), &target.distance)) return false;
     }
     if (const MapElementEditFieldState* track_field =
             find_inspector_field(inspector_, "trackKey")) {
@@ -1878,7 +1879,7 @@ void App::sync_scene_placement_edit_from_inspector() {
             if (!parse_gui_edit_number(
                     edit_field_buffer_text(*end_distance_field),
                     &target.repeater_end_distance)) {
-                return;
+                return false;
             }
             target.has_repeater_end_distance = true;
         }
@@ -1886,11 +1887,11 @@ void App::sync_scene_placement_edit_from_inspector() {
     if (structure_between_target) {
         const MapElementEditFieldState* structure_key_field =
             find_inspector_field(inspector_, "structureKey");
-        if (!structure_key_field) return;
+        if (!structure_key_field) return false;
         const std::string structure_key = trim_gui_ascii_copy(
             edit_field_buffer_text(*structure_key_field));
         target.model_path = structure_model_path_for_key(model_, structure_key);
-        if (target.model_path.empty()) return;
+        if (target.model_path.empty()) return false;
         const MapElementEditFieldState* track1_field =
             find_inspector_field(inspector_, "trackKey1");
         const MapElementEditFieldState* track2_field =
@@ -1900,7 +1901,7 @@ void App::sync_scene_placement_edit_from_inspector() {
         double flag = 0.0;
         if (!track1_field || !track2_field || !flag_field ||
             !parse_gui_edit_number(edit_field_buffer_text(*flag_field), &flag)) {
-            return;
+            return false;
         }
         target.put_between_track_key1 = trim_gui_ascii_copy(
             edit_field_buffer_text(*track1_field));
@@ -1912,10 +1913,10 @@ void App::sync_scene_placement_edit_from_inspector() {
         const MapElementEditFieldState* field = find_inspector_field(inspector_, key);
         if (!field) continue;
         double value = 0.0;
-        if (!parse_gui_edit_number(edit_field_buffer_text(*field), &value)) return;
+        if (!parse_gui_edit_number(edit_field_buffer_text(*field), &value)) return false;
         if (field->numeric_constraint == MapElementNumericConstraint::Tilt &&
             gui_numeric_choice_option_index(value, field->numeric_constraint) < 0) {
-            return;
+            return false;
         }
         if (field->numeric_constraint == MapElementNumericConstraint::Truncate3 &&
             trim_gui_ascii_copy(edit_field_buffer_text(*field)) != field->original_value) {
@@ -1933,7 +1934,7 @@ void App::sync_scene_placement_edit_from_inspector() {
     if (repeater_target &&
         target.track_key != model_track_key) {
         clear_scene_placement_edit_target();
-        return;
+        return false;
     }
     const bool coordinate_offset_target = structure_target || repeater_target;
     target.placement_distance_gizmo =
@@ -1945,13 +1946,11 @@ void App::sync_scene_placement_edit_from_inspector() {
     if (repeater_target && !target.placement_distance_gizmo &&
         std::fabs(target.distance - model_distance) > 1e-9) {
         clear_scene_placement_edit_target();
-        return;
+        return false;
     }
-    if (repeater_target) {
-        scene_preview_canvas_->set_scene_repeater_edit_target(target, true);
-    } else {
-        scene_preview_canvas_->set_scene_placement_edit_target(target, true);
-    }
+    return repeater_target
+        ? scene_preview_canvas_->set_scene_repeater_edit_target(target, true)
+        : scene_preview_canvas_->set_scene_placement_edit_target(target, true);
 }
 
 void App::apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& update) {

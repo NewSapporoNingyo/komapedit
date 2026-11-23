@@ -621,7 +621,12 @@ bool Canvas3D::Impl::debug_check_scene_rotation_gizmo() {
     target.tilt = 3.0;
     target.span = 8.0;
     target.placement_rotation_gizmo = true;
-    if (!fixture.set_scene_placement_edit_target(target, true)) return false;
+    using GizmoMode = Canvas3DPlacementGizmoMode;
+    if (fixture.scene_placement_gizmo_mode() ||
+        !fixture.set_scene_placement_edit_target(target, true) ||
+        fixture.scene_placement_gizmo_mode() != GizmoMode::Translate ||
+        !fixture.set_scene_placement_gizmo_mode(GizmoMode::Rotate) ||
+        fixture.scene_placement_gizmo_mode() != GizmoMode::Rotate) return false;
 
     constexpr std::array<double Canvas3DPlacementEditTarget::*, 3> angle_fields = {
         &Canvas3DPlacementEditTarget::rx, &Canvas3DPlacementEditTarget::ry, &Canvas3DPlacementEditTarget::rz
@@ -636,7 +641,8 @@ bool Canvas3D::Impl::debug_check_scene_rotation_gizmo() {
         fixture.scene_structure_edit.drag_start_value = target.*angle_fields[i];
         Canvas3DPlacementEditTarget expected = target;
         expected.*angle_fields[i] += delta;
-        if (!fixture.write_scene_rotation_angle(expected.*angle_fields[i]) ||
+        if (fixture.set_scene_placement_gizmo_mode(GizmoMode::Translate) ||
+            !fixture.write_scene_rotation_angle(expected.*angle_fields[i]) ||
             !fixture.debug_check_scene_edit_target(expected)) return false;
         const auto& preview = fixture.scene_data.instances.front();
         for (size_t component : {0u, 4u, 8u}) {
@@ -650,6 +656,21 @@ bool Canvas3D::Impl::debug_check_scene_rotation_gizmo() {
             canceled.angle_degrees != target.*angle_fields[i] ||
             !fixture.debug_check_scene_edit_target(target)) return false;
     }
+
+    if (!fixture.set_scene_placement_gizmo_mode(GizmoMode::Translate) ||
+        fixture.scene_placement_gizmo_mode() != GizmoMode::Translate ||
+        !fixture.set_scene_placement_gizmo_mode(GizmoMode::Rotate)) return false;
+
+    target.placement_rotation_gizmo = false;
+    if (!fixture.set_scene_placement_edit_target(target, true) ||
+        fixture.scene_placement_gizmo_mode() ||
+        fixture.set_scene_placement_gizmo_mode(GizmoMode::Rotate)) return false;
+
+    fixture.clear_scene_placement_edit_target();
+    target.placement_rotation_gizmo = true;
+    if (fixture.scene_placement_gizmo_mode() ||
+        !fixture.set_scene_placement_edit_target(target, true) ||
+        fixture.scene_placement_gizmo_mode() != GizmoMode::Translate) return false;
 
     const DVec3 normal{0.0, 0.0, 1.0};
     const auto radial = [](double degrees) {

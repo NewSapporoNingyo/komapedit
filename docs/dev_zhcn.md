@@ -491,7 +491,9 @@ foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
 
 操纵器按编辑目标生成 `Canvas3DPlacementDragUpdate`：普通放置坐标截断到毫米；Sound3D 的 X/Y 更新音源偏移，Z 以整米更新里程；显式 Repeater End 的 Z 更新段尾。`Structure.PutBetween` 使用沿自轨前向的 Z 轴，将里程吸附到整米；worker 合并最新目标、按模型纵向 slice 复用轨道采样，再将结果发布到可复用动态顶点缓冲。
 
-旋转操纵器由 `make_track_placement_frame()` 提供中心和按 X → Z → Y 顺序组合的欧拉参数轴。拖动累积所选环平面内的有符号角差，侧视时使用屏幕切线位移。局部预览将编辑 ID、轴、角度和手势阶段交给 `apply_scene_placement_drag_update()`。检查器保存手势开始时的字段文本供取消恢复。Apply 在内存中重解析类型化编辑批次，Save 提交验证后的工作副本。3D 场景 headless 契约覆盖参数轴变换、连续转圈、15° 吸附以及预览和草稿恢复。
+场景工具栏在绘制平移和旋转按钮前同步检查器目标。`Canvas3D::scene_placement_gizmo_mode()` 返回支持旋转的目标的当前模式，两键启用以本帧同步成功为前提。模式由 `Canvas3D` 持有，新目标从平移模式开始。
+
+旋转操纵器由 `make_track_placement_frame()` 提供中心和按 X → Z → Y 顺序组合的欧拉参数轴。拖动累积所选环平面内的有符号角差，侧视时使用屏幕切线位移。局部预览将编辑 ID、轴、角度和手势阶段交给 `apply_scene_placement_drag_update()`。检查器保存手势开始时的字段文本供取消恢复。Apply 在内存中重解析类型化编辑批次，Save 提交验证后的工作副本。3D 场景 headless 契约覆盖模式切换、参数轴变换、连续转圈、15° 吸附以及预览和草稿恢复。
 
 #### 帧率与阶段计时
 
