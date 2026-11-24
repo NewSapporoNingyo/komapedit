@@ -47,6 +47,7 @@ struct Canvas3DPlacementEditTarget;
 struct Canvas3DSceneMarkerVisibility;
 struct KvEditReportSnapshot;
 struct KvMapSnapshot;
+namespace canvas2d { class AlignmentEditor; }
 namespace repeater_linkage {
 struct Event;
 }
@@ -65,7 +66,6 @@ struct HeadlessOpenBenchmarkOptions;
 struct HeadlessTableCacheBenchmarkOptions;
 struct HeadlessEditBenchmarkOptions;
 struct HeadlessOwnTrackEditOptions;
-namespace canvas2d { class AlignmentEditor; }
 struct HeadlessOtherTrackEditOptions;
 struct HeadlessCreatorMessageOptions;
 struct HeadlessOtherTrackKeyEditOptions;
