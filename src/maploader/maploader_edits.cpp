@@ -1676,8 +1676,9 @@ std::string build_curve_statement(const MapEditChange& change,
     if (row.argument_count == 0) {
         throw std::runtime_error(row.method + " has no editable value fields");
     }
+    std::vector<std::pair<size_t, size_t>> spans;
     const std::vector<std::string> args =
-        parse_bve_argument_fields(statement.raw_arguments);
+        parse_bve_argument_fields(statement.raw_arguments, &spans);
     std::string arguments = required_numeric_value_field(
         change, "radius", row.radius, raw_arg_at(args, 0));
     if (row.method == "Curve.SetFunction") {
@@ -1685,6 +1686,17 @@ std::string build_curve_statement(const MapEditChange& change,
         if (!parse_edit_number(arguments, id) || (id != 0.0 && id != 1.0)) {
             throw std::runtime_error("Curve.SetFunction requires id 0 or 1");
         }
+    }
+    if (has_field_change(change, "radius") && !has_field_change(change, "cant")) {
+        const size_t args_start = statement.raw_text.find(
+            statement.raw_arguments, statement.raw_text.find('(') + 1);
+        if (args_start == std::string::npos) {
+            throw std::runtime_error("curve argument span is unavailable");
+        }
+        const auto [first, last] = spans.at(0);
+        std::string patched = statement.raw_text;
+        patched.replace(args_start + first, last - first, arguments);
+        return patched;
     }
     if (row.argument_count == 2) {
         arguments += "," + required_numeric_value_field(
@@ -5184,6 +5196,7 @@ OwnTrackTransitionState own_track_transition_state(MapContext& ctx) {
     const size_t gradient_base = ctx.curves.size();
     for (size_t i = 0; i < ctx.gradients.size(); ++i) {
         const std::string method = ascii_lower(ctx.gradients[i].method);
+        if (method == "gradient.interpolate") continue;
         const EventKind kind = method == "gradient.begintransition"
             ? EventKind::GradientBeginTransition
             : method == "gradient.end" ? EventKind::GradientEnd
@@ -7789,6 +7802,10 @@ static MapEditReport build_edit_report(MapContext& ctx, EditChangesView effectiv
             }
             edit.operation = operation;
             if (operation == "delete") {
+                if (target.gradient && target.gradient->method == "Gradient.Interpolate") {
+                    report.blocking_errors.push_back("Gradient.Interpolate supports distance edits only");
+                    continue;
+                }
                 if (target.row_kind != "include" &&
                     target.elements_for_statement != 1) {
                     report.blocking_errors.push_back("delete is blocked because the source statement maps to multiple elements: " + change.edit_id);

@@ -10,6 +10,7 @@
 #endif
 
 #include "kme.h"
+#include "../canvas2d/canvas2d_alignment.h"
 #include "app_settings.h"
 #include "debug_headless.h"
 #include "touch_input.h"
@@ -82,6 +83,7 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
       settings_(std::move(settings)),
       has_saved_layout_(has_saved_layout) {
     g_app = this;
+    plan_alignment_ = std::make_unique<canvas2d::AlignmentEditor>();
     kv_set_log_callback(&App::log_callback);
     model_preview_canvas_ = std::make_unique<Canvas3D>(device_);
     model_preview_canvas_->set_background_color(model_preview_bg_color_);
@@ -130,6 +132,7 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
 }
 
 App::~App() {
+    plan_alignment_.reset();
     stop_loader();
     discard_pending_load_result();
     if (handle_) kv_free(handle_);

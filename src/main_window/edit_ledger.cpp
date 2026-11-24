@@ -10,6 +10,7 @@
 #endif
 
 #include "kme.h"
+#include "../canvas2d/canvas2d_alignment.h"
 #include "app_settings.h"
 #include "debug_headless.h"
 #include "touch_input.h"
@@ -127,6 +128,7 @@ void App::request_edit_ui_operation(PendingEditUiOperation operation) {
     if (operation == PendingEditUiOperation::None || edit_ui_operation_pending()) return;
 
     const bool apply_operation = operation == PendingEditUiOperation::ApplyInspector ||
+        operation == PendingEditUiOperation::ApplyPlanAlignment ||
         operation == PendingEditUiOperation::ApplyNewElement ||
         operation == PendingEditUiOperation::ApplyCreatorMessages ||
         operation == PendingEditUiOperation::ApplyOtherTrackRename;
@@ -174,6 +176,9 @@ void App::process_pending_edit_ui_operation() {
     case PendingEditUiOperation::ApplyInspector:
         apply_inspector_changes();
         break;
+    case PendingEditUiOperation::ApplyPlanAlignment:
+        apply_plan_alignment_drafts();
+        break;
     case PendingEditUiOperation::ApplyNewElement:
         apply_new_element_insert();
         break;
@@ -214,6 +219,7 @@ void App::process_pending_edit_ui_operation() {
 }
 
 void App::clear_pending_edit_state() {
+    plan_alignment_->clear_drafts();
     clear_scene_placement_edit_target();
     pending_edit_ui_operation_ = PendingEditUiOperationState{};
     pending_edit_changes_.clear();
@@ -306,7 +312,7 @@ std::string App::current_document_entry_path() const {
 
 bool App::has_unsaved_edit_state() const {
     return has_pending_edits() || has_unapplied_editable_list_drafts() ||
-        has_scenario_unsaved_changes();
+        has_scenario_unsaved_changes() || plan_alignment_->dirty();
 }
 
 bool App::row_has_pending_edit(const std::string& edit_id) const {
@@ -320,6 +326,64 @@ bool App::row_is_pending_delete(const std::string& edit_id) const {
 
 bool App::edit_actions_available() const {
     return edit_mode_enabled_ && edit_registry_loaded_ && handle_ && has_model_ && !load_state_.running;
+}
+
+bool App::plan_alignment_actions_available() const {
+    return edit_actions_available() && !edit_ui_operation_pending() &&
+        distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
+        !distance_resolution_workflow_.retry_requested;
+}
+
+bool App::apply_plan_alignment_drafts() {
+    if (!plan_alignment_actions_available() || !plan_alignment_->dirty() ||
+        plan_alignment_->dragging()) return false;
+    plan_alignment_->set_source(model_, plan_data_source_revision_);
+    auto changes = pending_edit_changes_;
+    for (const auto& [id, draft] : plan_alignment_->drafts()) {
+        const auto* target = plan_alignment_->target(id);
+        if (!target || (draft.radius && !target->radius) || row_is_pending_delete(id)) {
+            KME_ADD_LOG("[error]2D alignment target is unavailable: " + id);
+            set_program_status("status.edit.distance_resolution_blocked");
+            return false;
+        }
+        auto [entry, inserted] = changes.try_emplace(id);
+        MapElementPendingChange& change = entry->second;
+        if (inserted) {
+            std::string error;
+            const std::string kind(target->row_kind);
+            const auto metadata = resolve_inspector_target_metadata(handle_, id, kind, &error);
+            if (!metadata) {
+                KME_ADD_LOG("[error]2D alignment target " + id + ": " + error);
+                set_program_status("status.edit.distance_resolution_blocked");
+                return false;
+            }
+            change.change_id = "change-" + id;
+            change.edit_id = id;
+            change.row_kind = kind;
+            change.expected_source_hash = metadata->expected_source_hash;
+        }
+        const auto baseline = original_edit_rows_.find(id);
+        const auto set_field = [&](const char* field, double value) {
+            if (baseline != original_edit_rows_.end() &&
+                table_cell_number(baseline->second.row, field) == value) {
+                change.field_changes.erase(field);
+            } else {
+                std::ostringstream text;
+                text << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+                change.field_changes[field] = text.str();
+            }
+        };
+        if (draft.distance && *draft.distance != target->distance) {
+            set_field("distance", *draft.distance);
+            change.distance_resolution_key.clear();
+            change.distance_boundary_token.clear();
+            change.distance_expression.clear();
+            change.confirm_environment_mismatch = false;
+        }
+        if (draft.radius && *draft.radius != *target->radius) set_field("radius", *draft.radius);
+        if (change.operation == "update" && change.field_changes.empty()) changes.erase(entry);
+    }
+    return apply_edit_ledger_to_preview(changes, std::nullopt, false, {}, true);
 }
 
 void App::set_edit_mode_enabled(bool enabled) {
@@ -344,6 +408,8 @@ void App::apply_edit_mode_enabled(bool enabled) {
     persist_user_settings();
 
     if (!edit_mode_enabled_) {
+        plan_alignment_->enabled = false;
+        plan_alignment_->clear_drafts();
         clear_scene_placement_edit_target();
         inspector_.open = false;
         pending_inspector_request_.reset();
@@ -1441,7 +1507,8 @@ bool App::sync_edit_memory_with_ledger(
 bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPendingChange>& changes,
                                        std::optional<MapElementInspectorRequest> reload_request,
                                        bool applying_delete,
-                                       std::string resolution_origin_edit_id) {
+                                       std::string resolution_origin_edit_id,
+                                       bool applying_plan_alignment) {
     EditTimingScope operation(*this, applying_delete ? "delete" : "apply");
     GuiTiming::Stage timing("preview.backup");
     edit_timing_change_count_ = changes.size();
@@ -1492,7 +1559,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             edit_timing_outcome_ = "needs_source_choice";
             begin_distance_resolution_workflow(
                 changes, std::move(reload_request), applying_delete,
-                std::move(resolution_origin_edit_id), resolution_requests);
+                std::move(resolution_origin_edit_id), resolution_requests, applying_plan_alignment);
         }
         return false;
     }
@@ -1749,6 +1816,10 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         set_program_status("status.edit.applied_to_preview");
     }
     if (reapplies_inspector_change) set_program_status("status.edit.applied_to_preview");
+    if (applying_plan_alignment) {
+        plan_alignment_->clear_drafts();
+        set_program_status("status.edit.applied_to_preview");
+    }
     timing.next("preview.text");
     refresh_text_preview_from_working_copy();
     distance_resolution_attempt_history_.rejected_choices.clear();
@@ -1757,6 +1828,10 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
 }
 
 bool App::save_pending_edits(bool refresh_inspector) {
+    if (plan_alignment_->dirty()) {
+        set_program_status("status.edit.apply_plan_before_save");
+        return false;
+    }
     EditTimingScope operation(*this, "save");
     GuiTiming::Stage timing("save.prepare");
     if (!edit_actions_available()) return false;
@@ -1834,6 +1909,10 @@ bool App::save_pending_edits(bool refresh_inspector) {
 bool App::save_pending_document_changes(bool refresh_inspector) {
     EditTimingScope operation(*this, "save");
     if (load_state_.running || !(edit_actions_available() || scenario_edit_actions_available())) {
+        return false;
+    }
+    if (plan_alignment_->dirty()) {
+        set_program_status("status.edit.apply_plan_before_save");
         return false;
     }
     if (has_unapplied_editable_list_drafts()) {
@@ -1938,6 +2017,7 @@ bool App::discard_pending_edits() {
         distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
         text_preview_.placement = TextPreviewPlacementState{};
         discard_all_editable_list_drafts();
+        plan_alignment_->clear_drafts();
         if (has_scenario_unsaved_changes()) revert_scenario_draft();
         return true;
     }
@@ -1947,6 +2027,7 @@ bool App::discard_pending_edits() {
     distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
     text_preview_.placement = TextPreviewPlacementState{};
     discard_all_editable_list_drafts();
+    plan_alignment_->clear_drafts();
     if (has_scenario_unsaved_changes()) revert_scenario_draft();
     return true;
 }
@@ -1970,6 +2051,7 @@ bool App::revert_all_pending_edits() {
     if (has_pending_edits() && !discard_pending_edits()) return false;
     if (has_scenario_unsaved_changes()) revert_scenario_draft();
     discard_all_editable_list_drafts();
+    plan_alignment_->clear_drafts();
 
     if (inspector_request && !open_element_inspector(*inspector_request)) {
         inspector_ = MapElementInspectorState{};

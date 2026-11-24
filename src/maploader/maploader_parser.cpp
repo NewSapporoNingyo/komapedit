@@ -1544,8 +1544,10 @@ private:
         } else if (fn == "end") {
             add_edit_row("Gradient.End");
             put_own(ctx_, "gradient", Value::num(0.0));
+        } else if (fn == "interpolate") {
+            add_edit_row("Gradient.Interpolate");
+            put_own(ctx_, "gradient", arg_or_null(a), "i");
         }
-        else if (fn == "interpolate") put_own(ctx_, "gradient", arg_or_null(a), "i");
     }
 
     void dispatch_legacy(const std::string& fn, const std::vector<Value>& a) {

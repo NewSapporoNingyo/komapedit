@@ -673,7 +673,9 @@ void App::render_plan_marker_context_menu(
                 if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
                     request_element_inspector(target_edit_id, target_row_kind);
                 }
-                if (ImGui::MenuItem(tr("button.delete").c_str())) {
+                const bool distance_only = marker && marker->gradient &&
+                    table_cell(model_.gradient_rows.at(marker->row_index), "method") == "Gradient.Interpolate";
+                if (!distance_only && ImGui::MenuItem(tr("button.delete").c_str())) {
                     request_element_delete(target_edit_id, target_row_kind);
                 }
                 ImGui::EndDisabled();

@@ -63,6 +63,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 2D Plan View and Charts
 
+- [x] [S3](devplan.md#s3) completed toolbar icon verification, 3D move/rotate input verification, and 2D own-track alignment editing. Drag curve, transition, and gradient endpoints, scroll to change explicit radii, and apply drafts through the shared edit ledger. The 2D performance benchmark and a real-route Save/reload passed.
 - [x] Split the 2D canvas internals into dedicated `.h/.cpp` modules for view state, marker caches, hit testing/context menus, background images, and drawing primitives while preserving the existing cache ownership, interaction thresholds, and draw order.
 - [x] Display the own-track plan view.
 - [x] Display enabled other tracks, with configurable visible range and color.
@@ -267,6 +268,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 2D 平面图与图表显示
 
+- [x] [S3](devplan.md#s3) 完成工具栏图标验收、3D 平移／旋转组合输入复核和 2D 自轨道线形编辑。可拖动曲线、缓和曲线和坡度端点，滚动调整显式半径，并通过共享编辑账本应用草稿。2D 性能验证及实线路保存重开通过。
 - [x] 将 2D 画布内部的视图状态、marker cache、hit-test/context menu、背景图和绘制 primitive 分拆为职责独立的 `.h/.cpp` 模块，并保持既有缓存所有权、交互阈值与绘制顺序。
 - [x] 显示自轨道平面图
 - [x] 显示已启用的他轨道，并可设置显示范围和颜色

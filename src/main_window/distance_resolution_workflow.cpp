@@ -318,7 +318,8 @@ void App::begin_distance_resolution_workflow(
     std::optional<MapElementInspectorRequest> reload_request,
     bool applying_delete,
     std::string origin_edit_id,
-    const std::vector<DistanceResolutionRequest>& requests) {
+    const std::vector<DistanceResolutionRequest>& requests,
+    bool applying_plan_alignment) {
     if (requests.empty()) return;
 
     DistanceResolutionWorkflowState workflow;
@@ -326,6 +327,7 @@ void App::begin_distance_resolution_workflow(
     workflow.candidate_changes = changes;
     workflow.reload_request = std::move(reload_request);
     workflow.applying_delete = applying_delete;
+    workflow.applying_plan_alignment = applying_plan_alignment;
     workflow.origin_edit_id = std::move(origin_edit_id);
     if (workflow.origin_edit_id.empty()) {
         for (const std::string& edit_id : workflow.request.affected_edit_ids) {
@@ -511,6 +513,7 @@ void App::confirm_distance_resolution_boundary() {
 }
 
 void App::cancel_distance_resolution_workflow() {
+    const bool plan_alignment_workflow = distance_resolution_workflow_.applying_plan_alignment;
     const bool had_active_workflow =
         distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
         distance_resolution_workflow_.retry_requested;
@@ -521,7 +524,7 @@ void App::cancel_distance_resolution_workflow() {
     text_preview_.placement = TextPreviewPlacementState{};
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
     distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
-    if (had_active_workflow && inspector_.open) {
+    if (had_active_workflow && (inspector_.open || plan_alignment_workflow)) {
         set_program_status("status.edit.distance_resolution_cancelled");
     }
 }
@@ -539,7 +542,7 @@ void App::process_distance_resolution_retry() {
             new_element_wizard_.return_inspector_request->edit_id;
     const bool applied = apply_edit_ledger_to_preview(
         workflow.candidate_changes, std::move(workflow.reload_request),
-        workflow.applying_delete, std::move(workflow.origin_edit_id));
+        workflow.applying_delete, std::move(workflow.origin_edit_id), workflow.applying_plan_alignment);
     if (applied) {
         if (finish_repeater_end_wizard) finish_new_element_wizard_after_successful_apply();
         return;

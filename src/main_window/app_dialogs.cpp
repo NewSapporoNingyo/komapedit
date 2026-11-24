@@ -14,6 +14,7 @@
 #endif
 
 #include "kme.h"
+#include "../canvas2d/canvas2d_alignment.h"
 #include "app_settings.h"
 #include "debug_headless.h"
 #include "touch_input.h"
@@ -1358,10 +1359,12 @@ void App::render_popups() {
                 ? "dialog.unsaved_exit_message"
                 : "dialog.unsaved_close_edit_message").c_str());
             const bool list_drafts_pending = has_unapplied_editable_list_drafts();
-            if (list_drafts_pending) {
+            const bool plan_drafts_pending = plan_alignment_->dirty();
+            if (plan_drafts_pending || list_drafts_pending) {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "%s",
-                                   tr("dialog.apply_list_before_save").c_str());
+                                   tr(plan_drafts_pending ? "status.edit.apply_plan_before_save"
+                                                          : "dialog.apply_list_before_save").c_str());
             }
             ImGui::PopTextWrapPos();
             ImGui::Separator();
@@ -1370,7 +1373,7 @@ void App::render_popups() {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            ImGui::BeginDisabled(list_drafts_pending);
+            ImGui::BeginDisabled(list_drafts_pending || plan_drafts_pending);
             if (ImGui::Button(tr(exiting
                     ? "button.save_changes_and_exit"
                     : "button.save_changes_and_close_edit").c_str())) {

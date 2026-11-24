@@ -702,7 +702,7 @@ int main(int, char**) {
             std::cerr << plan_bench.error << "\n"
                       << "usage: komapedit.exe --debug-headless-plan-bench <map-path> "
                       << "[--frames N] [--unit-distance M] [--pan-pixels P] "
-                      << "[--interaction pan|measure-stationary|measure-moving] "
+                      << "[--interaction pan|measure-stationary|measure-moving|edit-stationary|edit-drag|edit-wheel] "
                       << "[--max-frame-ms MS] [--headless-output FILE] [--profile-stages]\n";
             return 1;
         }

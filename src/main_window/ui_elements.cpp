@@ -17,6 +17,7 @@
 #endif
 
 #include "kme.h"
+#include "../canvas2d/canvas2d_alignment.h"
 #include "app_settings.h"
 #include "debug_headless.h"
 #include "touch_input.h"
@@ -1080,10 +1081,11 @@ void App::render_toolbar() {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
+        const bool plan_drafts_pending = plan_alignment_->dirty();
         ImGui::BeginDisabled(operation_pending ||
                              !(edit_actions_available() || scenario_edit_actions_available()) ||
-                             !(has_pending_edits() || has_scenario_unsaved_changes()) ||
-                             has_unapplied_editable_list_drafts());
+                             !(has_pending_edits() || has_scenario_unsaved_changes() || plan_drafts_pending) ||
+                             (has_unapplied_editable_list_drafts() && !plan_drafts_pending));
         if (toolbar_icons_.button(toolbar_icons::Icon::Save, tr("button.save").c_str())) {
             request_edit_ui_operation(PendingEditUiOperation::Save);
         }
@@ -1362,6 +1364,8 @@ void App::handle_shortcuts() {
 
 void App::render() {
     process_pending_edit_ui_operation();
+    const std::string plan_preview_error = plan_alignment_->poll();
+    if (!plan_preview_error.empty()) KME_ADD_LOG("[error]2D alignment preview: " + plan_preview_error);
     touch_input::new_frame();
     poll_loader();
     handle_shortcuts();

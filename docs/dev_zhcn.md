@@ -424,6 +424,11 @@ foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
 - **查询与业务数据**：`nearest_own_index()`、`interp_own_z()`、`track_info_at()`、`speed_at()`、`curve_sections()` 为测量和叠加层采样；`build_plan_data()` 合并 own/other track、站点、限速与 marker，`current_plan_data()` 以 model/geometry/visibility revision 缓存；profile 数据有相同 build/current 分层。
 - **视图操作与主流程**：测量、聚焦、坐标转换及 `jump_to_distance()` 统一导航；`render_plan_canvas()` 编排鼠标/触摸交互、可见里程计算，以及背景、网格、轨道、Repeater、车站、标记、标签、3D 位置和焦点的绘制。
 
+#### `src/canvas2d/canvas2d_alignment.cpp` 与 `src/shared/own_track_geometry.cpp`
+
+- 线形编辑器将画布手势写入按稳定编辑 ID 保存的类型化草稿。后台线程保留最新候选，复用受影响边界之前的采样几何，并按当前模型、草稿和采样参数发布结果。
+- maploader 与 EXE 使用同一 C++ 模块计算正式自轨道与草稿几何。应用将草稿合并到现有编辑账本，执行源码定位、重解析及视图刷新。
+
 #### `src/canvas2d/canvas2d_view_state.h` 与 `src/canvas2d/canvas2d_view_state.cpp`
 
 - `App` 持有的 `View2D` 保存视图中心、比例、旋转、fit 与拖动状态，并提供 world/screen 转换、屏幕增量平移和自适应范围。
@@ -741,6 +746,8 @@ Canvas3D 在替换场景时建立放置轨道索引，支持自轨道别名、�
 
 `--debug-headless-plan-bench` 默认 `--interaction pan`，比较缓存与直接计算的曲线、缓和曲线和 Interpolate 端点。测量模式将命中结果与穷举对照：小点集线性扫描，大点集使用空间网格；`measure-stationary` 固定指针，`measure-moving` 使用确定轨迹。
 
+`edit-stationary`、`edit-drag` 和 `edit-wheel` 记录草稿绘制、输入到预览的延迟、后台计算次数和复用采样行数。拖动基准同时检查 Esc 取消。自轨道编辑命令验证连续输入合并、Include 源码保真，以及预览、内存应用和保存重开的几何一致性。
+
 plan、scene 和 own-track-edit 共用临时 Map/Include 契约，覆盖 Interpolate 的 0/1/2 参数、Apply/Delete/Reset、源码身份及唯一可编辑标记。真实线路按实际存在的目标验证；空的行、事件和标记集合须一致，依赖实例的检查记为不适用。own-track-edit 还检查 Preview→Edit 合并，包括通过 `rand()` 选择源码文件的地图。
 
 `--debug-headless-table-cache-bench` 使用 Edit 元数据及关闭 INI 持久化的 ImGui/ImPlot context。预热后分别测量冷缓存重建、热缓存单次命中和全部表格的一帧绘制，核对行、单元格、身份、动态标题/宽度的指纹。源码字节/哈希检查位于计时区间外。默认重复 5 次（范围 1–100），采样间距 25 m。
@@ -759,7 +766,7 @@ plan、scene 和 own-track-edit 共用临时 Map/Include 契约，覆盖 Interpo
 build\komapedit.exe --headless-load-map <map-path> --headless-output build\headless-load-map.txt
 build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N] [--expect-no-map] [--scenario-edit-roundtrip] --headless-output build\headless-load-scenario.txt
 build\komapedit.exe --debug-headless-scenario-lifecycle <scenario-path> [--scenario-index N] [--unit-distance M] --headless-output build\scenario-lifecycle.txt
-build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
+build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving|edit-stationary|edit-drag|edit-wheel --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
 build\komapedit.exe --debug-headless-table-cache-bench <map-path> --repeat 5 --unit-distance 25 --headless-output build\table-cache-bench.txt
 build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 [--interaction stationary|moving] [--profile-stages] --headless-output build\headless-scene3d-bench.txt

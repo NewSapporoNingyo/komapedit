@@ -65,6 +65,7 @@ struct HeadlessOpenBenchmarkOptions;
 struct HeadlessTableCacheBenchmarkOptions;
 struct HeadlessEditBenchmarkOptions;
 struct HeadlessOwnTrackEditOptions;
+namespace canvas2d { class AlignmentEditor; }
 struct HeadlessOtherTrackEditOptions;
 struct HeadlessCreatorMessageOptions;
 struct HeadlessOtherTrackKeyEditOptions;
@@ -271,6 +272,8 @@ struct TrackEvent {
     double number = 0.0;
     std::string text;
     size_t source_row_index = std::numeric_limits<size_t>::max();
+    int source_order = 0;
+    bool continues = false;
 };
 
 struct OwnTrackEditMarker {
@@ -1694,6 +1697,7 @@ struct DistanceResolutionWorkflowState {
     std::map<std::string, MapElementPendingChange> candidate_changes;
     std::optional<MapElementInspectorRequest> reload_request;
     bool applying_delete = false;
+    bool applying_plan_alignment = false;
     std::string origin_edit_id;
     // The other groups' manual choices are part of this context. A failed
     // expression at one boundary must not reject it at another boundary.
@@ -2004,6 +2008,7 @@ public:
     static int run_debug_headless_table_find(const std::string& output_path);
     static bool debug_section_inspector_lifecycle(std::ostream& out);
     static bool debug_curve_interpolate_contract(double unit_distance, std::ostream& out);
+    static bool debug_plan_alignment_contract(double unit_distance, std::ostream& out);
     static bool debug_csv_write_failure_contract();
     static bool debug_background_texture_contract(
         ID3D11Device* device, const std::string& image_path, std::ostream& out);
@@ -2157,6 +2162,7 @@ private:
     enum class PendingEditUiOperation {
         None,
         ApplyInspector,
+        ApplyPlanAlignment,
         ApplyNewElement,
         ApplyOtherTrackRename,
         ApplyCreatorMessages,
@@ -2263,6 +2269,7 @@ private:
 
     enum class GridMode { Fixed, Movable, None };
     enum class Mode { Pan, Measure };
+    std::unique_ptr<canvas2d::AlignmentEditor> plan_alignment_;
     GridMode grid_mode_ = GridMode::Fixed;
     Mode mode_ = Mode::Pan;
 
@@ -2634,13 +2641,15 @@ private:
     bool apply_edit_ledger_to_preview(const std::map<std::string, MapElementPendingChange>& changes,
                                       std::optional<MapElementInspectorRequest> reload_request,
                                       bool applying_delete,
-                                      std::string resolution_origin_edit_id = {});
+                                      std::string resolution_origin_edit_id = {},
+                                      bool applying_plan_alignment = false);
     void begin_distance_resolution_workflow(
         const std::map<std::string, MapElementPendingChange>& changes,
         std::optional<MapElementInspectorRequest> reload_request,
         bool applying_delete,
         std::string origin_edit_id,
-        const std::vector<DistanceResolutionRequest>& requests);
+        const std::vector<DistanceResolutionRequest>& requests,
+        bool applying_plan_alignment = false);
     void prepare_distance_resolution_operation(
         const std::map<std::string, MapElementPendingChange>& changes);
     bool distance_resolution_choice_rejected(const DistanceResolutionChoice& choice) const;
@@ -2793,6 +2802,8 @@ private:
     void render_toolbar();
     void render_status_bar();
     void render_mode_grid_controls();
+    bool plan_alignment_actions_available() const;
+    bool apply_plan_alignment_drafts();
     void render_station_jump_combo();
     void render_distance_jump_control();
     void render_console();

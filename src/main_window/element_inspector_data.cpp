@@ -1571,6 +1571,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             } else if (!curve && argument_count > 0) {
                 add_row_field("gradient", "Gradient",
                               MapElementNumericConstraint::Finite, true);
+                next.fields.back().read_only = method == "gradient.interpolate";
             }
         }
     } else if (request.row_kind == "otherTrack.change") {

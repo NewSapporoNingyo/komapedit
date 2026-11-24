@@ -10,6 +10,7 @@
 #endif
 
 #include "kme.h"
+#include "canvas2d_alignment.h"
 #include "canvas2d_background.h"
 #include "canvas2d_interaction.h"
 #include "canvas2d_marker_cache.h"
@@ -453,7 +454,9 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         }
     }
 
-    if (show_curve_values_) {
+    const bool show_plan_curves = show_curve_values_ || plan_alignment_->enabled;
+    const bool show_plan_gradients = show_gradient_pos_ || plan_alignment_->enabled;
+    if (show_plan_curves) {
         std::vector<const TrackEvent*> radius;
         std::vector<route_value_sampling::Event> radius_events;
         double current_radius = 0.0;
@@ -501,8 +504,8 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     if (edit_mode_enabled_) {
         for (const OwnTrackEditMarker& source : own_track_edit_marker_cache_) {
             if (source.d < dmin_ || source.d > dmax_) continue;
-            if ((!source.gradient && !show_curve_values_) ||
-                (source.gradient && !show_gradient_pos_)) {
+            if ((!source.gradient && !show_plan_curves) ||
+                (source.gradient && !show_plan_gradients)) {
                 continue;
             }
             OwnTrackEditMarker marker = source;
@@ -520,6 +523,8 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
 }
 
 const PlanData& App::current_plan_data() {
+    const bool show_plan_curves = show_curve_values_ || plan_alignment_->enabled;
+    const bool show_plan_gradients = show_gradient_pos_ || plan_alignment_->enabled;
     std::uint32_t marker_visibility_mask = 0;
     auto include_visibility = [&](bool visible, unsigned bit) {
         if (visible) marker_visibility_mask |= std::uint32_t{1} << bit;
@@ -550,8 +555,8 @@ const PlanData& App::current_plan_data() {
         plan_data_cache_.mode == mode_ &&
         plan_data_cache_.fitted == plan_view_.fitted &&
         plan_data_cache_.scale == plan_view_.scale &&
-        plan_data_cache_.show_curve_values == show_curve_values_ &&
-        plan_data_cache_.show_gradient_positions == show_gradient_pos_ &&
+        plan_data_cache_.show_curve_values == show_plan_curves &&
+        plan_data_cache_.show_gradient_positions == show_plan_gradients &&
         plan_data_cache_.edit_mode_enabled == edit_mode_enabled_ &&
         plan_data_cache_.marker_visibility_mask == marker_visibility_mask &&
         plan_data_cache_.structure_row_visible == structure_row_visible_ &&
@@ -568,8 +573,8 @@ const PlanData& App::current_plan_data() {
     plan_data_cache_.mode = mode_;
     plan_data_cache_.fitted = plan_view_.fitted;
     plan_data_cache_.scale = plan_view_.scale;
-    plan_data_cache_.show_curve_values = show_curve_values_;
-    plan_data_cache_.show_gradient_positions = show_gradient_pos_;
+    plan_data_cache_.show_curve_values = show_plan_curves;
+    plan_data_cache_.show_gradient_positions = show_plan_gradients;
     plan_data_cache_.edit_mode_enabled = edit_mode_enabled_;
     plan_data_cache_.marker_visibility_mask = marker_visibility_mask;
     plan_data_cache_.structure_row_visible = structure_row_visible_;
@@ -829,16 +834,27 @@ void App::render_mode_grid_controls() {
     ImGui::Text("%s:", tr("frame.mode").c_str());
     ImGui::SameLine();
     const Mode previous_mode = mode_;
+    const bool was_editing = plan_alignment_->enabled;
     if (toolbar_icons_.button(toolbar_icons::Icon::Move, tr("mode.pan").c_str(),
-                              previous_mode == Mode::Pan)) {
+                              !was_editing && previous_mode == Mode::Pan)) {
+        plan_alignment_->enabled = false;
         mode_ = Mode::Pan;
     }
     ImGui::SameLine();
     if (toolbar_icons_.button(toolbar_icons::Icon::Measure, tr("mode.measure").c_str(),
-                              previous_mode == Mode::Measure)) {
+                              !was_editing && previous_mode == Mode::Measure)) {
+        plan_alignment_->enabled = false;
         mode_ = Mode::Measure;
     }
-    if (previous_mode != mode_) {
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!plan_alignment_actions_available());
+    if (toolbar_icons_.button(toolbar_icons::Icon::Edit, tr("mode.edit").c_str(),
+                              plan_alignment_->enabled)) {
+        plan_alignment_->enabled = true;
+    }
+    ImGui::EndDisabled();
+    if (previous_mode != mode_ || was_editing != plan_alignment_->enabled) {
+        if (!plan_alignment_->enabled) plan_alignment_->cancel_drag();
         if (mode_ == Mode::Pan) clear_measure();
         wake_main_window();
     }
@@ -863,6 +879,13 @@ void App::render_mode_grid_controls() {
         grid_mode_ = GridMode::None;
     }
     if (grid_mode_ != previous_grid_mode) wake_main_window();
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+    ImGui::BeginDisabled(!plan_alignment_actions_available() || !plan_alignment_->dirty() ||
+                         plan_alignment_->dragging());
+    if (toolbar_icons_.button(toolbar_icons::Icon::Apply, tr("button.apply").c_str())) {
+        request_edit_ui_operation(PendingEditUiOperation::ApplyPlanAlignment);
+    }
+    ImGui::EndDisabled();
     ImGui::PopID();
 }
 
@@ -919,15 +942,31 @@ void App::render_plan_canvas(ImVec2 size) {
     ImVec2 mouse = io.MousePos;
     if (touch.long_press) mouse = touch.long_press_pos;
     else if (touch.tap) mouse = touch.tap_pos;
+    const bool alignment_mode = plan_alignment_->enabled && !model_.own.empty();
+    const bool show_plan_curves = show_curve_values_ || alignment_mode;
+    const float marker_size_scale = marker_size_scale_from_percent(marker_size_percent_);
+    bool alignment_input = false;
+    if (alignment_mode) {
+        plan_alignment_->set_source(model_, plan_data_source_revision_);
+        const auto input_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
+        const auto* input_overlay = plan_alignment_->overlay(
+            data, plan_data_cache_.generation, input_transform);
+        alignment_input = plan_alignment_->process_mouse(
+            data, input_overlay, plan_alignment_->geometry(model_.own), input_transform, mouse,
+            dmin_, dmax_, marker_size_scale,
+            hovered && !picking_background_station && !touch.tap && touch.active_count == 0 &&
+                plan_alignment_actions_available(),
+            show_plan_curves, plan_marker_selection_);
+    }
     auto nearest_measure_distance = [&]() -> std::optional<double> {
         return nearest_plan_measure_distance(origin, avail, mouse);
     };
     std::optional<double> hovered_measure_distance;
-    if (hovered && mode_ == Mode::Measure && !data.own.empty()) {
+    if (hovered && !alignment_mode && mode_ == Mode::Measure && !data.own.empty()) {
         hovered_measure_distance = nearest_measure_distance();
         if (hovered_measure_distance) set_crosshair_cursor();
     }
-    if (hovered && io.MouseWheel != 0.0f) {
+    if (hovered && !alignment_input && io.MouseWheel != 0.0f) {
         if (io.KeyShift) {
             plan_view_.rotation += io.MouseWheel * 5.0 * 3.14159265358979323846 / 180.0;
         } else {
@@ -935,7 +974,8 @@ void App::render_plan_canvas(ImVec2 size) {
             plan_view_.scale = std::clamp(plan_view_.scale * factor, 0.001, 10000.0);
         }
     }
-    if (hovered && mode_ == Mode::Pan && pick_slot_ == 0 && touch.pinch && touch.active_count >= 2 &&
+    if (hovered && !alignment_input && (mode_ == Mode::Pan || alignment_mode) &&
+        pick_slot_ == 0 && touch.pinch && touch.active_count >= 2 &&
         point_near_canvas(touch.pinch_center, origin, avail, 0.0f)) {
         ImVec2 anchor_before = plan_view_.screen_to_world(touch.pinch_center, origin, avail);
         const double scale_delta = std::abs(static_cast<double>(touch.pinch_scale) - 1.0) < 0.004
@@ -958,12 +998,12 @@ void App::render_plan_canvas(ImVec2 size) {
         [](unsigned char visible) { return visible != 0; }));
     bool dense_repeater_marker_lod = dense_repeater_overview_lod(selected_repeater_count, plan_view_.scale);
     bool overview_marker_lod = dense_repeater_marker_lod;
-    const float marker_size_scale = marker_size_scale_from_percent(marker_size_percent_);
     const float marker_canvas_margin = std::max(12.0f, 12.0f * marker_size_scale);
     const double marker_hover_radius = static_cast<double>(marker_canvas_margin);
     const double marker_hover_radius_sq = marker_hover_radius * marker_hover_radius;
     const bool marker_hits_enabled =
-        hovered && mode_ == Mode::Pan && !picking_background_station;
+        hovered && (mode_ == Mode::Pan || alignment_mode) &&
+        !picking_background_station && !plan_alignment_->dragging();
     auto nearest_marker_hit = [&](const auto& markers,
                                   const PlanScreenTransform& hit_transform,
                                   bool suppressed = false) -> std::optional<MarkerHit> {
@@ -972,6 +1012,14 @@ void App::render_plan_canvas(ImVec2 size) {
             marker_hits_enabled && !suppressed);
     };
     PlanScreenTransform hit_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
+    const auto* alignment_overlay = alignment_mode
+        ? plan_alignment_->overlay(data, plan_data_cache_.generation, hit_transform) : nullptr;
+    const auto& curve_edit_markers = alignment_overlay
+        ? alignment_overlay->curve_markers : data.curve_edit_markers;
+    const auto& gradient_edit_markers = alignment_overlay
+        ? alignment_overlay->gradient_markers : data.gradient_edit_markers;
+    const auto& interpolate_markers = alignment_overlay
+        ? alignment_overlay->interpolate_markers : data.curve_interpolate_markers;
     std::optional<MarkerHit> hovered_station_hit =
         nearest_marker_hit(data.stations, hit_transform, !show_stations_);
     std::optional<MarkerHit> hovered_structure_hit =
@@ -1015,12 +1063,12 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<MarkerHit> hovered_speed_limit_hit =
         nearest_marker_hit(data.speedlimits, hit_transform, !show_speedlimits_);
     std::optional<MarkerHit> hovered_curve_edit_hit =
-        nearest_marker_hit(data.curve_edit_markers, hit_transform);
+        nearest_marker_hit(curve_edit_markers, hit_transform);
     std::optional<MarkerHit> hovered_curve_interpolate_hit =
-        nearest_marker_hit(data.curve_interpolate_markers, hit_transform,
-                           !show_curve_values_);
+        nearest_marker_hit(interpolate_markers, hit_transform,
+                           !show_plan_curves);
     std::optional<MarkerHit> hovered_gradient_edit_hit =
-        nearest_marker_hit(data.gradient_edit_markers, hit_transform);
+        nearest_marker_hit(gradient_edit_markers, hit_transform);
     std::optional<MarkerHit> hovered_curve_gauge_hit =
         nearest_marker_hit(data.curve_gauge_markers, hit_transform);
     std::optional<MarkerHit> hovered_curve_center_hit =
@@ -1175,8 +1223,10 @@ void App::render_plan_canvas(ImVec2 size) {
     }
 
     const bool touch_multi_input = touch.active_count >= 2 || touch.pinch;
-    bool rotate_plan = hovered && !touch_multi_input && io.KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    if (hovered && mode_ == Mode::Pan && !touch_multi_input &&
+    const bool rotate_plan = hovered && !alignment_input && !touch_multi_input &&
+        io.KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    if (hovered && !alignment_input && (mode_ == Mode::Pan || alignment_mode) &&
+        !touch_multi_input && !picking_background_station &&
         ImGui::IsMouseDown(ImGuiMouseButton_Left) && !rotate_plan) {
         if (!plan_view_.dragging) {
             plan_view_.dragging = true;
@@ -1206,7 +1256,7 @@ void App::render_plan_canvas(ImVec2 size) {
         plan_view_.rotating = false;
     }
 
-    if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+    if (hovered && !alignment_input && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         ImVec2 world = plan_view_.screen_to_world(mouse, origin, avail);
         if (pick_slot_ == 1) {
             if (auto uv = background_uv_from_world(world)) align_pick1_ = *uv;
@@ -1216,7 +1266,7 @@ void App::render_plan_canvas(ImVec2 size) {
             if (auto uv = background_uv_from_world(world)) align_pick2_ = *uv;
             pick_slot_ = 0;
             popups_.background_align = true;
-        } else if (mode_ == Mode::Measure) {
+        } else if (!alignment_mode && mode_ == Mode::Measure) {
             if (auto clicked_distance = nearest_measure_distance()) {
                 update_measure(*clicked_distance);
                 request_plot_focus(*clicked_distance, true, true);
@@ -1288,11 +1338,26 @@ void App::render_plan_canvas(ImVec2 size) {
                             static_cast<size_t>(last - data.own.begin()),
                             transform, origin, avail, color, width);
     };
-    if (show_curve_values_) {
+    const Matrix& alignment_track = alignment_mode ? plan_alignment_->geometry(model_.own) : model_.own;
+    if (alignment_mode) {
+        for (const auto& span : plan_alignment_->spans()) {
+            const double start = std::max(span.start, dmin_);
+            const double end = std::min(span.end, dmax_);
+            if (start >= end) continue;
+            const ImU32 color = span.transition ? IM_COL32(84, 84, 84, 220) : IM_COL32(130, 130, 130, 220);
+            const float width = (span.transition ? 8.0f : 10.0f) * marker_size_scale;
+            draw_matrix_plan_polyline(draw, alignment_track, start, end, transform, origin, avail, color, width);
+        }
+    } else if (show_curve_values_) {
         for (const auto& s : data.curve_sections) draw_section(s, IM_COL32(130, 130, 130, 220), 10.0f * marker_size_scale);
         for (const auto& s : data.transition_sections) draw_section(s, IM_COL32(84, 84, 84, 220), 8.0f * marker_size_scale);
     }
-    draw_polyline(draw, data.own, transform, origin, avail, IM_COL32(245, 245, 245, 255), line_widths.own_track_px);
+    if (alignment_overlay) {
+        draw_matrix_plan_polyline(draw, alignment_track, dmin_, dmax_, transform, origin, avail,
+                                  IM_COL32(245, 245, 245, 255), line_widths.own_track_px);
+    } else {
+        draw_polyline(draw, data.own, transform, origin, avail, IM_COL32(245, 245, 245, 255), line_widths.own_track_px);
+    }
     auto draw_own_track_edit_markers = [&](const std::vector<OwnTrackEditMarker>& markers,
                                            PlanMarkerKind kind) {
         for (const OwnTrackEditMarker& marker : markers) {
@@ -1318,8 +1383,8 @@ void App::render_plan_canvas(ImVec2 size) {
             if (active) draw_plan_small_text(draw, point, color, marker.label);
         }
     };
-    draw_own_track_edit_markers(data.curve_edit_markers, PlanMarkerKind::Curve);
-    draw_own_track_edit_markers(data.gradient_edit_markers, PlanMarkerKind::Gradient);
+    draw_own_track_edit_markers(curve_edit_markers, PlanMarkerKind::Curve);
+    draw_own_track_edit_markers(gradient_edit_markers, PlanMarkerKind::Gradient);
     auto draw_curve_parameter_markers = [&](const std::vector<PlanCurveParameterMarker>& markers,
                                             PlanMarkerKind kind,
                                             const std::optional<MarkerHit>& hovered_hit) {
@@ -1494,13 +1559,13 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
 
-    if (show_curve_values_) {
+    if (show_plan_curves) {
         const ImU32 curve_color = IM_COL32(136, 255, 136, 255);
         const ImVec4 curve_theme = ImGui::ColorConvertU32ToFloat4(curve_color);
         for (size_t marker_index = 0;
-             marker_index < data.curve_interpolate_markers.size(); ++marker_index) {
+             marker_index < interpolate_markers.size(); ++marker_index) {
             const PlanCurveInterpolateMarker& marker =
-                data.curve_interpolate_markers[marker_index];
+                interpolate_markers[marker_index];
             const ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
             const bool marker_hovered = hovered_curve_interpolate_hit &&
@@ -1706,7 +1771,17 @@ void App::render_plan_canvas(ImVec2 size) {
     }
     debug_plan_stage("structure_markers");
 
-    if (show_curve_values_) {
+    if (alignment_mode) {
+        for (const auto& span : plan_alignment_->spans()) {
+            const double start = std::max(span.start, dmin_);
+            const double end = std::min(span.end, dmax_);
+            if (start >= end || span.label.empty()) continue;
+            const auto point = sample_matrix_track_point(alignment_track, (start + end) * 0.5, true);
+            const ImVec2 p = transform.model_to_screen(point->x, point->y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            draw->AddText(ImVec2(p.x + 8, p.y - 16), IM_COL32(136, 255, 136, 255), span.label.c_str());
+        }
+    } else if (show_curve_values_) {
         for (const auto& sec : data.curve_sections) {
             double mid = (sec.start + sec.end) * 0.5;
             auto it = std::lower_bound(data.own.begin(), data.own.end(), mid, [](const TrackPoint& p, double d) { return p.d < d; });
@@ -1722,7 +1797,7 @@ void App::render_plan_canvas(ImVec2 size) {
         update_measure(*hovered_measure_distance);
     }
 
-    if (mode_ == Mode::Measure && measure_distance_ && !data.own.empty()) {
+    if (!alignment_mode && mode_ == Mode::Measure && measure_distance_ && !data.own.empty()) {
         auto it = std::lower_bound(data.own.begin(), data.own.end(), *measure_distance_, [](const TrackPoint& p, double d) { return p.d < d; });
         if (it == data.own.end()) {
             --it;
@@ -1758,6 +1833,7 @@ void App::render_plan_canvas(ImVec2 size) {
 
     draw->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(255, 255, 255, 255), tr("canvas.plan").c_str());
     draw_scalebar(draw, plan_view_, origin, avail);
+    if (alignment_mode) plan_alignment_->draw_drag_label(draw, mouse, marker_size_scale);
     draw->PopClipRect();
     debug_plan_stage("overlays_done");
     render_plan_marker_context_menu("plan_marker_context", plan_context_menu_entries_);

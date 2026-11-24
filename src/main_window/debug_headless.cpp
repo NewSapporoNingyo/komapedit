@@ -16,7 +16,10 @@
 #include "maploader.h"
 #include "repeater_linkage.h"
 #include "touch_input.h"
+#include "../canvas2d/canvas2d_alignment.h"
 #include "../canvas2d/canvas2d_interaction.h"
+#include "../canvas2d/canvas2d_marker_cache.h"
+#include "../canvas2d/canvas2d_primitives.h"
 #include "../maploader/text_decoder.h"
 
 #include "imgui.h"
@@ -742,11 +745,13 @@ HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::ve
             }
         } else if (arg == "--interaction") {
             const std::string* value = take_option_value(
-                args, i, arg, "pan, measure-stationary, or measure-moving", options.error);
+                args, i, arg, "a 2D interaction", options.error);
             if (!value) return options;
             if (*value != "pan" && *value != "measure-stationary" &&
-                *value != "measure-moving") {
-                options.error = "--interaction must be pan, measure-stationary, or measure-moving";
+                *value != "measure-moving" && *value != "edit-stationary" &&
+                *value != "edit-drag" && *value != "edit-wheel") {
+                options.error = "--interaction must be pan, measure-stationary, measure-moving, "
+                                "edit-stationary, edit-drag, or edit-wheel";
                 return options;
             }
             options.interaction = *value;
@@ -4370,6 +4375,7 @@ int App::run_debug_headless_own_track_edit(
     ImGui::GetIO().IniFilename = nullptr;
     const bool interpolate_provenance_fixture_ok =
         debug_curve_interpolate_contract(options.unit_distance, *out);
+    const bool alignment_fixture_ok = debug_plan_alignment_contract(options.unit_distance, *out);
     {
         UserSettings settings;
         settings.language = Language::En;
@@ -4453,7 +4459,7 @@ int App::run_debug_headless_own_track_edit(
         }
     };
 
-    int failed_cases = interpolate_provenance_fixture_ok ? 0 : 1;
+    int failed_cases = interpolate_provenance_fixture_ok && alignment_fixture_ok ? 0 : 1;
     auto apply_update_case = [&](const char* label, const std::string& kind,
                                  const TableRow* target, const char* field,
                                  double delta) {
@@ -12020,7 +12026,10 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         app.plot_max_ = app.dmax_;
         app.rebuild_marker_overlay_cache();
         app.reset_marker_visibility();
-        const bool measure_interaction = interaction != "pan";
+        const bool measure_interaction =
+            interaction == "measure-stationary" || interaction == "measure-moving";
+        const bool alignment_interaction =
+            interaction == "edit-stationary" || interaction == "edit-drag" || interaction == "edit-wheel";
         if (measure_interaction) {
             app.mode_ = Mode::Measure;
             io.MousePos = ImVec2(640.0f, 360.0f);
@@ -12096,6 +12105,8 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
              << " repeater_chunk_points=" << segment_point_count << "\n";
         out->flush();
 
+        ImVec2 alignment_origin;
+        ImVec2 alignment_size;
         auto render_frame = [&]() {
             io.DisplaySize = ImVec2(1280.0f, 720.0f);
             io.DeltaTime = 1.0f / 60.0f;
@@ -12105,7 +12116,17 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
             ImGui::Begin("DebugHeadlessPlanBenchmark", nullptr, flags);
+            if (alignment_interaction) {
+                const std::string error = app.plan_alignment_->poll();
+                if (!error.empty()) throw std::runtime_error(error);
+            }
             app.render_plan_canvas(ImVec2(1260.0f, 680.0f));
+            if (alignment_interaction) {
+                const auto* child = ImGui::GetCurrentWindowRead()->DC.ChildWindows.back();
+                alignment_origin = child->DC.CursorStartPos;
+                alignment_size = ImVec2(child->ContentRegionRect.Max.x - alignment_origin.x,
+                                        child->ContentRegionRect.Max.y - alignment_origin.y);
+            }
             if (g_debug_plan_benchmark_log) {
                 int total_vtx = 0;
                 int total_idx = 0;
@@ -12475,6 +12496,64 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
 
         std::vector<double> frame_ms;
         frame_ms.reserve(static_cast<size_t>(frames));
+        auto& alignment = *app.plan_alignment_;
+        std::string alignment_id;
+        double edit_distance = 0.0;
+        constexpr double alignment_scale = 2.0;
+        if (alignment_interaction) {
+            app.edit_mode_enabled_ = true;
+            app.edit_registry_loaded_ = true;
+            app.show_curve_values_ = true;
+            app.show_gradient_pos_ = true;
+            app.rebuild_marker_overlay_cache();
+            alignment.enabled = true;
+            alignment.measure_preview();
+            alignment.set_source(app.model_, app.plan_data_source_revision_);
+            const double middle = (app.dmin_ + app.dmax_) * 0.5;
+            const canvas2d::AlignmentSpan* selected = nullptr;
+            for (const auto& span : alignment.spans()) {
+                if (span.transition || span.edit_id.empty() || span.end - span.start < 40.0 ||
+                    span.start < app.dmin_ || span.end > app.dmax_) continue;
+                if (!selected || std::abs(span.start - middle) < std::abs(selected->start - middle)) {
+                    selected = &span;
+                }
+            }
+            if (!selected) throw std::runtime_error("no visible curve for alignment benchmark");
+            alignment_id = selected->edit_id;
+            edit_distance = interaction == "edit-drag" ? alignment.target(alignment_id)->distance
+                                                       : (selected->start + selected->end) * 0.5;
+            const auto point = canvas2d::sample_matrix_track_point(app.model_.own, edit_distance, true).value();
+            app.focus_plan_at_model_point(point.x, point.y);
+            app.plan_view_.scale = alignment_scale;
+            if (interaction == "edit-stationary") alignment.step_radius(alignment_id, 1);
+            render_frame();
+        }
+        auto settle_alignment = [&]() {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while (alignment.dirty() && !alignment.current_preview_ready() &&
+                   std::chrono::steady_clock::now() < deadline) {
+                const std::string error = alignment.poll();
+                if (!error.empty()) throw std::runtime_error(error);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        };
+        if (alignment_interaction) settle_alignment();
+        const auto stationary_computations = alignment.metrics().computed;
+        const auto alignment_pointer = [&](double distance, const Matrix& geometry) {
+            const auto point = canvas2d::sample_matrix_track_point(geometry, distance, true).value();
+            const auto transform = canvas2d::make_plan_transform(
+                app.plan_view_, -app.current_plan_origin_angle(), alignment_origin, alignment_size);
+            const ImVec2 screen = transform.model_to_screen(point.x, point.y);
+            io.AddMousePosEvent(screen.x, screen.y);
+        };
+        if (interaction == "edit-drag") {
+            alignment_pointer(edit_distance, app.model_.own);
+            render_frame();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            render_frame();
+            if (!alignment.dragging()) throw std::runtime_error("could not start benchmark handle drag");
+        }
+
         auto set_interaction_input = [&](int frame) {
             if (interaction == "pan") return;
             if (interaction == "measure-moving") {
@@ -12486,21 +12565,61 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             }
         };
         for (int frame = 0; frame < frames; ++frame) {
-            if (interaction == "pan") {
+            const auto frame_due = std::chrono::steady_clock::now() + std::chrono::milliseconds(16);
+            if (interaction == "edit-drag") {
+                const int sweep = frame % 8;
+                const double offset = 5.0 * (1 + (sweep < 4 ? sweep : 7 - sweep));
+                alignment_pointer(edit_distance + offset, app.model_.own);
+            } else if (interaction == "edit-wheel") {
+                alignment_pointer(edit_distance, alignment.geometry(app.model_.own));
+                io.AddMouseWheelEvent(0.0f, frame % 4 < 2 ? 1.0f : -1.0f);
+            } else if (interaction == "pan") {
                 const double step = (frame % 120 < 60) ? pan_pixels : -pan_pixels;
                 app.plan_view_.pan_by_screen_delta(ImVec2(static_cast<float>(step), 0.0f));
-            } else {
+            } else if (measure_interaction) {
                 set_interaction_input(frame);
             }
             auto started_at = std::chrono::steady_clock::now();
             render_frame();
             auto finished_at = std::chrono::steady_clock::now();
             frame_ms.push_back(std::chrono::duration<double, std::milli>(finished_at - started_at).count());
+            if (alignment_interaction) std::this_thread::sleep_until(frame_due);
         }
         *out << "stage=frames-complete\n";
         out->flush();
 
         const FrameTimingStats timing = calculate_frame_timing_stats(frame_ms);
+        bool alignment_pass = true;
+        if (alignment_interaction) {
+            settle_alignment();
+            const bool preview_ready = !alignment.dirty() || alignment.current_preview_ready();
+            const auto& metrics = alignment.metrics();
+            const auto latency = calculate_frame_timing_stats(metrics.latency_ms);
+            alignment_pass = preview_ready && !metrics.latency_ms.empty() &&
+                app.plan_view_.scale == alignment_scale;
+            if (interaction == "edit-stationary") {
+                alignment_pass = alignment_pass && metrics.computed == stationary_computations;
+            } else {
+                alignment_pass = alignment_pass && metrics.submitted > 1 && metrics.reused_rows > 0;
+            }
+            if (interaction == "edit-drag") {
+                const auto draft = alignment.drafts().find(alignment_id);
+                const bool staged = alignment.dragging() && draft != alignment.drafts().end() && draft->second.distance;
+                io.AddKeyEvent(ImGuiKey_Escape, true);
+                render_frame();
+                alignment_pass = alignment_pass && staged && !alignment.dragging() && !alignment.dirty();
+                io.AddKeyEvent(ImGuiKey_Escape, false);
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+                render_frame();
+            }
+            *out << "alignment_bench submitted=" << metrics.submitted
+                 << " computed=" << metrics.computed
+                 << " superseded=" << metrics.superseded
+                 << " reused_rows=" << metrics.reused_rows
+                 << " latency_median_ms=" << latency.median_ms
+                 << " latency_p95_ms=" << latency.p95_ms
+                 << " result=" << (alignment_pass ? "PASS" : "FAIL") << "\n";
+        }
         const bool measured_with_spatial_index =
             measure_interaction && app.debug_measure_used_spatial_index_;
         FrameTimingStats brute_reference_timing;
@@ -12529,7 +12648,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             brute_reference_timing = timing;
         }
         bool pass = cache_checks_pass && timing.p95_ms <= max_frame_ms &&
-            measure_speedup_pass;
+            measure_speedup_pass && alignment_pass;
 
         *out << std::fixed << std::setprecision(3)
              << "plan_bench avg_ms=" << timing.average_ms

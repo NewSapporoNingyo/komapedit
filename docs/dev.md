@@ -424,6 +424,11 @@ This section describes the main responsibilities of files in `include/` and `src
 - **Queries and view data:** `nearest_own_index()`, `interp_own_z()`, `track_info_at()`, `speed_at()`, and `curve_sections()` sample values for measurements and overlays. `build_plan_data()` combines own/other tracks, stations, speed limits, and markers; `current_plan_data()` caches the result by model/geometry/visibility revision. Profile data uses the same build/current split.
 - **View controls and rendering:** Measurement, focus, coordinate conversion, and `jump_to_distance()` share navigation. `render_plan_canvas()` coordinates mouse/touch input, visible-distance calculation, and drawing the background, grid, tracks, Repeaters, stations, markers, labels, 3D position, and focus.
 
+#### `src/canvas2d/canvas2d_alignment.cpp` and `src/shared/own_track_geometry.cpp`
+
+- The alignment editor routes canvas gestures to typed drafts keyed by stable edit ID. A worker keeps the latest candidate, reuses sampled geometry before the affected boundary, and publishes results for the current model, draft, and sampling parameters.
+- The same C++ sampler generates formal own-track geometry in maploader and draft geometry in the EXE. Apply merges the draft into the normal edit ledger for source placement, reparse, and view refresh.
+
 #### `src/canvas2d/canvas2d_view_state.h` and `src/canvas2d/canvas2d_view_state.cpp`
 
 - The `App`-owned `View2D` stores the view center, scale, rotation, fit, and drag state, and provides world/screen conversion, panning by screen delta, and fitting to bounds.
@@ -741,6 +746,8 @@ After timing, scene contracts compare double-precision instance fingerprints, pi
 
 `--debug-headless-plan-bench` defaults to `--interaction pan` and compares cached/direct curve, transition-curve, and Interpolate endpoints. Measurement modes compare hit results against exhaustive search: small point sets use linear scans, large sets a spatial grid. `measure-stationary` fixes the pointer; `measure-moving` follows a deterministic path.
 
+`edit-stationary`, `edit-drag`, and `edit-wheel` measure the draft renderer, input-to-preview latency, worker runs, and reused rows. The drag benchmark also checks Esc cancellation. The own-track edit command checks draft coalescing, Include source fidelity, and agreement between shared preview geometry, memory Apply, and Save/reopen.
+
 Plan, scene, and own-track-edit share temporary Map/Include contracts for Interpolate's 0/1/2-argument forms, Apply/Delete/Reset, source identity, and unique editable markers. Real routes are checked against available targets; empty row, event, and marker sets must agree, and instance-dependent checks are reported as not applicable. Own-track-edit also checks Preview→Edit merging, including maps that select source files through `rand()`.
 
 `--debug-headless-table-cache-bench` uses Edit metadata and an ImGui/ImPlot context with INI persistence disabled. After warm-up, it separately measures cold-cache rebuild, one warm-cache hit, and one frame drawing all tables, checking fingerprints for rows, cells, identity, dynamic headers, and widths. Source byte/hash checks run outside the timed interval. Defaults are 5 repeats (range 1–100) and 25 m sampling.
@@ -759,7 +766,7 @@ Defaults are `--scene off`, `--repeat 5` (1–100), and `--unit-distance 25`. Wi
 build\komapedit.exe --headless-load-map <map-path> --headless-output build\headless-load-map.txt
 build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N] [--expect-no-map] [--scenario-edit-roundtrip] --headless-output build\headless-load-scenario.txt
 build\komapedit.exe --debug-headless-scenario-lifecycle <scenario-path> [--scenario-index N] [--unit-distance M] --headless-output build\scenario-lifecycle.txt
-build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
+build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving|edit-stationary|edit-drag|edit-wheel --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
 build\komapedit.exe --debug-headless-table-cache-bench <map-path> --repeat 5 --unit-distance 25 --headless-output build\table-cache-bench.txt
 build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 [--interaction stationary|moving] [--profile-stages] --headless-output build\headless-scene3d-bench.txt

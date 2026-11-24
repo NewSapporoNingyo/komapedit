@@ -620,12 +620,13 @@ void write_curve(SemanticWriter& out, const KvMapSnapshot& snapshot,
 void write_gradient(SemanticWriter& out, const KvMapSnapshot& snapshot,
                     const KvGradientRow& row,
                     const MapEditChange* change = nullptr) {
+    const std::string method = text(snapshot, row.method);
     field(out, "distance", changed_number(change, "distance", row.distance));
-    field(out, "method", SemanticWriter::snapshot_text(snapshot, row.method));
+    field(out, "method", method);
     field(out, "argumentCount", static_cast<std::int64_t>(row.argument_count));
-    if (row.argument_count == 0) {
+    if (row.argument_count == 0 || method == "Gradient.Interpolate") {
         if (changed_field(change, "gradient")) {
-            throw std::runtime_error("gradient statement has no editable value field");
+            throw std::runtime_error(method + " supports distance edits only");
         }
         field(out, snapshot, "gradient", row.gradient);
     } else {

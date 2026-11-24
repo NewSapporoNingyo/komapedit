@@ -76,6 +76,11 @@ if(WIN32)
     )
 endif()
 
+add_library(kme_own_track_geometry STATIC src/shared/own_track_geometry.cpp)
+target_compile_features(kme_own_track_geometry PRIVATE cxx_std_17)
+target_include_directories(kme_own_track_geometry PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/shared)
+set_target_properties(kme_own_track_geometry PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(maploader SHARED
     src/maploader/maploader.cpp
     src/maploader/maploader_core.cpp
@@ -94,7 +99,7 @@ target_compile_features(maploader PRIVATE cxx_std_17)
 target_include_directories(maploader PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(maploader PRIVATE kme_text_decoder)
+target_link_libraries(maploader PRIVATE kme_text_decoder kme_own_track_geometry)
 
 if(MINGW)
     target_link_libraries(maploader PRIVATE ole32)
@@ -305,6 +310,7 @@ add_executable(komapedit
     src/main_window/map_marker_visuals.cpp
     src/main_window/route_value_sampling.cpp
     src/canvas2d/canvas2D.cpp
+    src/canvas2d/canvas2d_alignment.cpp
     src/canvas2d/canvas2d_background.cpp
     src/canvas2d/canvas2d_interaction.cpp
     src/canvas2d/canvas2d_marker_cache.cpp
@@ -340,6 +346,7 @@ add_executable(komapedit
 if(KOMAPEDIT_DEBUG_BUILD)
     target_sources(komapedit PRIVATE
         src/main_window/debug_headless.cpp
+        src/main_window/plan_alignment_validation.cpp
         src/main_window/headless_entrypoints.cpp
         src/main_window/creator_message_validation.cpp
         src/main_window/headless_pretrain.cpp
@@ -390,6 +397,7 @@ if(MSVC)
 endif()
 target_link_libraries(komapedit PRIVATE
     kme_text_decoder
+    kme_own_track_geometry
     implot
     imgui
     d3d11
@@ -406,6 +414,7 @@ target_link_libraries(komapedit PRIVATE
 
 foreach(komapedit_owned_target IN ITEMS
         kme_text_decoder
+        kme_own_track_geometry
         maploader
         model_loader
         typed_snapshot_tests

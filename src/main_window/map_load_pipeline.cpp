@@ -550,7 +550,8 @@ bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edi
         const TrackEvent& edited = edit_model.own_events[i];
         if (preview.distance != edited.distance || preview.key != edited.key ||
             preview.flag != edited.flag || preview.value_number != edited.value_number ||
-            preview.number != edited.number || preview.text != edited.text) {
+            preview.number != edited.number || preview.text != edited.text ||
+            preview.continues != edited.continues) {
             error = "edit metadata event value mismatch for own_track at index " +
                 std::to_string(i);
             return false;
@@ -585,6 +586,7 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     for (size_t i = 0; i < current.own_events.size(); ++i) {
         current.own_events[i].source_row_index =
             edit_model.own_events[i].source_row_index;
+        current.own_events[i].source_order = edit_model.own_events[i].source_order;
     }
     for (const auto& rows : k_edit_metadata_table_rows) {
         merge_table_row_edit_metadata(current.*rows.member, edit_model.*rows.member);

@@ -176,6 +176,14 @@ The Profile chart shows mileage and elevation. The Curve Radius chart distinguis
 - Move the pointer near the track to see its mileage, elevation, gradient, curve radius, and current speed limit.
 - Double-click the Plan, Profile, or Curve Radius chart to move all three measurement positions to that mileage.
 
+#### Own-Track Alignment Editing
+
+Enable **Edit Mode** and select the pencil in the 2D toolbar. Drag a curve, transition, or gradient endpoint along the track. Mileage snaps in 5 m increments relative to the start of the drag. Use **Esc** to restore the value at the start of the current drag.
+
+Scroll up or down over a shaded curve to change its signed radius in 5 m steps. Circular sections use the start statement's radius. Transition and interpolation sections use the end statement's explicit radius. A step that crosses zero stops at zero first. Scroll again to continue to the opposite side. Shift + wheel rotates the view.
+
+Use the checkmark next to the grid buttons to apply the canvas draft to the working copy. The profile, radius chart, tables, and 3D scene update after Apply. Use **Save** to write the working copy to its source files. Changing 2D modes keeps the draft. **Revert** discards it.
+
 #### Markers, Navigation, and Editing
 
 - Use `Auxiliary Info` to choose which markers to show.
