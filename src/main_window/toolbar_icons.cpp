@@ -7,6 +7,7 @@
 #include "toolbar_icons.h"
 #include "kme.h"
 #include "resource.h"
+#include "imgui_internal.h"
 
 #include <windows.h>
 #include <d3d11.h>
@@ -165,11 +166,16 @@ bool Cache::button(Icon icon, const char* tooltip, bool selected) {
     const Size size = size_for_dpi(dpi_scale);
     const float pixels = static_cast<float>(size.display_pixels);
     const ImGuiStyle& style = ImGui::GetStyle();
+    const bool disabled = (ImGui::GetCurrentContext()->CurrentItemFlags & ImGuiItemFlags_Disabled) != 0;
+    const ImVec4 frame = style.Colors[disabled ? ImGuiCol_FrameBg :
+        selected ? ImGuiCol_Button : ImGuiCol_FrameBgActive];
+    const ImVec4 hover = style.Colors[disabled ? ImGuiCol_FrameBg :
+        selected ? ImGuiCol_ButtonHovered : ImGuiCol_Button];
+    const ImVec4 active = style.Colors[disabled ? ImGuiCol_FrameBg : ImGuiCol_ButtonActive];
     ImGui::PushID(resources[static_cast<std::size_t>(icon)].name);
-    ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[selected ? ImGuiCol_FrameBgActive : ImGuiCol_FrameBg]);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                         style.Colors[selected ? ImGuiCol_FrameBgActive : ImGuiCol_FrameBgHovered]);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, style.Colors[ImGuiCol_FrameBgActive]);
+    ImGui::PushStyleColor(ImGuiCol_Button, frame);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, active);
     const bool pressed = ImGui::Button("##toolbar_icon", button_size(size));
     ImGui::PopStyleColor(3);
     ImGui::PopID();

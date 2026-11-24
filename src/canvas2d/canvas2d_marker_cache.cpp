@@ -182,6 +182,14 @@ void populate_speed_limit_marker_cache(
     }
 }
 
+AlignmentPoseChange pose_change(const TrackPoint& before, const TrackPoint& after) {
+    const double theta = after.theta - before.theta;
+    const double c = std::cos(theta);
+    const double s = std::sin(theta);
+    return {c, s, after.x - (c * before.x - s * before.y),
+                  after.y - (s * before.x + c * before.y), after.z - before.z, theta};
+}
+
 } // namespace
 
 std::optional<TrackPoint> sample_matrix_track_point(
@@ -211,6 +219,80 @@ size_t matrix_upper_bound_distance(const Matrix& points, double distance) {
         else hi = mid;
     }
     return lo;
+}
+
+void AlignmentPoseChange::move(double& px, double& py) const {
+    const double next_x = c * px - s * py + x;
+    py = s * px + c * py + y;
+    px = next_x;
+}
+
+void AlignmentPoseChange::move(TrackPoint& point) const {
+    move(point.x, point.y);
+    point.z += z;
+    point.theta += theta;
+}
+
+AlignmentPoseChange AlignmentReprojection::pose_at(const Matrix& applied, double distance) const {
+    const std::size_t row = matrix_lower_bound_distance(applied, distance);
+    if (row == 0) return poses.front();
+    if (row == applied.rows) return poses.back();
+    if (applied.at(row, 0) == distance) return poses[row];
+    return pose_change(*sample_matrix_track_point(applied, distance, true),
+                       *sample_matrix_track_point(*own, distance, true));
+}
+
+AlignmentReprojection reproject_plan_geometry(
+    const Matrix& applied, std::shared_ptr<const Matrix> own,
+    const std::vector<Matrix>& other_tracks, const std::vector<RepeaterOverlayRow>& repeaters) {
+    AlignmentReprojection out;
+    out.own = std::move(own);
+    out.poses.reserve(applied.rows);
+    std::size_t draft_row = 0;
+    for (std::size_t row = 0; row < applied.rows; ++row) {
+        const double d = applied.at(row, 0);
+        while (out.own->at(draft_row, 0) < d) ++draft_row;
+        out.poses.push_back(pose_change(matrix_row_track_point(applied, row, true),
+                                        matrix_row_track_point(*out.own, draft_row, true)));
+    }
+    out.other_tracks = other_tracks;
+    for (Matrix& points : out.other_tracks) {
+        std::size_t pose_row = 0;
+        for (std::size_t row = 0; row < points.rows; ++row) {
+            double* point = points.data.data() + row * points.cols;
+            while (pose_row + 1 < applied.rows && applied.at(pose_row, 0) < point[0]) ++pose_row;
+            const auto pose = applied.at(pose_row, 0) == point[0]
+                ? out.poses[pose_row] : out.pose_at(applied, point[0]);
+            pose.move(point[1], point[2]);
+            point[3] += pose.z;
+        }
+    }
+    out.repeaters = repeaters;
+    const auto move_marker = [&](std::optional<PlanRepeaterMarker>& marker) {
+        if (marker) out.pose_at(applied, marker->d).move(marker->x, marker->y);
+    };
+    for (RepeaterOverlayRow& row : out.repeaters) {
+        move_marker(row.begin_marker);
+        move_marker(row.end_marker);
+        auto& segment = row.segment;
+        if (!segment.endpoints_valid) continue;
+        out.pose_at(applied, segment.first_point.d).move(segment.first_point);
+        out.pose_at(applied, segment.last_point.d).move(segment.last_point);
+        segment.bounds_valid = false;
+        for (auto& chunk : segment.chunks) {
+            chunk.bounds_valid = false;
+            std::size_t pose_row = matrix_lower_bound_distance(applied, chunk.points.front().d);
+            for (TrackPoint& point : chunk.points) {
+                while (pose_row < applied.rows && applied.at(pose_row, 0) < point.d) ++pose_row;
+                const auto pose = pose_row < applied.rows && applied.at(pose_row, 0) == point.d
+                    ? out.poses[pose_row] : out.pose_at(applied, point.d);
+                pose.move(point);
+                include_repeater_bounds(chunk, point);
+                include_repeater_bounds(segment, point);
+            }
+        }
+    }
+    return out;
 }
 
 bool dense_repeater_overview_lod(size_t visible_repeater_count, double scale) {
@@ -244,7 +326,8 @@ void App::rebuild_marker_overlay_cache() {
     profile_data_cache_.key.reset();
     ++plan_data_source_revision_;
     structure_marker_cache_.clear();
-    repeater_marker_cache_.clear();
+    auto repeaters = std::make_shared<std::vector<RepeaterOverlayRow>>();
+    repeater_marker_cache_ = repeaters;
     signal_marker_cache_.clear();
     section_marker_cache_.clear();
     beacon_marker_cache_.clear();
@@ -759,8 +842,8 @@ void App::rebuild_marker_overlay_cache() {
 
     auto finish_repeater = [&](const RepeaterBeginState& begin,
                                double end_distance, const std::string& label) {
-        if (begin.row_index >= repeater_marker_cache_.size()) return;
-        RepeaterOverlayRow& overlay = repeater_marker_cache_[begin.row_index];
+        if (begin.row_index >= repeaters->size()) return;
+        RepeaterOverlayRow& overlay = (*repeaters)[begin.row_index];
         if (!begin.track_source) return;
 
         TrackSource segment_source = *begin.track_source;
@@ -787,14 +870,14 @@ void App::rebuild_marker_overlay_cache() {
         }
     };
 
-    repeater_marker_cache_.reserve(model_.repeaters.size());
+    repeaters->reserve(model_.repeaters.size());
     for (const repeater_linkage::Segment& segment :
          repeater_linkage::pair_segments(table_repeater_events(model_.repeaters))) {
         if (segment.begin_source_index >= model_.repeaters.size()) continue;
         const TableRow& row = model_.repeaters[segment.begin_source_index];
         const std::string key = table_cell(row, "repeaterKey");
         RepeaterBeginState begin;
-        begin.row_index = repeater_marker_cache_.size();
+        begin.row_index = repeaters->size();
         begin.distance = table_cell_number(row, "distance");
         begin.track_key = table_cell(row, "trackKey");
         begin.edit_id = row.edit_id;
@@ -830,7 +913,7 @@ void App::rebuild_marker_overlay_cache() {
                     begin.distance, point, key, begin.edit_id, begin.row_index);
             }
         }
-        repeater_marker_cache_.push_back(std::move(overlay));
+        repeaters->push_back(std::move(overlay));
         if (segment.boundary_kind != repeater_linkage::BoundaryKind::Open) {
             finish_repeater(begin, segment.end_distance, key);
         }

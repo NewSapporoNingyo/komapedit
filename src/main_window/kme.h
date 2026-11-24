@@ -47,7 +47,10 @@ struct Canvas3DPlacementEditTarget;
 struct Canvas3DSceneMarkerVisibility;
 struct KvEditReportSnapshot;
 struct KvMapSnapshot;
-namespace canvas2d { class AlignmentEditor; }
+namespace canvas2d {
+class AlignmentEditor;
+struct AlignmentReprojection;
+}
 namespace repeater_linkage {
 struct Event;
 }
@@ -989,6 +992,7 @@ struct PlanData {
     std::vector<Section> curve_sections;
     std::vector<Section> transition_sections;
     std::vector<PlanCurveInterpolateMarker> curve_interpolate_markers;
+    std::vector<OtherTrackChangeMarker> other_track_change_markers;
     double origin_angle = 0.0;
     double xmin = -1.0;
     double ymin = -1.0;
@@ -2268,10 +2272,11 @@ private:
     bool show_othertracks_window_ = true;
 
     enum class GridMode { Fixed, Movable, None };
-    enum class Mode { Pan, Measure };
+    enum class Mode { Pan, Measure, Edit };
     std::unique_ptr<canvas2d::AlignmentEditor> plan_alignment_;
     GridMode grid_mode_ = GridMode::Fixed;
     Mode mode_ = Mode::Pan;
+    Mode previous_navigation_mode_ = Mode::Pan;
 
     View2D plan_view_;
     bool keep_plan_view_ = false;
@@ -2298,6 +2303,7 @@ private:
     bool profile_plot_rect_valid_ = false;
     ImVec2 profile_plot_pos_ = ImVec2(0.0f, 0.0f);
     ImVec2 profile_plot_size_ = ImVec2(0.0f, 0.0f);
+    std::array<double, 4> profile_plot_limits_{};
     bool reset_profile_axes_next_ = true;
     bool reset_radius_axes_next_ = true;
 
@@ -2407,7 +2413,8 @@ private:
     TableFindState sound_file_find_;
     TableFindState sound_3d_file_find_;
     std::vector<std::optional<PlanStructureMarker>> structure_marker_cache_;
-    std::vector<RepeaterOverlayRow> repeater_marker_cache_;
+    std::shared_ptr<const std::vector<RepeaterOverlayRow>> repeater_marker_cache_ =
+        std::make_shared<const std::vector<RepeaterOverlayRow>>();
     std::vector<std::optional<PlanSignalMarker>> signal_marker_cache_;
     std::vector<std::optional<PlanSectionMarker>> section_marker_cache_;
     std::vector<std::optional<PlanBeaconMarker>> beacon_marker_cache_;
@@ -2437,6 +2444,7 @@ private:
     struct PlanDataCache {
         bool valid = false;
         std::uint64_t source_revision = 0;
+        std::uint64_t alignment_marker_revision = 0;
         bool has_model = false;
         double distance_min = 0.0;
         double distance_max = 0.0;
@@ -2502,6 +2510,8 @@ private:
             std::array<float, 4> color{};
         };
         std::uint64_t source_revision = 0;
+        std::uint64_t alignment_revision = 0;
+        std::uint64_t alignment_marker_revision = 0;
         bool has_model = false;
         double distance_min = 0.0, distance_max = 0.0;
         bool show_other = false;
@@ -3020,20 +3030,21 @@ private:
     bool can_locate_scene_preview_row() const;
 
     double current_plan_origin_angle() const;
+    const canvas2d::AlignmentReprojection* alignment_reprojection() const;
     PlanData build_plan_data(bool include_other_tracks = true) const;
     const PlanData& current_plan_data();
     ProfileData build_profile_data() const;
     const ProfileData& current_profile_data();
     size_t nearest_own_index(double distance) const;
-    double interp_own_z(double distance) const;
     std::optional<TrackPoint> track_info_at(double distance) const;
     std::optional<SpeedLimit> speed_at(double distance) const;
     void clear_measure();
+    void set_2d_mode(Mode mode);
     void update_measure(double distance);
     void center_plan_at_distance(double distance);
     void focus_plan_at_distance(double distance);
     std::optional<ImVec2> plan_point_from_model_xy(double x, double y) const;
-    void focus_plan_at_model_point(double x, double y);
+    void focus_plan_at_model_point(double x, double y, std::optional<double> distance = std::nullopt);
     void request_plot_focus(double distance, bool include_profile, bool include_radius);
     void handle_measure_plot_double_click(bool include_profile, bool include_radius);
     void jump_to_distance(double distance);

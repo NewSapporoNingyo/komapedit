@@ -178,11 +178,11 @@ The Profile chart shows mileage and elevation. The Curve Radius chart distinguis
 
 #### Own-Track Alignment Editing
 
-Enable **Edit Mode** and select the pencil in the 2D toolbar. Drag a curve, transition, or gradient endpoint along the track. Mileage snaps in 5 m increments relative to the start of the drag. Use **Esc** to restore the value at the start of the current drag.
+Enable **Edit Mode** and select the pencil in the 2D toolbar. This exits Measure Mode in the plan, Profile, and Curve Radius charts. Drag a curve, transition, or gradient endpoint along the plan track, or drag a gradient marker horizontally in the Profile. Mileage snaps in 5 m increments relative to the start of the drag. Use **Esc** to restore the value at the start of the current drag.
 
-Scroll up or down over a shaded curve to change its signed radius in 5 m steps. Circular sections use the start statement's radius. Transition and interpolation sections use the end statement's explicit radius. A step that crosses zero stops at zero first. Scroll again to continue to the opposite side. Shift + wheel rotates the view.
+Scroll up or down over a shaded curve to change its signed radius in 5 m steps. Circular sections use the start statement's radius. Transition and interpolation sections use the end statement's explicit radius. Sections that use the same statement's radius share one label, with the visible circular section taking priority. A step that crosses zero stops at zero first. Scroll again to continue to the opposite side. Shift + wheel rotates the view.
 
-Use the checkmark next to the grid buttons to apply the canvas draft to the working copy. The profile, radius chart, tables, and 3D scene update after Apply. Use **Save** to write the working copy to its source files. Changing 2D modes keeps the draft. **Revert** discards it.
+The plan alignment and Profile follow the draft as you edit. The other plan markers follow the new alignment after you release the drag or finish adjusting the radius. Use the checkmark next to the grid buttons to apply the draft to the working copy and update the Curve Radius chart, tables, and 3D scene. Use **Save** to write the working copy to its source files. Changing 2D modes keeps the draft. **Revert** discards it.
 
 #### Markers, Navigation, and Editing
 
@@ -190,7 +190,7 @@ Use the checkmark next to the grid buttons to apply the canvas draft to the work
 - With `Curve Radius` enabled, `Curve.Interpolate` endpoints appear as green markers with their evaluated signed radius beside them. An omitted radius displays its inherited value.
 - Right-click a marker to locate its table row. Items with a 3D object can also be located in the 3D scene.
 - Enable editing to right-click supported markers for `Properties/Edit` or `Delete`. Own-track curve/gradient and other-track edit control points appear in this mode; `Curve.Interpolate` and `CG`/`CC`/`CF` markers follow their respective visibility switches.
-- Paired curve or gradient change points have an edit menu in the Profile and Curve Radius charts.
+- Right-click a gradient marker in the Profile to open its edit menu.
 
 #### Background Image
 

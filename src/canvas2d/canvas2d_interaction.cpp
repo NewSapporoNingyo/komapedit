@@ -543,7 +543,7 @@ void App::render_plan_marker_context_menu(
                 break;
             }
             case PlanMarkerKind::Repeater:
-                ImGui::BeginDisabled(entry.row_index >= repeater_marker_cache_.size());
+                ImGui::BeginDisabled(entry.row_index >= repeater_marker_cache_->size());
                 if (ImGui::MenuItem(tr("menu.locate_in_repeater_list").c_str())) {
                     locate_repeater_row_in_list(entry.row_index);
                 }

@@ -7,6 +7,7 @@
 #include "canvas2d_alignment.h"
 #include "canvas2d_marker_cache.h"
 #include "canvas2d_primitives.h"
+#include "imgui_internal.h"
 
 #include <iterator>
 
@@ -14,6 +15,7 @@ namespace canvas2d {
 namespace {
 
 constexpr double edit_step = 5.0;
+constexpr auto wheel_marker_delay = std::chrono::milliseconds(32);
 
 bool supports_endpoint(std::string_view method) {
     return method == "Curve.Begin" || method == "Curve.BeginCircular" ||
@@ -50,6 +52,43 @@ float distance_squared(ImVec2 a, ImVec2 b) {
     return x * x + y * y;
 }
 
+std::optional<ImVec2> clipped_segment_midpoint(ImVec2 a, ImVec2 b, ImVec2 origin, ImVec2 size) {
+    float start = 0.0f;
+    float end = 1.0f;
+    const auto clip_axis = [&](float from, float to, float min, float max) {
+        if (from == to) return from >= min && from <= max;
+        const float t0 = (min - from) / (to - from);
+        const float t1 = (max - from) / (to - from);
+        start = std::max(start, std::min(t0, t1));
+        end = std::min(end, std::max(t0, t1));
+        return start <= end;
+    };
+    if (!clip_axis(a.x, b.x, origin.x, origin.x + size.x) ||
+        !clip_axis(a.y, b.y, origin.y, origin.y + size.y)) return std::nullopt;
+    const float fraction = (start + end) * 0.5f;
+    return ImVec2(a.x + fraction * (b.x - a.x), a.y + fraction * (b.y - a.y));
+}
+
+std::optional<ImVec2> radius_label_anchor(const Matrix& track, const PlanScreenTransform& transform,
+                                         double start, double end, ImVec2 origin, ImVec2 size) {
+    const auto at = [&](double distance) {
+        const auto point = sample_matrix_track_point(track, distance, true);
+        return transform.model_to_screen(point->x, point->y);
+    };
+    const ImVec2 middle = at((start + end) * 0.5);
+    if (point_near_canvas(middle, origin, size, 0.0f)) return middle;
+
+    const std::size_t first = matrix_upper_bound_distance(track, start);
+    const std::size_t last = matrix_lower_bound_distance(track, end);
+    ImVec2 a = at(start);
+    for (std::size_t row = first; row < last; ++row) {
+        const ImVec2 b = transform.model_to_screen(track.at(row, 1), track.at(row, 2));
+        if (auto anchor = clipped_segment_midpoint(a, b, origin, size)) return anchor;
+        a = b;
+    }
+    return clipped_segment_midpoint(a, at(end), origin, size);
+}
+
 } // namespace
 
 AlignmentEditor::~AlignmentEditor() {
@@ -67,7 +106,8 @@ const AlignmentTarget* AlignmentEditor::target(const std::string& edit_id) const
     return it != targets_.end() ? &it->second : nullptr;
 }
 
-void AlignmentEditor::set_source(const MapModel& model, std::uint64_t revision) {
+void AlignmentEditor::set_source(const MapModel& model, std::uint64_t revision,
+                                 const std::shared_ptr<const std::vector<RepeaterOverlayRow>>& repeaters) {
     const std::array<double, 3> distribution{model.cp_arb[0], model.cp_arb[1], model.cp_arb[2]};
     if (base_ && source_revision_ == revision &&
         base_->distribution == distribution) return;
@@ -76,6 +116,19 @@ void AlignmentEditor::set_source(const MapModel& model, std::uint64_t revision) 
 
     auto base = std::make_shared<Base>();
     base->distribution = distribution;
+    base->repeaters = repeaters;
+    base->other_tracks.reserve(model.other_tracks.size());
+    for (const OtherTrack& track : model.other_tracks) {
+        const auto& points = track.points;
+        auto& line = base->other_tracks.emplace_back();
+        line.rows = points.rows;
+        line.cols = 4;
+        line.data.reserve(line.rows * line.cols);
+        for (std::size_t row = 0; row < points.rows; ++row) {
+            const auto* first = points.data.data() + row * points.cols;
+            line.data.insert(line.data.end(), first, first + 4);
+        }
+    }
     base->distances.reserve(model.own.rows);
     for (std::size_t row = 0; row < model.own.rows; ++row) {
         base->distances.push_back(model.own.at(row, 0));
@@ -108,18 +161,20 @@ void AlignmentEditor::set_source(const MapModel& model, std::uint64_t revision) 
     source_revision_ = revision;
     base_ = std::move(base);
     published_.reset();
+    marker_projection_.reset();
+    marker_revision_ = 0;
     wheel_target_.clear();
     submit();
 }
 
-std::vector<AlignmentSpan> AlignmentEditor::build_spans(
+AlignmentEditor::CurveSpans AlignmentEditor::build_spans(
     const std::vector<SourcedEvent>& events, double route_end,
     const std::map<std::string, AlignmentDraft>& drafts) {
     std::vector<const SourcedEvent*> radius_events;
     for (const SourcedEvent& event : events) {
         if (event.value.key == "radius") radius_events.push_back(&event);
     }
-    std::vector<AlignmentSpan> spans;
+    CurveSpans spans;
     double inherited_radius = 0.0;
     for (std::size_t index = 0; index < radius_events.size(); ++index) {
         const SourcedEvent& from = *radius_events[index];
@@ -136,16 +191,22 @@ std::vector<AlignmentSpan> AlignmentEditor::build_spans(
             (radius == 0.0 && (!transition || inherited_radius == 0.0) && !retain_zero)) {
             continue;
         }
-        spans.push_back({from.value.distance, end, radius, transition,
-                         owner.editable_radius ? owner.edit_id : std::string{},
-                         !transition || owner.editable_radius ? format_double(radius, 6) : std::string{}});
+        spans.items.push_back({from.value.distance, end, radius, transition,
+                               owner.editable_radius ? owner.edit_id : std::string{},
+                               !transition || owner.editable_radius ? format_double(radius, 6) : std::string{}});
+        if (!spans.items.back().label.empty()) spans.label_order.push_back(spans.items.size() - 1);
     }
+    std::stable_sort(spans.label_order.begin(), spans.label_order.end(), [&](std::size_t a, std::size_t b) {
+        const auto& lhs = spans.items[a];
+        const auto& rhs = spans.items[b];
+        return std::tie(lhs.edit_id, lhs.transition) < std::tie(rhs.edit_id, rhs.transition);
+    });
     return spans;
 }
 
-AlignmentEditor::Result AlignmentEditor::calculate(
-    Request request, const own_track_geometry::Trace& baseline,
-    const std::vector<double>& baseline_samples) {
+AlignmentEditor::Preview AlignmentEditor::calculate(
+    const Request& request, const own_track_geometry::Trace& baseline,
+    const Matrix& baseline_samples) {
     const Base& base = *request.base;
     std::vector<SourcedEvent> edited = base.events;
     std::vector<double> extra_distances;
@@ -191,31 +252,46 @@ AlignmentEditor::Result AlignmentEditor::calculate(
     const auto after_checkpoint = std::upper_bound(
         baseline.checkpoints.begin(), baseline.checkpoints.end(), safe_rows,
         [](std::size_t rows, const own_track_geometry::Checkpoint& state) { return rows < state.rows; });
-    Result result;
+    Preview result;
+    auto geometry = std::make_shared<Matrix>();
     if (after_checkpoint == baseline.checkpoints.begin()) {
-        result.geometry.data = own_track_geometry::sample(events, distances);
+        geometry->data = own_track_geometry::sample(events, distances);
     } else {
         const auto& checkpoint = *std::prev(after_checkpoint);
         const own_track_geometry::Prefix prefix{checkpoint, baseline.event_projections};
-        result.geometry.data = own_track_geometry::sample(events, distances, nullptr, &prefix);
-        result.geometry.data.insert(result.geometry.data.begin(), baseline_samples.begin(),
-            baseline_samples.begin() + checkpoint.rows * own_track_geometry::columns);
+        geometry->data = own_track_geometry::sample(events, distances, nullptr, &prefix);
+        geometry->data.insert(geometry->data.begin(), baseline_samples.data.begin(),
+            baseline_samples.data.begin() + checkpoint.rows * own_track_geometry::columns);
         result.reused_rows = checkpoint.rows;
     }
-    result.geometry.rows = distances.size();
-    result.geometry.cols = own_track_geometry::columns;
+    geometry->rows = distances.size();
+    geometry->cols = own_track_geometry::columns;
+    result.geometry = std::move(geometry);
     result.spans = build_spans(edited, distances.back(), request.drafts);
-    result.base = std::move(request.base);
-    result.drafts = std::move(request.drafts);
-    result.revision = request.revision;
-    result.started = request.started;
+    result.drafts = request.drafts;
     return result;
 }
 
 void AlignmentEditor::run() {
     std::shared_ptr<const Base> cached;
     own_track_geometry::Trace trace;
-    std::vector<double> base_samples;
+    Matrix base_samples;
+    std::uint64_t cached_revision = 0;
+    std::shared_ptr<const Preview> cached_preview;
+    const auto publish = [&](Result result, bool geometry_computed) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (stopping_) return;
+            computed_ += geometry_computed ? 1 : 0;
+            if (result.revision != draft_revision_) {
+                ++discarded_results_;
+                return;
+            }
+            if (completed_ && completed_->revision != result.revision) ++discarded_results_;
+            completed_ = std::move(result);
+        }
+        wake_main_window();
+    };
     for (;;) {
         Request request;
         {
@@ -227,48 +303,70 @@ void AlignmentEditor::run() {
         }
 
         Result result;
+        result.base = request.base;
+        result.revision = request.revision;
+        result.started = request.started;
         try {
             if (request.base != cached) {
                 std::vector<own_track_geometry::Event> events;
                 events.reserve(request.base->events.size());
                 for (const SourcedEvent& event : request.base->events) events.push_back(event.value);
                 trace = {};
-                base_samples = own_track_geometry::sample(events, request.base->distances, &trace);
+                base_samples = {own_track_geometry::sample(events, request.base->distances, &trace),
+                                request.base->distances.size(), own_track_geometry::columns};
                 cached = request.base;
             }
-            result = calculate(request, trace, base_samples);
+            const bool geometry_changed = request.revision != cached_revision;
+            if (geometry_changed) {
+                cached_preview = std::make_shared<Preview>(calculate(request, trace, base_samples));
+                cached_revision = request.revision;
+            }
+            result.preview = cached_preview;
+            if (geometry_changed) publish(result, true);
+            if (!request.refresh_markers_at) continue;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                condition_.wait_until(lock, *request.refresh_markers_at, [&] {
+                    return stopping_ || pending_.has_value() || request.revision != draft_revision_;
+                });
+                if (stopping_) return;
+                if (pending_ || request.revision != draft_revision_) continue;
+            }
+            result.marker_projection = std::make_shared<AlignmentReprojection>(
+                reproject_plan_geometry(base_samples, cached_preview->geometry,
+                                        cached->other_tracks, *cached->repeaters));
         } catch (const std::exception& error) {
-            result.base = request.base;
-            result.revision = request.revision;
             result.error = error.what();
         }
-
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (stopping_) return;
-            ++computed_;
-            if (completed_) ++discarded_results_;
-            completed_ = std::move(result);
-        }
-        wake_main_window();
+        publish(std::move(result), false);
     }
 }
 
-void AlignmentEditor::submit() {
+void AlignmentEditor::submit(std::chrono::milliseconds marker_delay) {
     ++draft_revision_;
+    queue_preview(marker_delay);
+}
+
+void AlignmentEditor::queue_preview(std::chrono::milliseconds marker_delay) {
     const bool needs_preview = dirty() && base_ && !base_->distances.empty();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (pending_) ++metrics_.superseded;
         if (needs_preview) {
-            pending_ = Request{base_, drafts_, draft_revision_, std::chrono::steady_clock::now()};
+            const auto now = std::chrono::steady_clock::now();
+            const auto refresh_at = dragging() ? std::nullopt : std::optional(now + marker_delay);
+            pending_ = Request{base_, drafts_, draft_revision_, now, refresh_at};
             ++metrics_.submitted;
         } else {
             pending_.reset();
         }
     }
     if (needs_preview && !worker_.joinable()) worker_ = std::thread(&AlignmentEditor::run, this);
-    if (!needs_preview) published_.reset();
+    if (!needs_preview) {
+        published_.reset();
+        marker_projection_.reset();
+        marker_revision_ = 0;
+    }
     condition_.notify_one();
     wake_main_window();
 }
@@ -290,17 +388,24 @@ std::string AlignmentEditor::poll() {
     if (!result->error.empty()) {
         return std::move(result->error);
     }
-    metrics_.reused_rows += result->reused_rows;
-    if (measure_preview_) {
-        const auto elapsed = std::chrono::steady_clock::now() - result->started;
-        metrics_.latency_ms.push_back(std::chrono::duration<double, std::milli>(elapsed).count());
+    if (!published_ || published_->revision != result->revision) {
+        metrics_.reused_rows += result->preview->reused_rows;
+        if (measure_preview_) {
+            const auto elapsed = std::chrono::steady_clock::now() - result->started;
+            metrics_.latency_ms.push_back(std::chrono::duration<double, std::milli>(elapsed).count());
+        }
+    }
+    if (result->marker_projection) {
+        marker_projection_ = std::move(result->marker_projection);
+        marker_revision_ = result->revision;
     }
     published_ = std::move(result);
     return {};
 }
 
 bool AlignmentEditor::current_preview_ready() const {
-    return published_ && published_->revision == draft_revision_;
+    return published_ && published_->revision == draft_revision_ &&
+        (dragging() || marker_revision_ == draft_revision_);
 }
 
 void AlignmentEditor::clear_drafts() {
@@ -314,10 +419,15 @@ void AlignmentEditor::clear_drafts() {
 
 void AlignmentEditor::cancel_drag() {
     if (!drag_) return;
-    const auto value = drag_->previous_distance.value_or(drag_->start_distance);
+    const double value = drag_->start_distance;
+    const bool changed = drag_->candidate != value;
     const std::string id = std::move(drag_->edit_id);
-    drag_.reset();
-    set_distance(id, value);
+    if (changed) {
+        drag_.reset();
+        set_distance(id, value);
+    } else {
+        finish_drag();
+    }
 }
 
 void AlignmentEditor::set_distance(const std::string& id, double distance) {
@@ -347,15 +457,50 @@ void AlignmentEditor::step_radius(const std::string& id, int ticks) {
     AlignmentDraft& draft = drafts_[id];
     draft.radius = radius != original ? std::optional<double>(radius) : std::nullopt;
     if (!draft.distance && !draft.radius) drafts_.erase(id);
-    submit();
+    submit(wheel_marker_delay);
 }
 
 const Matrix& AlignmentEditor::geometry(const Matrix& applied) const {
-    return published_ ? published_->geometry : applied;
+    return published_ ? *published_->preview->geometry : applied;
+}
+
+std::uint64_t AlignmentEditor::preview_revision() const {
+    return published_ ? published_->revision : 0;
+}
+
+double AlignmentEditor::preview_distance(const std::string& id, double applied) const {
+    if (!published_) return applied;
+    const auto& drafts = published_->preview->drafts;
+    const auto it = drafts.find(id);
+    return it == drafts.end() ? applied : it->second.distance.value_or(applied);
+}
+
+const AlignmentEditor::CurveSpans& AlignmentEditor::curve_spans() const {
+    return published_ ? published_->preview->spans : base_->spans;
 }
 
 const std::vector<AlignmentSpan>& AlignmentEditor::spans() const {
-    return published_ ? published_->spans : base_->spans;
+    return curve_spans().items;
+}
+
+const std::vector<AlignmentRadiusLabel>& AlignmentEditor::radius_labels(
+    const Matrix& track, const PlanScreenTransform& transform,
+    double distance_min, double distance_max, ImVec2 origin, ImVec2 size) {
+    const auto& sections = curve_spans();
+    visible_radius_labels_.clear();
+    std::string_view shown_owner;
+    for (const std::size_t index : sections.label_order) {
+        const auto& span = sections.items[index];
+        if (!span.edit_id.empty() && span.edit_id == shown_owner) continue;
+        const double start = std::max({span.start, distance_min, track.at(0, 0)});
+        const double end = std::min({span.end, distance_max, track.at(track.rows - 1, 0)});
+        if (start >= end) continue;
+        if (auto anchor = radius_label_anchor(track, transform, start, end, origin, size)) {
+            visible_radius_labels_.push_back({&span, *anchor});
+            shown_owner = span.edit_id;
+        }
+    }
+    return visible_radius_labels_;
 }
 
 const AlignmentOverlay* AlignmentEditor::overlay(
@@ -368,10 +513,11 @@ const AlignmentOverlay* AlignmentEditor::overlay(
     overlay_.gradient_markers = plan.gradient_edit_markers;
     overlay_.interpolate_markers = plan.curve_interpolate_markers;
 
+    const auto& drafts = published_->preview->drafts;
     auto locate = [&](auto& marker) {
-        const auto draft = published_->drafts.find(marker.edit_id);
-        if (draft != published_->drafts.end() && draft->second.distance) marker.d = *draft->second.distance;
-        const auto point = sample_matrix_track_point(published_->geometry, marker.d, true);
+        const auto draft = drafts.find(marker.edit_id);
+        if (draft != drafts.end() && draft->second.distance) marker.d = *draft->second.distance;
+        const auto point = sample_matrix_track_point(*published_->preview->geometry, marker.d, true);
         const auto [x, y] = transform.model_to_plan(point->x, point->y);
         marker.x = x;
         marker.y = y;
@@ -380,8 +526,8 @@ const AlignmentOverlay* AlignmentEditor::overlay(
     for (auto& marker : overlay_.gradient_markers) locate(marker);
     for (auto& marker : overlay_.curve_markers) {
         locate(marker);
-        const auto draft = published_->drafts.find(marker.edit_id);
-        if (draft != published_->drafts.end() && draft->second.radius) {
+        const auto draft = drafts.find(marker.edit_id);
+        if (draft != drafts.end() && draft->second.radius) {
             const auto cant = marker.label.find(',');
             marker.label = format_double(*draft->second.radius, 6) +
                 (cant != std::string::npos ? marker.label.substr(cant) : std::string{});
@@ -390,8 +536,8 @@ const AlignmentOverlay* AlignmentEditor::overlay(
     for (auto& marker : overlay_.interpolate_markers) {
         const auto point = locate(marker);
         marker.theta = point.theta - plan.origin_angle;
-        const auto draft = published_->drafts.find(marker.edit_id);
-        marker.radius = draft != published_->drafts.end() && draft->second.radius
+        const auto draft = drafts.find(marker.edit_id);
+        marker.radius = draft != drafts.end() && draft->second.radius
             ? *draft->second.radius : point.radius;
         marker.label = format_double(marker.radius, 0);
     }
@@ -424,8 +570,7 @@ AlignmentEditor::Projection AlignmentEditor::project(
     return best;
 }
 
-bool AlignmentEditor::start_drag(const std::string& id, const Matrix& geometry,
-                                 const PlanScreenTransform& transform, ImVec2 mouse,
+bool AlignmentEditor::start_drag(AlignmentDragSurface surface, const std::string& id,
                                  double distance_min, double distance_max) {
     const AlignmentTarget& source = targets_.at(id);
     const auto current = drafts_.find(id);
@@ -433,8 +578,8 @@ bool AlignmentEditor::start_drag(const std::string& id, const Matrix& geometry,
     const double origin = previous.value_or(source.distance);
     const std::string_view key = source.row_kind == "gradient" ? "gradient" : "radius";
 
-    double lower = std::max({0.0, distance_min, geometry.at(0, 0)});
-    double upper = std::min(distance_max, geometry.at(geometry.rows - 1, 0));
+    double lower = std::max({0.0, distance_min, base_->distances.front()});
+    double upper = std::min(distance_max, base_->distances.back());
     for (const SourcedEvent& event : base_->events) {
         if (event.value.key != key || event.edit_id == id) continue;
         const auto draft = drafts_.find(event.edit_id);
@@ -450,20 +595,67 @@ bool AlignmentEditor::start_drag(const std::string& id, const Matrix& geometry,
     const double min_steps = std::ceil((lower - origin) / edit_step);
     const double max_steps = std::floor((upper - origin) / edit_step);
     if (min_steps > max_steps || (min_steps == 0.0 && max_steps == 0.0)) return false;
+    drag_ = Drag{surface, id, origin, min_steps, max_steps, origin, 0.0, 0.0, {}};
+    return true;
+}
 
+bool AlignmentEditor::start_plan_drag(const std::string& id, const Matrix& geometry,
+                                      const PlanScreenTransform& transform, ImVec2 mouse,
+                                      double distance_min, double distance_max) {
+    if (!start_drag(AlignmentDragSurface::Plan, id, distance_min, distance_max)) return false;
+    const double lower = drag_->start_distance + drag_->min_steps * edit_step;
+    const double upper = drag_->start_distance + drag_->max_steps * edit_step;
     const std::size_t lo = matrix_lower_bound_distance(geometry, lower);
     const std::size_t hi = matrix_upper_bound_distance(geometry, upper);
     const std::size_t first = lo == 0 ? 0 : lo - 1;
     const std::size_t last = std::min(hi + 1, geometry.rows);
-    std::vector<TrackPoint> track;
+    auto& track = drag_->points;
     track.reserve(last - first);
     for (std::size_t row = first; row < last; ++row) {
         track.push_back(screen_point(geometry, row, transform));
     }
-    if (track.size() < 2) return false;
-    const double projection = project(track, mouse).distance;
-    drag_ = Drag{id, previous, origin, projection, min_steps, max_steps, origin, std::move(track)};
+    drag_->start_pointer = project(track, mouse).distance;
     return true;
+}
+
+bool AlignmentEditor::start_profile_drag(const std::string& id, double mouse_x,
+                                         double metres_per_pixel, double distance_min,
+                                         double distance_max) {
+    if (!start_drag(AlignmentDragSurface::Profile, id, distance_min, distance_max)) return false;
+    drag_->start_pointer = mouse_x;
+    drag_->metres_per_pixel = metres_per_pixel;
+    return true;
+}
+
+void AlignmentEditor::update_drag(double mileage_delta) {
+    const double step = std::clamp(std::round(mileage_delta / edit_step),
+                                   drag_->min_steps, drag_->max_steps);
+    drag_->candidate = drag_->start_distance + edit_step * step;
+    set_distance(drag_->edit_id, drag_->candidate);
+}
+
+void AlignmentEditor::finish_drag() {
+    drag_.reset();
+    if (dirty() && marker_revision_ != draft_revision_) queue_preview();
+}
+
+template <typename MileageDelta>
+void AlignmentEditor::process_drag(const MileageDelta& mileage_delta) {
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        cancel_drag();
+        return;
+    }
+    const bool held = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    if ((held || ImGui::IsMouseReleased(ImGuiMouseButton_Left)) && ImGui::IsMousePosValid() &&
+        ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left)) {
+        update_drag(mileage_delta());
+    }
+    if (held) set_move_cursor();
+    else finish_drag();
+}
+
+void AlignmentEditor::process_profile_drag(double mouse_x) {
+    process_drag([&] { return (mouse_x - drag_->start_pointer) * drag_->metres_per_pixel; });
 }
 
 bool AlignmentEditor::scroll_radius(
@@ -507,19 +699,8 @@ bool AlignmentEditor::process_mouse(
     const PlanScreenTransform& transform, ImVec2 mouse, double distance_min, double distance_max,
     float marker_scale, bool can_start, bool show_curves, PlanMarkerSelection& selection) {
     if (drag_) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-            cancel_drag();
-        } else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            drag_.reset();
-        } else {
-            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-                const double distance = project(drag_->points, mouse).distance;
-                const double step = std::clamp(std::round((distance - drag_->start_projection) / edit_step),
-                                               drag_->min_steps, drag_->max_steps);
-                drag_->candidate = drag_->start_distance + edit_step * step;
-                set_distance(drag_->edit_id, drag_->candidate);
-            }
-            set_move_cursor();
+        if (dragging(AlignmentDragSurface::Plan)) {
+            process_drag([&] { return project(drag_->points, mouse).distance - drag_->start_pointer; });
         }
         return true;
     }
@@ -559,14 +740,15 @@ bool AlignmentEditor::process_mouse(
     if (id.empty()) return false;
     if (!io.KeyCtrl) set_move_cursor();
     if (io.KeyCtrl || !ImGui::IsMouseClicked(ImGuiMouseButton_Left)) return false;
-    if (!start_drag(std::string(id), track, transform, mouse, distance_min, distance_max)) return false;
+    if (!start_plan_drag(std::string(id), track, transform, mouse, distance_min, distance_max)) return false;
     selection = hovered;
     return true;
 }
 
-void AlignmentEditor::draw_drag_label(ImDrawList* draw, ImVec2 mouse, float marker_scale) const {
-    if (!drag_) return;
-    if (!current_preview_ready()) {
+void AlignmentEditor::draw_drag_label(AlignmentDragSurface surface, ImDrawList* draw,
+                                      ImVec2 mouse, float marker_scale) const {
+    if (!dragging(surface)) return;
+    if (surface == AlignmentDragSurface::Plan && !current_preview_ready()) {
         const auto second = std::upper_bound(drag_->points.begin(), drag_->points.end(), drag_->candidate,
             [](double distance, const TrackPoint& point) { return distance < point.d; });
         const auto end = std::clamp(second, drag_->points.begin() + 1, drag_->points.end() - 1);

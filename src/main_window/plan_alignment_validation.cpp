@@ -7,6 +7,9 @@
 #include "kme.h"
 #include "maploader.h"
 #include "../canvas2d/canvas2d_alignment.h"
+#include "../canvas2d/canvas2d_marker_cache.h"
+#include "../canvas2d/canvas2d_primitives.h"
+#include "implot.h"
 
 #include <fstream>
 #include <iterator>
@@ -40,18 +43,20 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
         const std::string include_text =
             "BveTs Map 2.02:utf-8\r\n"
             "$radius=2; $cant=0.02; $grade=6;\r\n"
-            "0; Curve.SetFunction(1); Curve.Begin(0); Gradient.Begin(0);\r\n"
+            "0; Curve.SetFunction(1); Curve.Begin(0); Gradient.Begin(0); Track['parallel'].Position(3,1);\r\n"
             "$base-50; Curve.BeginTransition(); Gradient.BeginTransition();\r\n"
             "$base+2.5;\r\n  Curve.Begin( $radius , $cant ); // curve comment\r\n"
             "$base+30; Gradient.Begin($grade);\r\n"
             "$base+115; Gradient.Interpolate($grade+2);\r\n"
+            "$base+180; Section.Begin(0,1); SpeedLimit.Begin(80);\r\n"
             "$base+240; Gradient.Interpolate();\r\n"
             "$base+400; Curve.BeginTransition();\r\n"
             "$base+450; Curve.End();\r\n"
             "$base+500; Curve.Interpolate(5);\r\n"
             "$base+590; Curve.Interpolate();\r\n"
             "$base+655; Curve.Interpolate(0);\r\n"
-            "$base+700; Gradient.BeginTransition();\r\n";
+            "$base+700; Gradient.BeginTransition();\r\n"
+            "$base+765; Curve.Change(2); Track['parallel'].Position(3,1);\r\n";
         std::ofstream(map, std::ios::binary) << root_text;
         std::ofstream(include, std::ios::binary) << include_text;
         const auto bytes = [](const std::filesystem::path& path) {
@@ -82,10 +87,11 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
         app.dmin_ = app.model_.default_min;
         app.dmax_ = app.model_.default_max;
         app.unit_distance_ = unit_distance;
+        app.show_section_markers_ = true;
         app.rebuild_marker_overlay_cache();
         auto& editor = *app.plan_alignment_;
-        editor.enabled = true;
-        editor.set_source(app.model_, app.plan_data_source_revision_);
+        app.set_2d_mode(Mode::Edit);
+        editor.set_source(app.model_, app.plan_data_source_revision_, app.repeater_marker_cache_);
         const auto row_id = [&](const auto& rows, const char* method, double distance) {
             for (const auto& row : rows) {
                 if (table_cell(row, "method") == method && table_cell_number(row, "distance") == distance) {
@@ -95,12 +101,134 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
             throw std::runtime_error(method);
         };
         const std::string curve = row_id(app.model_.curve_rows, "Curve.Begin", 3472.5);
+        const std::string equal_radius = row_id(app.model_.curve_rows, "Curve.Change", 4235.0);
         const std::string paired = row_id(app.model_.gradient_rows, "Gradient.BeginTransition", 3420.0);
         const std::string orphan = row_id(app.model_.gradient_rows, "Gradient.BeginTransition", 4170.0);
         const std::string gradient = row_id(app.model_.gradient_rows, "Gradient.Interpolate", 3585.0);
         const std::string inherited = row_id(app.model_.gradient_rows, "Gradient.Interpolate", 3710.0);
         check("event_identity", editor.target(curve) && editor.target(paired) &&
               !editor.target(orphan) && editor.target(gradient) && editor.target(inherited));
+
+        const auto wait_preview = [&] {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while (!editor.current_preview_ready() && std::chrono::steady_clock::now() < deadline) {
+                const std::string error = editor.poll();
+                if (!error.empty()) throw std::runtime_error(error);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            return editor.current_preview_ready();
+        };
+        canvas2d::PlanScreenTransform label_transform;
+        label_transform.scale = 0.02;
+        label_transform.screen_cx = label_transform.screen_cy = 250.0f;
+        const ImVec2 label_origin(0.0f, 0.0f);
+        const ImVec2 label_size(500.0f, 500.0f);
+        const auto& labels = editor.radius_labels(app.model_.own, label_transform,
+                                                 0.0, 7075.0, label_origin, label_size);
+        const auto owner_is = [](const std::string& id) {
+            return [&id](const auto& label) { return label.span->edit_id == id; };
+        };
+        const auto curve_label = std::find_if(labels.begin(), labels.end(), owner_is(curve));
+        check("shared_radius_labels", curve_label != labels.end() && !curve_label->span->transition &&
+              std::count_if(labels.begin(), labels.end(), owner_is(curve)) == 1 &&
+              std::count_if(labels.begin(), labels.end(), owner_is(equal_radius)) == 1);
+        const auto& only_transition = editor.radius_labels(app.model_.own, label_transform,
+                                                           3420.0, 3470.0, label_origin, label_size);
+        check("visible_transition_label", only_transition.size() == 1 &&
+              only_transition.front().span->transition && only_transition.front().span->edit_id == curve);
+
+        const auto profile_marker = [&](const ProfileData& data) {
+            const auto marker = std::find_if(data.gradient_edit_markers.begin(),
+                data.gradient_edit_markers.end(), [&](const auto& row) { return row.edit_id == gradient; });
+            if (marker == data.gradient_edit_markers.end()) throw std::runtime_error("profile marker missing");
+            return *marker;
+        };
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2(1000, 720);
+        io.DeltaTime = 1.0f / 60.0f;
+        io.Fonts->Build();
+        const auto render_charts = [&] {
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(io.DisplaySize);
+            ImGui::Begin("Alignment profile contract", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+            const auto& profile = app.current_profile_data();
+            app.render_profile_plot(profile, ImVec2(950, 330));
+            app.render_radius_plot(profile, ImVec2(950, 330));
+            ImGui::End();
+            ImGui::Render();
+        };
+        const auto marker_pixel = [&] {
+            const auto marker = profile_marker(app.current_profile_data());
+            const auto& axes = app.profile_plot_limits_;
+            return ImVec2(
+                app.profile_plot_pos_.x + app.profile_plot_size_.x *
+                    static_cast<float>((marker.x - axes[0]) / (axes[1] - axes[0])),
+                app.profile_plot_pos_.y + app.profile_plot_size_.y *
+                    static_cast<float>((axes[3] - marker.y) / (axes[3] - axes[2])));
+        };
+        app.set_2d_mode(Mode::Measure);
+        app.profile_x_span_ = 200.0;
+        app.request_plot_focus(3585.0, true, false);
+        render_charts();
+        const auto applied_elevations = app.current_profile_data().own_y;
+        const ImVec2 hit = marker_pixel();
+        io.AddMousePosEvent(hit.x, hit.y);
+        render_charts();
+        render_charts();
+        const bool profile_measured = app.measure_distance_.has_value() && !app.measure_text_.empty();
+        app.clear_measure();
+        io.AddMousePosEvent(500.0f, 510.0f);
+        render_charts();
+        render_charts();
+        const bool radius_measured = app.measure_distance_.has_value() && !app.measure_text_.empty();
+        app.set_2d_mode(Mode::Edit);
+        render_charts();
+        check("measure_exits_for_charts", profile_measured && radius_measured &&
+              !app.measure_distance_ && app.measure_text_.empty() &&
+              app.current_view_2d_settings().mode == 1);
+        io.AddMousePosEvent(hit.x, hit.y);
+        render_charts();
+        const auto axes_before_drag = app.profile_plot_limits_;
+        const float pixels_per_metre = app.profile_plot_size_.x /
+            static_cast<float>(axes_before_drag[1] - axes_before_drag[0]);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        render_charts();
+        const bool grabbed = editor.dragging(canvas2d::AlignmentDragSurface::Profile);
+        io.AddMousePosEvent(hit.x + 7.0f * pixels_per_metre, hit.y);
+        render_charts();
+        const bool moved_during_drag = grabbed && editor.dirty() && wait_preview() &&
+            profile_marker(app.current_profile_data()).d == 3590.0 &&
+            app.current_profile_data().own_y != applied_elevations &&
+            app.profile_plot_limits_ == axes_before_drag && editor.marker_revision() == 0;
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        render_charts();
+        check("profile_drag_preview_and_release", moved_during_drag && !editor.dragging() &&
+              wait_preview() && editor.marker_revision() == editor.preview_revision());
+
+        const ImVec2 next_hit = marker_pixel();
+        io.AddMousePosEvent(next_hit.x, next_hit.y);
+        render_charts();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        render_charts();
+        io.AddMousePosEvent(next_hit.x + 12.0f * pixels_per_metre, next_hit.y);
+        render_charts();
+        const bool moved_existing_draft = editor.dragging() && editor.dirty() &&
+            editor.drafts().at(gradient).distance == 3600.0;
+        io.AddKeyEvent(ImGuiKey_Escape, true);
+        render_charts();
+        check("profile_escape_restores_draft", moved_existing_draft && !editor.dragging() &&
+              editor.drafts().at(gradient).distance == 3590.0);
+        io.AddKeyEvent(ImGuiKey_Escape, false);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        render_charts();
+        editor.clear_drafts();
+        app.apply_edit_mode_enabled(false);
+        check("leave_edit_restores_measure", app.mode_ == Mode::Measure && !editor.dirty());
+        app.edit_mode_enabled_ = true;
+        app.set_2d_mode(Mode::Edit);
+        const PlanMarker applied_section = app.current_plan_data().section_markers.at(0);
 
         editor.step_radius(curve, -1);
         check("positive_to_zero", editor.drafts().at(curve).radius == 0.0);
@@ -114,21 +242,34 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
         }
         editor.set_distance(gradient, 3590.0);
         editor.set_distance(inherited, 3705.0);
-        editor.enabled = false;
+        app.set_2d_mode(Mode::Pan);
         check("mode_switch_retains_drafts", app.has_unsaved_edit_state() && editor.dirty());
         check("draft_blocks_save", !app.save_pending_document_changes() &&
               std::string_view(app.program_status_key_) == "status.edit.apply_plan_before_save");
 
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (!editor.current_preview_ready() && std::chrono::steady_clock::now() < deadline) {
-            const std::string error = editor.poll();
-            if (!error.empty()) throw std::runtime_error(error);
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        check("latest_preview", editor.current_preview_ready());
+        check("latest_preview", wait_preview());
         check("coalesces_burst", editor.metrics().superseded > 0 &&
               editor.metrics().computed < editor.metrics().submitted);
         if (unit_distance <= 25.0) check("reuses_prefix", editor.metrics().reused_rows > 0);
+        app.set_2d_mode(Mode::Edit);
+        const PlanData& plan = app.current_plan_data();
+        const auto& section = plan.section_markers.at(0);
+        const auto own_position = canvas2d::sample_matrix_track_point(
+            editor.geometry(app.model_.own), section.d, true).value();
+        const auto transform = canvas2d::make_plan_transform(app.plan_view_, -plan.origin_angle,
+                                                             label_origin, label_size);
+        const auto [x, y] = transform.model_to_plan(own_position.x, own_position.y);
+        const auto* projection = app.alignment_reprojection();
+        const auto other = canvas2d::sample_matrix_track_point(projection->other_tracks.at(0), section.d, false).value();
+        check("settled_marker_geometry", section.edit_id == applied_section.edit_id &&
+              section.row_index == applied_section.row_index &&
+              std::hypot(section.x - applied_section.x, section.y - applied_section.y) > 1e-3 &&
+              std::hypot(section.x - x, section.y - y) < 1e-3 &&
+              std::abs(std::hypot(other.x - own_position.x, other.y - own_position.y) - 3.0) < 1e-6 &&
+              std::abs(other.z - own_position.z - 1.0) < 1e-6);
+        const auto cache_generation = app.plan_data_cache_.generation;
+        app.current_plan_data();
+        check("settled_marker_cache_hit", app.plan_data_cache_.generation == cache_generation);
         const Matrix draft_geometry = editor.geometry(app.model_.own);
         app.request_edit_ui_operation(PendingEditUiOperation::ApplyPlanAlignment);
         check("busy_disables_draft_edit", !app.plan_alignment_actions_available());
@@ -142,7 +283,7 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
             return false;
         }
 
-        editor.set_source(app.model_, app.plan_data_source_revision_);
+        editor.set_source(app.model_, app.plan_data_source_revision_, app.repeater_marker_cache_);
         editor.step_radius(curve, -1);
         check("repeated_apply", app.apply_plan_alignment_drafts() &&
               app.pending_edit_changes_.at(curve).field_changes.at("radius") == "-10" &&
@@ -158,7 +299,7 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
         check("reopen_matches", reopen.ok && matching_geometry(reopen.model.own, app.model_.own));
         if (reopen.handle) kv_free(reopen.handle);
 
-        editor.set_source(app.model_, app.plan_data_source_revision_);
+        editor.set_source(app.model_, app.plan_data_source_revision_, app.repeater_marker_cache_);
         const Matrix saved_geometry = app.model_.own;
         editor.set_distance(curve, 3970.0);
         check("failed_apply_retains_draft", !app.apply_plan_alignment_drafts() && editor.dirty() &&

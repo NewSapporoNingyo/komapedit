@@ -65,14 +65,14 @@ void App::invalidate_table_cache() {
 
 void App::reset_marker_visibility() {
     structure_row_visible_.assign(structure_marker_cache_.size(), 0);
-    repeater_row_visible_.assign(repeater_marker_cache_.size(), 0);
+    repeater_row_visible_.assign(repeater_marker_cache_->size(), 0);
     signal_row_visible_.assign(signal_marker_cache_.size(), 0);
     other_train_path_visible_.assign(model_.other_trains.size(), 0);
 }
 
 void App::sync_marker_visibility_sizes() {
     structure_row_visible_.resize(structure_marker_cache_.size(), 0);
-    repeater_row_visible_.resize(repeater_marker_cache_.size(), 0);
+    repeater_row_visible_.resize(repeater_marker_cache_->size(), 0);
     signal_row_visible_.resize(signal_marker_cache_.size(), 0);
     other_train_path_visible_.resize(model_.other_trains.size(), 0);
 }
@@ -82,7 +82,7 @@ void App::locate_structure_row_on_plan(size_t row_index) {
     if (row_index >= structure_marker_cache_.size() || !structure_marker_cache_[row_index]) return;
     structure_row_visible_[row_index] = 1;
     const PlanStructureMarker& marker = *structure_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    focus_plan_at_model_point(marker.x, marker.y, marker.d);
 }
 
 void App::locate_structure_row_in_list(size_t row_index) {
@@ -109,15 +109,16 @@ void App::locate_structure_row_in_scene_preview(size_t row_index) {
 
 void App::locate_repeater_row_on_plan(size_t row_index) {
     sync_marker_visibility_sizes();
-    if (row_index >= repeater_marker_cache_.size() || !repeater_marker_cache_[row_index].begin_marker) return;
+    const auto& rows = *repeater_marker_cache_;
+    if (row_index >= rows.size() || !rows[row_index].begin_marker) return;
     repeater_row_visible_[row_index] = 1;
-    const PlanRepeaterMarker& marker = *repeater_marker_cache_[row_index].begin_marker;
-    focus_plan_at_model_point(marker.x, marker.y);
+    const PlanRepeaterMarker& marker = *rows[row_index].begin_marker;
+    focus_plan_at_model_point(marker.x, marker.y, marker.d);
 }
 
 void App::locate_repeater_row_in_list(size_t row_index) {
     sync_marker_visibility_sizes();
-    if (row_index >= repeater_marker_cache_.size()) return;
+    if (row_index >= repeater_marker_cache_->size()) return;
     show_repeaters_window_ = true;
     focus_repeaters_next_ = true;
     repeater_list_scroll_row_ = static_cast<int>(row_index);
@@ -136,7 +137,7 @@ void App::locate_signal_row_on_plan(size_t row_index) {
     if (row_index >= signal_marker_cache_.size() || !signal_marker_cache_[row_index]) return;
     signal_row_visible_[row_index] = 1;
     const PlanSignalMarker& marker = *signal_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    focus_plan_at_model_point(marker.x, marker.y, marker.d);
 }
 
 void App::locate_signal_row_in_list(size_t row_index) {
@@ -163,7 +164,8 @@ void App::locate_standard_marker_on_plan(
     size_t row_index, bool& markers_visible) {
     if (row_index >= cache.size() || !cache[row_index]) return;
     markers_visible = true;
-    focus_plan_at_model_point(cache[row_index]->x, cache[row_index]->y);
+    const PlanMarker& marker = *cache[row_index];
+    focus_plan_at_model_point(marker.x, marker.y, marker.d);
 }
 
 void App::locate_standard_marker_in_list(
@@ -206,7 +208,7 @@ void App::locate_other_train_stop_row_on_plan(size_t row_index) {
         other_train_path_visible_[marker.definition_row_index] = 1;
     }
     plan_marker_selection_ = PlanMarkerSelection{PlanMarkerKind::OtherTrainStop, row_index};
-    focus_plan_at_model_point(marker.x, marker.y);
+    focus_plan_at_model_point(marker.x, marker.y, marker.d);
 }
 
 void App::locate_other_train_stop_row_in_list(size_t row_index) {

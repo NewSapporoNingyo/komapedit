@@ -6,6 +6,7 @@
  */
 
 #include "kme.h"
+#include "canvas2d_alignment.h"
 #include "touch_input.h"
 
 #include "imgui.h"
@@ -296,14 +297,63 @@ void App::reset_plot_axes() {
     profile_x_zoom_pending_ = false;
     profile_y_zoom_pending_ = false;
     radius_x_zoom_pending_ = false;
+    profile_plot_rect_valid_ = false;
 }
 
 void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
     if (!show_profile_graph_) return;
+    using canvas2d::AlignmentDragSurface;
     ScopedImPlotFitButton disable_fit(mode_ == Mode::Measure);
     ImGuiIO& io = ImGui::GetIO();
-    bool mouse_in_profile_plot = profile_plot_rect_valid_ && point_in_rect(io.MousePos, profile_plot_pos_, profile_plot_size_);
+    const bool mouse_in_profile_plot = profile_plot_rect_valid_ &&
+        point_in_rect(io.MousePos, profile_plot_pos_, profile_plot_size_);
     ScopedImPlotWheelZoomDisabled disable_default_wheel_zoom(mouse_in_profile_plot);
+    const float marker_scale = marker_size_scale_from_percent(marker_size_percent_);
+    const auto nearest_marker = [&](ImVec2 pos, ImVec2 size, const auto& to_pixels, bool editable_only) {
+        const OwnTrackEditMarker* nearest = nullptr;
+        const float hit_radius = std::max(12.0f, 12.0f * marker_scale);
+        float nearest_distance = hit_radius * hit_radius;
+        bool nearest_is_selected = false;
+        for (const auto& marker : data.gradient_edit_markers) {
+            if (editable_only && !plan_alignment_->target(marker.edit_id)) continue;
+            const ImVec2 point = to_pixels(marker);
+            if (!point_in_rect(point, pos, size)) continue;
+            const float dx = io.MousePos.x - point.x;
+            const float dy = io.MousePos.y - point.y;
+            const float distance = dx * dx + dy * dy;
+            const bool selected = plan_marker_selection_.matches(PlanMarkerKind::Gradient, marker.row_index);
+            if (distance > hit_radius * hit_radius || (nearest_is_selected && !selected) ||
+                (selected == nearest_is_selected && distance > nearest_distance)) continue;
+            nearest = &marker;
+            nearest_distance = distance;
+            nearest_is_selected = selected;
+        }
+        return nearest;
+    };
+    const bool can_edit = mode_ == Mode::Edit && plan_alignment_actions_available();
+    if (can_edit && !plan_alignment_->dragging() && mouse_in_profile_plot &&
+        ImGui::IsWindowHovered() && !io.KeyCtrl && touch_input::current_frame().active_count == 0 &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        const double xmin = profile_plot_limits_[0];
+        const double xmax = profile_plot_limits_[1];
+        const double ymin = profile_plot_limits_[2];
+        const double ymax = profile_plot_limits_[3];
+        const double metres_per_pixel = (xmax - xmin) / profile_plot_size_.x;
+        const auto to_pixels = [&](const OwnTrackEditMarker& marker) {
+            return ImVec2(
+                profile_plot_pos_.x + static_cast<float>((marker.x - xmin) / metres_per_pixel),
+                profile_plot_pos_.y + profile_plot_size_.y *
+                    static_cast<float>((ymax - marker.y) / (ymax - ymin)));
+        };
+        const auto* marker = nearest_marker(profile_plot_pos_, profile_plot_size_, to_pixels, true);
+        if (marker && plan_alignment_->start_profile_drag(
+                marker->edit_id, io.MousePos.x, metres_per_pixel, dmin_, dmax_)) {
+            plan_marker_selection_ = {PlanMarkerKind::Gradient, marker->row_index};
+        }
+    }
+    const bool profile_drag = plan_alignment_->dragging(AlignmentDragSurface::Profile);
+    ImPlotFlags flags = ImPlotFlags_NoTitle | ImPlotFlags_NoLegend;
+    if (profile_drag) flags |= ImPlotFlags_NoInputs;
     const CanvasLineWidthSettings line_widths = clamp_canvas_line_widths(canvas_line_widths_);
     const ImVec2 grid_line_size(line_widths.background_grid_px, line_widths.background_grid_px);
     ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(4.0f, 4.0f));
@@ -313,7 +363,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
     bool consumed_profile_x_zoom = false;
     bool consumed_profile_y_zoom = false;
     bool open_profile_marker_popup = false;
-    if (ImPlot::BeginPlot("##ProfilePlot", size, ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
+    if (ImPlot::BeginPlot("##ProfilePlot", size, flags)) {
         ImVec2 frame_min = ImGui::GetItemRectMin();
         ImVec2 frame_max = ImGui::GetItemRectMax();
         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoLabel, ImPlotAxisFlags_NoLabel);
@@ -338,36 +388,26 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         }
         plot_line_vec("Own", data.own_x, data.own_y, ImVec4(1, 1, 1, 1), line_widths.own_track_px);
         for (const auto& t : data.other) plot_line_vec(t.key.c_str(), t.x, t.y, t.color, line_widths.other_track_px);
-        if (show_gradient_pos_) {
-            for (const auto& p : data.gradient_points) {
-                draw_profile_vertical_marker(p.x, p.y, ProfileMarkerDirection::Down,
-                                             IM_COL32(255, 255, 255, 140),
-                                             line_widths.chart_marker_px, false);
+        if (show_gradient_pos_ || mode_ == Mode::Edit) {
+            if (show_gradient_pos_) {
+                for (const auto& p : data.gradient_points) {
+                    draw_profile_vertical_marker(p.x, p.y, ProfileMarkerDirection::Down,
+                                                 IM_COL32(255, 255, 255, 140),
+                                                 line_widths.chart_marker_px, false);
+                }
             }
             if (edit_mode_enabled_) {
                 ImDrawList* draw = ImPlot::GetPlotDrawList();
-                const float marker_scale = marker_size_scale_from_percent(marker_size_percent_);
                 const ImVec2 plot_pos = ImPlot::GetPlotPos();
                 const ImVec2 plot_size = ImPlot::GetPlotSize();
                 const ImVec2 plot_max(plot_pos.x + plot_size.x, plot_pos.y + plot_size.y);
                 const OwnTrackEditMarker* hovered_marker = nullptr;
-                double best_distance_sq = 144.0;
-                if (ImPlot::IsPlotHovered()) {
-                    for (const OwnTrackEditMarker& marker : data.gradient_edit_markers) {
-                        const ImVec2 point = ImPlot::PlotToPixels(marker.x, marker.y);
-                        if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
-                            point.x < plot_pos.x || point.x > plot_max.x ||
-                            point.y < plot_pos.y || point.y > plot_max.y) {
-                            continue;
-                        }
-                        const double dx = static_cast<double>(io.MousePos.x - point.x);
-                        const double dy = static_cast<double>(io.MousePos.y - point.y);
-                        const double distance_sq = dx * dx + dy * dy;
-                        if (distance_sq <= best_distance_sq) {
-                            best_distance_sq = distance_sq;
-                            hovered_marker = &marker;
-                        }
-                    }
+                if (!plan_alignment_->dragging() && ImPlot::IsPlotHovered()) {
+                    hovered_marker = nearest_marker(plot_pos, plot_size, [](const auto& marker) {
+                        return ImPlot::PlotToPixels(marker.x, marker.y);
+                    }, false);
+                    if (can_edit && hovered_marker && !io.KeyCtrl &&
+                        plan_alignment_->target(hovered_marker->edit_id)) set_move_cursor();
                 }
                 draw->PushClipRect(plot_pos, plot_max, true);
                 for (const OwnTrackEditMarker& marker : data.gradient_edit_markers) {
@@ -380,8 +420,9 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
                     const ImU32 color = marker.transition
                         ? IM_COL32(38, 130, 66, 255)
                         : IM_COL32(62, 214, 102, 255);
-                    const float radius = (hovered_marker == &marker ? 7.5f : 6.0f) *
-                        marker_scale;
+                    const bool active = hovered_marker == &marker ||
+                        (profile_drag && plan_marker_selection_.matches(PlanMarkerKind::Gradient, marker.row_index));
+                    const float radius = (active ? 7.5f : 6.0f) * marker_scale;
                     const ImVec2 a(point.x, point.y - radius);
                     const ImVec2 b(point.x - radius, point.y + radius);
                     const ImVec2 c(point.x + radius, point.y + radius);
@@ -418,7 +459,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
                     }
                 }
             }
-            if (show_gradient_values_) {
+            if (show_gradient_pos_ && show_gradient_values_) {
                 draw_bottom_locked_plot_labels(data.gradient_labels);
             }
         }
@@ -455,14 +496,24 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         profile_plot_pos_ = ImPlot::GetPlotPos();
         profile_plot_size_ = ImPlot::GetPlotSize();
         profile_plot_rect_valid_ = profile_plot_size_.x > 0.0f && profile_plot_size_.y > 0.0f;
+        profile_plot_limits_ = {limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max};
         bool queued_profile_x_zoom = false;
-        if (auto zoom_limits = plot_x_wheel_zoom_limits(limits)) {
-            profile_x_zoom_min_ = zoom_limits->first;
-            profile_x_zoom_max_ = zoom_limits->second;
-            profile_x_zoom_pending_ = true;
-            queued_profile_x_zoom = true;
+        PlotTouchZoom touch_zoom;
+        if (profile_drag) {
+            plan_alignment_->process_profile_drag(io.MousePos.x);
+            ImPlot::PushPlotClipRect();
+            plan_alignment_->draw_drag_label(
+                AlignmentDragSurface::Profile, ImPlot::GetPlotDrawList(), io.MousePos, marker_scale);
+            ImPlot::PopPlotClipRect();
+        } else {
+            if (auto zoom_limits = plot_x_wheel_zoom_limits(limits)) {
+                profile_x_zoom_min_ = zoom_limits->first;
+                profile_x_zoom_max_ = zoom_limits->second;
+                profile_x_zoom_pending_ = true;
+                queued_profile_x_zoom = true;
+            }
+            touch_zoom = plot_touch_zoom_limits(limits, true);
         }
-        PlotTouchZoom touch_zoom = plot_touch_zoom_limits(limits, true);
         if (touch_zoom.x) {
             profile_x_zoom_min_ = touch_zoom.x_min;
             profile_x_zoom_max_ = touch_zoom.x_max;
@@ -487,6 +538,9 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         focus_profile_next_ = false;
         reset_profile_axes_next_ = false;
         ImPlot::EndPlot();
+    } else {
+        profile_plot_rect_valid_ = false;
+        if (profile_drag) plan_alignment_->cancel_drag();
     }
     ImPlot::PopStyleVar(4);
     if (open_profile_marker_popup) {
@@ -574,6 +628,8 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
 
 void App::render_plots() {
     if (!show_plots_window_) {
+        profile_plot_rect_valid_ = false;
+        plan_alignment_->cancel_drag();
         finish_pending_load_timing_after_plan_data_ready();
         return;
     }
@@ -581,10 +637,18 @@ void App::render_plots() {
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
     if (focus_plots_next_) ImGui::SetNextWindowFocus();
     if (!ImGui::Begin(title.c_str(), &show_plots_window_)) {
+        profile_plot_rect_valid_ = false;
+        plan_alignment_->cancel_drag();
         focus_plots_next_ = false;
         finish_pending_load_timing_after_plan_data_ready();
         ImGui::End();
         return;
+    }
+    if (!show_profile_graph_) {
+        profile_plot_rect_valid_ = false;
+        if (plan_alignment_->dragging(canvas2d::AlignmentDragSurface::Profile)) {
+            plan_alignment_->cancel_drag();
+        }
     }
     render_mode_grid_controls();
     if (pick_slot_ != 0) ImGui::TextUnformatted(tr("hint.pick_bg_station").c_str());

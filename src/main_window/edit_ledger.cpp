@@ -337,7 +337,7 @@ bool App::plan_alignment_actions_available() const {
 bool App::apply_plan_alignment_drafts() {
     if (!plan_alignment_actions_available() || !plan_alignment_->dirty() ||
         plan_alignment_->dragging()) return false;
-    plan_alignment_->set_source(model_, plan_data_source_revision_);
+    plan_alignment_->set_source(model_, plan_data_source_revision_, repeater_marker_cache_);
     auto changes = pending_edit_changes_;
     for (const auto& [id, draft] : plan_alignment_->drafts()) {
         const auto* target = plan_alignment_->target(id);
@@ -408,7 +408,7 @@ void App::apply_edit_mode_enabled(bool enabled) {
     persist_user_settings();
 
     if (!edit_mode_enabled_) {
-        plan_alignment_->enabled = false;
+        if (mode_ == Mode::Edit) set_2d_mode(previous_navigation_mode_);
         plan_alignment_->clear_drafts();
         clear_scene_placement_edit_target();
         inspector_.open = false;

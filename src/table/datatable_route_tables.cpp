@@ -524,8 +524,9 @@ void App::render_repeaters_window() {
                     const std::string& value = row.cells[static_cast<size_t>(i)];
                     if (i == k_repeater_distance_column) {
                         size_t marker_index = static_cast<size_t>(row_index);
-                        bool can_locate = marker_index < repeater_marker_cache_.size() &&
-                            repeater_marker_cache_[marker_index].begin_marker.has_value();
+                        const auto& repeater_markers = *repeater_marker_cache_;
+                        bool can_locate = marker_index < repeater_markers.size() &&
+                            repeater_markers[marker_index].begin_marker.has_value();
                         const bool can_locate_scene = can_locate_scene_preview;
                         RepeaterTextCellContextAction action =
                             render_repeater_text_cell_with_context_actions(

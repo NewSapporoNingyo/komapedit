@@ -11238,8 +11238,8 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
             for (const TrackPoint& point : path.points) hash_track_point(point);
         }
 
-        hash.integer(static_cast<std::uint64_t>(source.repeater_marker_cache_.size()));
-        for (const RepeaterOverlayRow& row : source.repeater_marker_cache_) {
+        hash.integer(static_cast<std::uint64_t>(source.repeater_marker_cache_->size()));
+        for (const RepeaterOverlayRow& row : *source.repeater_marker_cache_) {
             hash.integer(row.begin_marker ? 1u : 0u);
             if (row.begin_marker) hash_marker(*row.begin_marker);
             hash.integer(row.end_marker ? 1u : 0u);
@@ -11694,12 +11694,13 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
         app.model_ = std::move(alias_fallback_model);
         app.has_model_ = true;
         app.rebuild_marker_overlay_cache();
-        const bool repeater_alias_fallback_ok = app.repeater_marker_cache_.size() == 1 &&
-            app.repeater_marker_cache_.front().begin_marker &&
-            app.repeater_marker_cache_.front().end_marker &&
-            app.repeater_marker_cache_.front().segment.endpoints_valid &&
-            std::abs(app.repeater_marker_cache_.front().segment.first_point.x - 10.0) < 1e-9 &&
-            std::abs(app.repeater_marker_cache_.front().segment.last_point.x - 20.0) < 1e-9;
+        const auto& repeater_markers = *app.repeater_marker_cache_;
+        const bool repeater_alias_fallback_ok = repeater_markers.size() == 1 &&
+            repeater_markers.front().begin_marker &&
+            repeater_markers.front().end_marker &&
+            repeater_markers.front().segment.endpoints_valid &&
+            std::abs(repeater_markers.front().segment.first_point.x - 10.0) < 1e-9 &&
+            std::abs(repeater_markers.front().segment.last_point.x - 20.0) < 1e-9;
 
     workflow_ok = workflow_ok && repeated_load_hash_ok && station_jump_ok && measure_ok && csv_export_ok &&
         repeater_alias_fallback_ok;
@@ -12047,7 +12048,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         size_t repeater_segment_count = 0;
         size_t other_train_stop_marker_count = 0;
         size_t other_train_path_point_count = 0;
-        for (const RepeaterOverlayRow& row : app.repeater_marker_cache_) {
+        for (const RepeaterOverlayRow& row : *app.repeater_marker_cache_) {
             if (row.begin_marker) ++repeater_begin_marker_count;
             if (row.end_marker) ++repeater_end_marker_count;
             if (row.segment.bounds_valid) ++repeater_segment_count;
@@ -12096,7 +12097,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
              << " joint_noise_markers=" << app.joint_noise_marker_cache_.size()
              << " backgrounds=" << app.model_.backgrounds.size()
              << " background_markers=" << app.background_marker_cache_.size()
-             << " repeaters=" << app.repeater_marker_cache_.size()
+             << " repeaters=" << app.repeater_marker_cache_->size()
              << " repeater_begin_markers=" << repeater_begin_marker_count
              << " repeater_end_markers=" << repeater_end_marker_count
              << " repeater_segments=" << repeater_segment_count
@@ -12506,9 +12507,9 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             app.show_curve_values_ = true;
             app.show_gradient_pos_ = true;
             app.rebuild_marker_overlay_cache();
-            alignment.enabled = true;
+            app.set_2d_mode(Mode::Edit);
             alignment.measure_preview();
-            alignment.set_source(app.model_, app.plan_data_source_revision_);
+            alignment.set_source(app.model_, app.plan_data_source_revision_, app.repeater_marker_cache_);
             const double middle = (app.dmin_ + app.dmax_) * 0.5;
             const canvas2d::AlignmentSpan* selected = nullptr;
             for (const auto& span : alignment.spans()) {
@@ -12611,6 +12612,27 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
                 io.AddKeyEvent(ImGuiKey_Escape, false);
                 io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
                 render_frame();
+
+                alignment_pointer(edit_distance, app.model_.own);
+                render_frame();
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+                render_frame();
+                alignment_pointer(edit_distance + 10.0, app.model_.own);
+                render_frame();
+                const bool second_drag = alignment.dragging() && alignment.dirty();
+                const auto release_started = std::chrono::steady_clock::now();
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+                render_frame();
+                settle_alignment();
+                render_frame();
+                const bool projected = second_drag && !alignment.dragging() &&
+                    alignment.current_preview_ready() && app.alignment_reprojection() &&
+                    app.plan_data_cache_.alignment_marker_revision == alignment.preview_revision();
+                const double release_ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - release_started).count();
+                *out << "alignment_release_to_marker_frame_ms=" << release_ms
+                     << " result=" << (projected ? "PASS" : "FAIL") << "\n";
+                alignment_pass = alignment_pass && projected;
             }
             *out << "alignment_bench submitted=" << metrics.submitted
                  << " computed=" << metrics.computed
