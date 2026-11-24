@@ -341,7 +341,8 @@ bool App::apply_plan_alignment_drafts() {
     auto changes = pending_edit_changes_;
     for (const auto& [id, draft] : plan_alignment_->drafts()) {
         const auto* target = plan_alignment_->target(id);
-        if (!target || (draft.radius && !target->radius) || row_is_pending_delete(id)) {
+        if (!target || (draft.radius && !target->radius) ||
+            (draft.gradient && !target->gradient) || row_is_pending_delete(id)) {
             KME_ADD_LOG("[error]2D alignment target is unavailable: " + id);
             set_program_status("status.edit.distance_resolution_blocked");
             return false;
@@ -381,6 +382,9 @@ bool App::apply_plan_alignment_drafts() {
             change.confirm_environment_mismatch = false;
         }
         if (draft.radius && *draft.radius != *target->radius) set_field("radius", *draft.radius);
+        if (draft.gradient && draft.gradient->value() != *target->gradient) {
+            set_field("gradient", draft.gradient->value());
+        }
         if (change.operation == "update" && change.field_changes.empty()) changes.erase(entry);
     }
     return apply_edit_ledger_to_preview(changes, std::nullopt, false, {}, true);

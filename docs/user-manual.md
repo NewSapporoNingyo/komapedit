@@ -180,9 +180,13 @@ The Profile chart shows mileage and elevation. The Curve Radius chart distinguis
 
 Enable **Edit Mode** and select the pencil in the 2D toolbar. This exits Measure Mode in the plan, Profile, and Curve Radius charts. Drag a curve, transition, or gradient endpoint along the plan track, or drag a gradient marker horizontally in the Profile. Mileage snaps in 5 m increments relative to the start of the drag. Use **Esc** to restore the value at the start of the current drag.
 
-Scroll up or down over a shaded curve to change its signed radius in 5 m steps. Circular sections use the start statement's radius. Transition and interpolation sections use the end statement's explicit radius. Sections that use the same statement's radius share one label, with the visible circular section taking priority. A step that crosses zero stops at zero first. Scroll again to continue to the opposite side. Shift + wheel rotates the view.
+Dragging a circular curve's start or end marker moves its preceding explicit transition start by the same distance. Drag the transition start directly to change the transition length. `Curve.Interpolate` and `Legacy.Curve` markers move one endpoint at a time.
 
-The plan alignment and Profile follow the draft as you edit. The other plan markers follow the new alignment after you release the drag or finish adjusting the radius. Use the checkmark next to the grid buttons to apply the draft to the working copy and update the Curve Radius chart, tables, and 3D scene. Use **Save** to write the working copy to its source files. Changing 2D modes keeps the draft. **Revert** discards it.
+Scroll over a `Gradient.Begin` marker to adjust the gradient by 0.1‰ per step. Scroll up to increase it or down to decrease it. The gradient marker takes priority where it overlaps a shaded curve.
+
+Scroll up or down over a shaded curve, including `Legacy.Curve`, to change its signed radius in 5 m steps. Circular sections use the start statement's radius. Transition and interpolation sections use the end statement's explicit radius. Sections that use the same statement's radius share one label, with the visible circular section taking priority. A step that crosses zero stops at zero first. Scroll again to continue to the opposite side. Shift + wheel rotates the view.
+
+The plan alignment and Profile follow the draft as you edit. The other plan markers follow the new alignment after you release the drag or finish scrolling. Use the checkmark next to the grid buttons to apply the draft to the working copy and update the Curve Radius chart, tables, and 3D scene. Use **Save** to write the working copy to its source files. Changing 2D modes keeps the draft. **Revert** discards it.
 
 #### Markers, Navigation, and Editing
 

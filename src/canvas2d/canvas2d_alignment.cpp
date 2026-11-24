@@ -10,6 +10,7 @@
 #include "imgui_internal.h"
 
 #include <iterator>
+#include <utility>
 
 namespace canvas2d {
 namespace {
@@ -21,6 +22,7 @@ bool supports_endpoint(std::string_view method) {
     return method == "Curve.Begin" || method == "Curve.BeginCircular" ||
         method == "Curve.Change" || method == "Curve.End" ||
         method == "Curve.BeginTransition" || method == "Curve.Interpolate" ||
+        method == "Legacy.Curve" ||
         method == "Gradient.Begin" || method == "Gradient.BeginConst" ||
         method == "Gradient.End" || method == "Gradient.BeginTransition" ||
         method == "Gradient.Interpolate";
@@ -28,7 +30,8 @@ bool supports_endpoint(std::string_view method) {
 
 bool supports_radius(std::string_view method) {
     return method == "Curve.Begin" || method == "Curve.BeginCircular" ||
-        method == "Curve.Change" || method == "Curve.Interpolate";
+        method == "Curve.Change" || method == "Curve.Interpolate" ||
+        method == "Legacy.Curve";
 }
 
 double preceding_event(const std::vector<double>& distances, double distance) {
@@ -134,28 +137,48 @@ void AlignmentEditor::set_source(const MapModel& model, std::uint64_t revision,
         base->distances.push_back(model.own.at(row, 0));
     }
     base->events.reserve(model.own_events.size());
+    const TrackEvent* last_radius = nullptr;
     for (const TrackEvent& event : model.own_events) {
         const bool gradient = event.key == "gradient";
+        const bool radius = event.key == "radius";
+        const TrackEvent* previous_radius = radius ? std::exchange(last_radius, &event) : nullptr;
         const auto& rows = gradient ? model.gradient_rows : model.curve_rows;
         const TableRow* source = event.source_row_index < rows.size()
             ? &rows[event.source_row_index] : nullptr;
         const std::string id = source ? source->edit_id : std::string{};
-        const std::string method = source ? table_cell(*source, "method") : std::string{};
-        const bool explicit_radius = event.key == "radius" && event.value_number &&
+        const std::string_view method = source ? table_cell(*source, "method") : std::string_view{};
+        const bool explicit_radius = radius && event.value_number &&
             supports_radius(method) && !id.empty();
         const double value = event.key == "interpolate_func"
             ? (event.text == "sin" ? 0.0 : 1.0) : event.number;
         base->events.push_back({
             {event.distance, event.key, {value, event.continues}, event.flag},
             event.source_order, id, explicit_radius});
-        if (!id.empty() && (gradient || event.key == "radius") &&
-            supports_endpoint(method) &&
-            (event.flag != "bt" || table_cell(*source, "_transitionStatus") == "paired")) {
-            targets_.emplace(id, AlignmentTarget{
-                gradient ? "gradient" : "curve", event.source_row_index, event.distance,
-                explicit_radius ? std::optional<double>(event.number) : std::nullopt,
-                event.source_order});
+        if (id.empty() || (!gradient && !radius) || !supports_endpoint(method) ||
+            (event.flag == "bt" && table_cell(*source, "_transitionStatus") != "paired")) {
+            continue;
         }
+        AlignmentTarget target{
+            gradient ? "gradient" : "curve", event.source_row_index, event.distance,
+            explicit_radius ? std::optional<double>(event.number) : std::nullopt,
+            method == "Gradient.Begin" && event.value_number
+                ? std::optional<double>(event.number) : std::nullopt,
+            event.source_order, {}};
+
+        // Use the preceding geometry event, including for uncanted curves.
+        const bool circular_endpoint = method == "Curve.Begin" || method == "Curve.BeginCircular" ||
+            method == "Curve.Change" || method == "Curve.End";
+        if (circular_endpoint && event.value_number && previous_radius &&
+            previous_radius->flag == "bt" && previous_radius->source_row_index < model.curve_rows.size()) {
+            const auto& transition_id = model.curve_rows[previous_radius->source_row_index].edit_id;
+            if (!transition_id.empty()) {
+                target.transition_edit_id = transition_id;
+                targets_.try_emplace(transition_id, AlignmentTarget{
+                    "curve", previous_radius->source_row_index, previous_radius->distance,
+                    std::nullopt, std::nullopt, previous_radius->source_order, {}});
+            }
+        }
+        targets_.emplace(id, std::move(target));
     }
     if (!base->distances.empty()) base->spans = build_spans(base->events, base->distances.back(), {});
     source_revision_ = revision;
@@ -227,6 +250,7 @@ AlignmentEditor::Preview AlignmentEditor::calculate(
             extra_distances.push_back(*draft.distance);
         }
         if (event.editable_radius && draft.radius) event.value.value.number = *draft.radius;
+        if (draft.gradient) event.value.value.number = draft.gradient->value();
         const double boundary = std::min(original_distance, event.value.distance);
         const double projected_boundary = event.value.key == "gradient"
             ? preceding_event(gradient_distances, boundary) : boundary;
@@ -419,28 +443,29 @@ void AlignmentEditor::clear_drafts() {
 
 void AlignmentEditor::cancel_drag() {
     if (!drag_) return;
-    const double value = drag_->start_distance;
-    const bool changed = drag_->candidate != value;
-    const std::string id = std::move(drag_->edit_id);
-    if (changed) {
+    if (set_drag_displacement(0.0)) {
         drag_.reset();
-        set_distance(id, value);
+        submit();
     } else {
         finish_drag();
     }
 }
 
 void AlignmentEditor::set_distance(const std::string& id, double distance) {
+    if (update_distance_draft(id, distance)) submit();
+}
+
+bool AlignmentEditor::update_distance_draft(const std::string& id, double distance) {
     const double original = targets_.at(id).distance;
     const auto it = drafts_.find(id);
     const std::optional<double> before = it != drafts_.end() ? it->second.distance : std::nullopt;
     const std::optional<double> after = distance != original
         ? std::optional<double>(distance) : std::nullopt;
-    if (before == after) return;
+    if (before == after) return false;
     AlignmentDraft& draft = drafts_[id];
     draft.distance = after;
-    if (!draft.distance && !draft.radius) drafts_.erase(id);
-    submit();
+    if (draft.empty()) drafts_.erase(id);
+    return true;
 }
 
 void AlignmentEditor::step_radius(const std::string& id, int ticks) {
@@ -456,7 +481,16 @@ void AlignmentEditor::step_radius(const std::string& id, int ticks) {
     if (before == radius) return;
     AlignmentDraft& draft = drafts_[id];
     draft.radius = radius != original ? std::optional<double>(radius) : std::nullopt;
-    if (!draft.distance && !draft.radius) drafts_.erase(id);
+    if (draft.empty()) drafts_.erase(id);
+    submit(wheel_marker_delay);
+}
+
+void AlignmentEditor::step_gradient(const std::string& id, int ticks) {
+    AlignmentDraft& draft = drafts_[id];
+    if (!draft.gradient) draft.gradient = GradientWheelDraft{targets_.at(id).gradient.value(), 0};
+    draft.gradient->ticks += ticks;
+    if (draft.gradient->ticks == 0) draft.gradient.reset();
+    if (draft.empty()) drafts_.erase(id);
     submit(wheel_marker_delay);
 }
 
@@ -468,11 +502,11 @@ std::uint64_t AlignmentEditor::preview_revision() const {
     return published_ ? published_->revision : 0;
 }
 
-double AlignmentEditor::preview_distance(const std::string& id, double applied) const {
-    if (!published_) return applied;
+const AlignmentDraft* AlignmentEditor::preview_draft(const std::string& id) const {
+    if (!published_) return nullptr;
     const auto& drafts = published_->preview->drafts;
     const auto it = drafts.find(id);
-    return it == drafts.end() ? applied : it->second.distance.value_or(applied);
+    return it == drafts.end() ? nullptr : &it->second;
 }
 
 const AlignmentEditor::CurveSpans& AlignmentEditor::curve_spans() const {
@@ -513,32 +547,33 @@ const AlignmentOverlay* AlignmentEditor::overlay(
     overlay_.gradient_markers = plan.gradient_edit_markers;
     overlay_.interpolate_markers = plan.curve_interpolate_markers;
 
-    const auto& drafts = published_->preview->drafts;
-    auto locate = [&](auto& marker) {
-        const auto draft = drafts.find(marker.edit_id);
-        if (draft != drafts.end() && draft->second.distance) marker.d = *draft->second.distance;
+    auto locate = [&](auto& marker, const AlignmentDraft* draft) {
+        if (draft && draft->distance) marker.d = *draft->distance;
         const auto point = sample_matrix_track_point(*published_->preview->geometry, marker.d, true);
         const auto [x, y] = transform.model_to_plan(point->x, point->y);
         marker.x = x;
         marker.y = y;
         return point.value();
     };
-    for (auto& marker : overlay_.gradient_markers) locate(marker);
+    for (auto& marker : overlay_.gradient_markers) {
+        const auto* draft = preview_draft(marker.edit_id);
+        locate(marker, draft);
+        if (draft && draft->gradient) marker.label = format_double(draft->gradient->value(), 6);
+    }
     for (auto& marker : overlay_.curve_markers) {
-        locate(marker);
-        const auto draft = drafts.find(marker.edit_id);
-        if (draft != drafts.end() && draft->second.radius) {
+        const auto* draft = preview_draft(marker.edit_id);
+        locate(marker, draft);
+        if (draft && draft->radius) {
             const auto cant = marker.label.find(',');
-            marker.label = format_double(*draft->second.radius, 6) +
+            marker.label = format_double(*draft->radius, 6) +
                 (cant != std::string::npos ? marker.label.substr(cant) : std::string{});
         }
     }
     for (auto& marker : overlay_.interpolate_markers) {
-        const auto point = locate(marker);
+        const auto* draft = preview_draft(marker.edit_id);
+        const auto point = locate(marker, draft);
         marker.theta = point.theta - plan.origin_angle;
-        const auto draft = drafts.find(marker.edit_id);
-        marker.radius = draft != drafts.end() && draft->second.radius
-            ? *draft->second.radius : point.radius;
+        marker.radius = draft && draft->radius ? *draft->radius : point.radius;
         marker.label = format_double(marker.radius, 0);
     }
 
@@ -573,18 +608,23 @@ AlignmentEditor::Projection AlignmentEditor::project(
 bool AlignmentEditor::start_drag(AlignmentDragSurface surface, const std::string& id,
                                  double distance_min, double distance_max) {
     const AlignmentTarget& source = targets_.at(id);
-    const auto current = drafts_.find(id);
-    const auto previous = current != drafts_.end() ? current->second.distance : std::nullopt;
-    const double origin = previous.value_or(source.distance);
+    const auto current_distance = [&](const std::string& edit_id, double applied) {
+        const auto draft = drafts_.find(edit_id);
+        return draft != drafts_.end() ? draft->second.distance.value_or(applied) : applied;
+    };
+    const double origin = current_distance(id, source.distance);
+    const std::string transition_id = surface == AlignmentDragSurface::Plan
+        ? source.transition_edit_id : std::string{};
+    const double transition_origin = transition_id.empty()
+        ? origin : current_distance(transition_id, targets_.at(transition_id).distance);
     const std::string_view key = source.row_kind == "gradient" ? "gradient" : "radius";
 
     double lower = std::max({0.0, distance_min, base_->distances.front()});
     double upper = std::min(distance_max, base_->distances.back());
     for (const SourcedEvent& event : base_->events) {
-        if (event.value.key != key || event.edit_id == id) continue;
-        const auto draft = drafts_.find(event.edit_id);
-        const double distance = draft != drafts_.end()
-            ? draft->second.distance.value_or(event.value.distance) : event.value.distance;
+        if (event.value.key != key || event.edit_id == id ||
+            (!transition_id.empty() && event.edit_id == transition_id)) continue;
+        const double distance = current_distance(event.edit_id, event.value.distance);
         if (std::tie(event.value.distance, event.source_order) <
             std::tie(source.distance, source.source_order)) {
             lower = std::max(lower, distance);
@@ -592,10 +632,11 @@ bool AlignmentEditor::start_drag(AlignmentDragSurface surface, const std::string
             upper = std::min(upper, distance);
         }
     }
-    const double min_steps = std::ceil((lower - origin) / edit_step);
-    const double max_steps = std::floor((upper - origin) / edit_step);
+    const double min_steps = std::ceil((lower - std::min(origin, transition_origin)) / edit_step);
+    const double max_steps = std::floor((upper - std::max(origin, transition_origin)) / edit_step);
     if (min_steps > max_steps || (min_steps == 0.0 && max_steps == 0.0)) return false;
-    drag_ = Drag{surface, id, origin, min_steps, max_steps, origin, 0.0, 0.0, {}};
+    drag_ = Drag{surface, id, transition_id, origin, transition_origin,
+                 min_steps, max_steps, origin, 0.0, 0.0, {}};
     return true;
 }
 
@@ -627,11 +668,19 @@ bool AlignmentEditor::start_profile_drag(const std::string& id, double mouse_x,
     return true;
 }
 
+bool AlignmentEditor::set_drag_displacement(double delta) {
+    drag_->candidate = drag_->start_distance + delta;
+    bool changed = update_distance_draft(drag_->edit_id, drag_->candidate);
+    if (!drag_->transition_edit_id.empty()) {
+        changed |= update_distance_draft(drag_->transition_edit_id, drag_->transition_start_distance + delta);
+    }
+    return changed;
+}
+
 void AlignmentEditor::update_drag(double mileage_delta) {
     const double step = std::clamp(std::round(mileage_delta / edit_step),
                                    drag_->min_steps, drag_->max_steps);
-    drag_->candidate = drag_->start_distance + edit_step * step;
-    set_distance(drag_->edit_id, drag_->candidate);
+    if (set_drag_displacement(edit_step * step)) submit();
 }
 
 void AlignmentEditor::finish_drag() {
@@ -658,11 +707,11 @@ void AlignmentEditor::process_profile_drag(double mouse_x) {
     process_drag([&] { return (mouse_x - drag_->start_pointer) * drag_->metres_per_pixel; });
 }
 
-bool AlignmentEditor::scroll_radius(
+std::string_view AlignmentEditor::radius_wheel_target(
     const Matrix& geometry, const PlanScreenTransform& transform,
-    ImVec2 mouse, double distance_min, double distance_max, float marker_scale, float wheel) {
+    ImVec2 mouse, double distance_min, double distance_max, float marker_scale) const {
     const float hit_radius = 5.0f * marker_scale;
-    std::string owner;
+    std::string_view owner;
     float nearest = hit_radius * hit_radius;
     const auto last = drafts_.find(wheel_target_);
     if (last != drafts_.end() && last->second.radius == 0.0 &&
@@ -683,15 +732,7 @@ bool AlignmentEditor::scroll_radius(
             }
         }
     }
-    if (owner != wheel_target_) wheel_remainder_ = 0.0f;
-    wheel_target_ = owner;
-    if (wheel_target_.empty()) return false;
-    wheel_point_ = mouse;
-    wheel_remainder_ += wheel;
-    const int ticks = static_cast<int>(wheel_remainder_);
-    wheel_remainder_ -= static_cast<float>(ticks);
-    if (ticks != 0) step_radius(wheel_target_, ticks);
-    return true;
+    return owner;
 }
 
 bool AlignmentEditor::process_mouse(
@@ -711,23 +752,52 @@ bool AlignmentEditor::process_mouse(
     }
 
     const ImGuiIO& io = ImGui::GetIO();
-    if (show_curves && !io.KeyShift && io.MouseWheel != 0.0f &&
-        scroll_radius(track, transform, mouse, distance_min, distance_max, marker_scale, io.MouseWheel)) {
-        return true;
+    const float hit_radius = std::max(12.0f, 12.0f * marker_scale);
+    const auto& gradients = adjusted ? adjusted->gradient_markers : plan.gradient_edit_markers;
+    if (!io.KeyShift && io.MouseWheel != 0.0f) {
+        const OwnTrackEditMarker* closest = nullptr;
+        float nearest = hit_radius * hit_radius;
+        for (const auto& marker : gradients) {
+            const float distance = distance_squared(transform.plan_to_screen(marker.x, marker.y), mouse);
+            if (distance > nearest) continue;
+            nearest = distance;
+            closest = &marker;
+        }
+        const auto* gradient = closest ? target(closest->edit_id) : nullptr;
+        const bool edit_gradient = gradient && gradient->gradient;
+        std::string_view owner;
+        if (edit_gradient) {
+            owner = closest->edit_id;
+        } else if (show_curves) {
+            owner = radius_wheel_target(track, transform, mouse, distance_min, distance_max, marker_scale);
+        }
+        if (owner != wheel_target_) {
+            wheel_target_ = owner;
+            wheel_remainder_ = 0.0f;
+        }
+        if (!wheel_target_.empty()) {
+            wheel_point_ = mouse;
+            wheel_remainder_ += io.MouseWheel;
+            const int ticks = static_cast<int>(wheel_remainder_);
+            wheel_remainder_ -= static_cast<float>(ticks);
+            if (ticks != 0) {
+                if (edit_gradient) step_gradient(wheel_target_, ticks);
+                else step_radius(wheel_target_, ticks);
+            }
+            return true;
+        }
     }
 
-    const float hit_radius = std::max(12.0f, 12.0f * marker_scale);
     std::string_view id;
     PlanMarkerSelection hovered;
     float nearest = hit_radius * hit_radius;
     bool selected = false;
     auto test = [&](const auto& markers, PlanMarkerKind kind) {
         for (const auto& marker : markers) {
-            if (targets_.find(marker.edit_id) == targets_.end()) continue;
             const float distance = distance_squared(transform.plan_to_screen(marker.x, marker.y), mouse);
             const bool preferred = selection.matches(kind, marker.row_index);
             if (distance > hit_radius * hit_radius || (selected && !preferred) ||
-                (preferred == selected && distance > nearest)) continue;
+                (preferred == selected && distance > nearest) || !target(marker.edit_id)) continue;
             hovered = {kind, marker.row_index};
             id = marker.edit_id;
             nearest = distance;
@@ -735,7 +805,7 @@ bool AlignmentEditor::process_mouse(
         }
     };
     test(adjusted ? adjusted->curve_markers : plan.curve_edit_markers, PlanMarkerKind::Curve);
-    test(adjusted ? adjusted->gradient_markers : plan.gradient_edit_markers, PlanMarkerKind::Gradient);
+    test(gradients, PlanMarkerKind::Gradient);
     test(adjusted ? adjusted->interpolate_markers : plan.curve_interpolate_markers, PlanMarkerKind::Curve);
     if (id.empty()) return false;
     if (!io.KeyCtrl) set_move_cursor();

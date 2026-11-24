@@ -691,8 +691,10 @@ ProfileData App::build_profile_data() const {
         if (e.key == "gradient") {
             auto& gradient = gradients.emplace_back(e);
             if (draft_preview && e.source_row_index < model_.gradient_rows.size()) {
-                gradient.distance = plan_alignment_->preview_distance(
-                    model_.gradient_rows[e.source_row_index].edit_id, e.distance);
+                const auto* draft = plan_alignment_->preview_draft(
+                    model_.gradient_rows[e.source_row_index].edit_id);
+                if (draft && draft->distance) gradient.distance = *draft->distance;
+                if (draft && draft->gradient) gradient.number = draft->gradient->value();
             }
         }
         if (e.key == "radius") radii.push_back(e);
@@ -709,12 +711,13 @@ ProfileData App::build_profile_data() const {
     }
     for (const OwnTrackEditMarker& marker : own_track_edit_marker_cache_) {
         if (!marker.gradient) continue;
-        const double d = draft_preview
-            ? plan_alignment_->preview_distance(marker.edit_id, marker.d) : marker.d;
+        const auto* draft = draft_preview ? plan_alignment_->preview_draft(marker.edit_id) : nullptr;
+        const double d = draft ? draft->distance.value_or(marker.d) : marker.d;
         if (d < dmin_ || d > dmax_) continue;
         OwnTrackEditMarker profile_marker = marker;
         profile_marker.d = profile_marker.x = d;
         profile_marker.y = elevation_at(d) - model_.height_origin;
+        if (draft && draft->gradient) profile_marker.label = format_double(draft->gradient->value(), 6);
         out.gradient_edit_markers.push_back(std::move(profile_marker));
     }
     double last_d = own.at(0, 0);

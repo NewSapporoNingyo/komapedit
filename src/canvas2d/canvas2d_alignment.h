@@ -17,9 +17,19 @@ struct PlanScreenTransform;
 
 enum class AlignmentDragSurface { Plan, Profile };
 
+struct GradientWheelDraft {
+    double origin;
+    std::int64_t ticks;
+
+    double value() const { return origin + static_cast<double>(ticks) / 10.0; }
+};
+
 struct AlignmentDraft {
     std::optional<double> distance;
     std::optional<double> radius;
+    std::optional<GradientWheelDraft> gradient;
+
+    bool empty() const { return !distance && !radius && !gradient; }
 };
 
 struct AlignmentTarget {
@@ -27,7 +37,9 @@ struct AlignmentTarget {
     std::size_t row_index;
     double distance;
     std::optional<double> radius;
+    std::optional<double> gradient;
     int source_order;
+    std::string transition_edit_id;
 };
 
 struct AlignmentSpan {
@@ -77,7 +89,7 @@ public:
     std::uint64_t marker_revision() const { return marker_revision_; }
     const AlignmentReprojection* marker_projection() const { return marker_projection_.get(); }
     bool has_source(std::uint64_t revision) const { return base_ && source_revision_ == revision; }
-    double preview_distance(const std::string& id, double applied) const;
+    const AlignmentDraft* preview_draft(const std::string& id) const;
     const std::vector<AlignmentSpan>& spans() const;
     const std::vector<AlignmentRadiusLabel>& radius_labels(
         const Matrix& track, const PlanScreenTransform& transform,
@@ -148,7 +160,9 @@ private:
     struct Drag {
         AlignmentDragSurface surface;
         std::string edit_id;
+        std::string transition_edit_id;
         double start_distance;
+        double transition_start_distance;
         double min_steps;
         double max_steps;
         double candidate;
@@ -173,13 +187,16 @@ private:
     bool start_plan_drag(const std::string& id, const Matrix& geometry,
                          const PlanScreenTransform& transform, ImVec2 mouse,
                          double distance_min, double distance_max);
+    bool update_distance_draft(const std::string& id, double distance);
+    bool set_drag_displacement(double delta);
     void update_drag(double mileage_delta);
     template <typename MileageDelta>
     void process_drag(const MileageDelta& mileage_delta);
     void finish_drag();
-    bool scroll_radius(const Matrix& geometry, const PlanScreenTransform& transform,
-                       ImVec2 mouse, double distance_min, double distance_max,
-                       float marker_scale, float wheel);
+    std::string_view radius_wheel_target(const Matrix& geometry, const PlanScreenTransform& transform,
+                                         ImVec2 mouse, double distance_min, double distance_max,
+                                         float marker_scale) const;
+    void step_gradient(const std::string& id, int ticks);
     void submit(std::chrono::milliseconds marker_delay = {});
     void queue_preview(std::chrono::milliseconds marker_delay = {});
     void run();

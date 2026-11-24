@@ -631,6 +631,10 @@ std::vector<std::string> parse_bve_argument_fields(
     for (size_t index = 0; index <= line.size(); ++index) {
         const bool at_end = index == line.size();
         const char ch = at_end ? '\0' : line[index];
+        if (!single_quoted && !double_quoted && csv_comment_starts_at(line, index)) {
+            index = text_line_span(line, index).next_begin - 1;
+            continue;
+        }
         if (!at_end && ch == '\'' && !double_quoted) {
             single_quoted = !single_quoted;
         } else if (!at_end && ch == '"' && !single_quoted) {
@@ -1669,6 +1673,38 @@ std::string build_section_speed_limit_statement(const MapEditChange& change,
     return build_section_statement(change, statement, row.method);
 }
 
+std::string replace_first_own_track_argument(const ParsedStatement& statement,
+                                            std::pair<size_t, size_t> span,
+                                            std::string_view value) {
+    const size_t args_start = statement.raw_text.find(
+        statement.raw_arguments, statement.raw_text.find('(') + 1);
+    if (args_start == std::string::npos) {
+        throw std::runtime_error("own-track argument span is unavailable");
+    }
+    const auto raw = std::string_view(statement.raw_arguments).substr(span.first, span.second - span.first);
+    std::string argument;
+    bool replaced = false;
+    for (size_t i = 0; i < raw.size();) {
+        const char ch = raw[i];
+        if (csv_comment_starts_at(raw, i)) {
+            const size_t next_line = text_line_span(raw, i).next_begin;
+            argument.append(raw.substr(i, next_line - i));
+            i = next_line;
+        } else if (std::isspace(static_cast<unsigned char>(ch))) {
+            argument.push_back(ch);
+            ++i;
+        } else {
+            if (!replaced) argument.append(value);
+            replaced = true;
+            i = ch == '\'' ? raw.find('\'', i + 1) + 1 : i + 1;
+        }
+    }
+    if (!replaced) argument.append(value);
+    std::string result = statement.raw_text;
+    result.replace(args_start + span.first, span.second - span.first, argument);
+    return result;
+}
+
 std::string build_curve_statement(const MapEditChange& change,
                                   const ParsedStatement& statement,
                                   const CurveEditRow& row) {
@@ -1688,15 +1724,7 @@ std::string build_curve_statement(const MapEditChange& change,
         }
     }
     if (has_field_change(change, "radius") && !has_field_change(change, "cant")) {
-        const size_t args_start = statement.raw_text.find(
-            statement.raw_arguments, statement.raw_text.find('(') + 1);
-        if (args_start == std::string::npos) {
-            throw std::runtime_error("curve argument span is unavailable");
-        }
-        const auto [first, last] = spans.at(0);
-        std::string patched = statement.raw_text;
-        patched.replace(args_start + first, last - first, arguments);
-        return patched;
+        return replace_first_own_track_argument(statement, spans.at(0), arguments);
     }
     if (row.argument_count == 2) {
         arguments += "," + required_numeric_value_field(
@@ -1714,10 +1742,8 @@ std::string build_gradient_statement(const MapEditChange& change,
     if (row.argument_count == 0) {
         throw std::runtime_error(row.method + " has no editable gradient field");
     }
-    const std::vector<std::string> args =
-        parse_bve_argument_fields(statement.raw_arguments);
-    return row.method + "(" + required_numeric_value_field(
-        change, "gradient", row.gradient, raw_arg_at(args, 0)) + ");";
+    return replace_first_own_track_argument(statement, {0, statement.raw_arguments.size()},
+        required_numeric_value_field(change, "gradient", row.gradient, &statement.raw_arguments));
 }
 
 std::string build_other_track_change_statement(

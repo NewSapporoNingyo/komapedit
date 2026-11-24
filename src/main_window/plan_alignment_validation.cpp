@@ -56,7 +56,28 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
             "$base+590; Curve.Interpolate();\r\n"
             "$base+655; Curve.Interpolate(0);\r\n"
             "$base+700; Gradient.BeginTransition();\r\n"
-            "$base+765; Curve.Change(2); Track['parallel'].Position(3,1);\r\n";
+            "$base+765; Curve.Change(2); Track['parallel'].Position(3,1);\r\n"
+            "4245; Curve.Change(0);\r\n"
+            "4300; Curve.BeginTransition();\r\n"
+            "4340; Curve.Begin(300);\r\n"
+            "4400; Gradient.BeginTransition();\r\n"
+            "4410; gRaDiEnT.BeGiN( // keep grade comment\r\n"
+            "    $grade );\r\n"
+            "4500; Curve.BeginTransition();\r\n"
+            "4540; Curve.End();\r\n"
+            "4600; Curve.BeginTransition();\r\n"
+            "4640; Curve.Change(-400);\r\n"
+            "4700; Curve.BeginTransition();\r\n"
+            "4740; Curve.End();\r\n"
+            "4800; Curve.BeginTransition();\r\n"
+            "4840; Curve.BeginCircular(500,$cant);\r\n"
+            "4900; Curve.BeginTransition();\r\n"
+            "4940; Curve.End();\r\n"
+            "5000; Legacy.Curve(450);\r\n"
+            "5100; lEgAcY.CuRvE( -450 # keep radius comment, including comma\r\n"
+            "    , $cant );\r\n"
+            "5200; Legacy.Curve(0,0);\r\n"
+            "5300; Curve.Interpolate(500);\r\n";
         std::ofstream(map, std::ios::binary) << root_text;
         std::ofstream(include, std::ios::binary) << include_text;
         const auto bytes = [](const std::filesystem::path& path) {
@@ -230,6 +251,140 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
         app.set_2d_mode(Mode::Edit);
         const PlanMarker applied_section = app.current_plan_data().section_markers.at(0);
 
+        canvas2d::PlanScreenTransform plan_transform;
+        const auto plan_frame = [&] {
+            ImGui::NewFrame();
+            const auto& plan = app.current_plan_data();
+            const auto* overlay = editor.overlay(plan, app.plan_data_cache_.generation, plan_transform);
+            const bool consumed = editor.process_mouse(plan, overlay, editor.geometry(app.model_.own),
+                plan_transform, io.MousePos, app.dmin_, app.dmax_, 1.0f, true, true,
+                app.plan_marker_selection_);
+            ImGui::EndFrame();
+            return consumed;
+        };
+        const auto focus = [&](double distance) {
+            if (editor.dirty() && !wait_preview()) throw std::runtime_error("plan preview is not ready");
+            View2D view;
+            view.scale = 2.0;
+            plan_transform = canvas2d::make_plan_transform(view, -app.current_plan_data().origin_angle,
+                                                           ImVec2(0, 0), io.DisplaySize);
+            const auto point = canvas2d::sample_matrix_track_point(
+                editor.geometry(app.model_.own), distance, true).value();
+            std::tie(plan_transform.cx, plan_transform.cy) = plan_transform.model_to_plan(point.x, point.y);
+        };
+        const auto move_pointer = [&](double distance) {
+            const auto point = canvas2d::sample_matrix_track_point(
+                editor.geometry(app.model_.own), distance, true).value();
+            const auto screen = plan_transform.model_to_screen(point.x, point.y);
+            io.AddMousePosEvent(screen.x, screen.y);
+            plan_frame();
+        };
+        const auto start_drag = [&](double distance) {
+            focus(distance);
+            app.plan_marker_selection_.clear();
+            move_pointer(distance);
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            return plan_frame() && editor.dragging(canvas2d::AlignmentDragSurface::Plan);
+        };
+        const auto release = [&] {
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            plan_frame();
+        };
+        const auto drag = [&](double from, double to) {
+            const bool started = start_drag(from);
+            move_pointer(to);
+            release();
+            return started && !editor.dragging();
+        };
+        const auto wheel = [&](float delta) {
+            io.AddMouseWheelEvent(0.0f, delta);
+            return plan_frame();
+        };
+        const auto distance_staged = [&](const std::string& id, double value) {
+            const auto draft = editor.drafts().find(id);
+            return draft != editor.drafts().end() && draft->second.distance == value;
+        };
+        const auto curve_id = [&](const char* method, double distance) {
+            return row_id(app.model_.curve_rows, method, distance);
+        };
+        const std::string short_start = curve_id("Curve.Begin", 4340.0);
+        const std::string short_transition = curve_id("Curve.BeginTransition", 4300.0);
+        check("plan_only_pair", editor.target(short_start)->transition_edit_id == short_transition &&
+              table_cell(app.model_.curve_rows.at(editor.target(short_transition)->row_index),
+                         "_transitionStatus") == "orphan");
+        const auto requests_before = editor.metrics().submitted;
+        const bool pair_drag = start_drag(4340.0);
+        move_pointer(4350.0);
+        check("plan_pair_one_preview", pair_drag && editor.metrics().submitted == requests_before + 1 &&
+              distance_staged(short_start, 4350.0) && distance_staged(short_transition, 4310.0));
+        release();
+        const bool second_pair_drag = start_drag(4350.0);
+        move_pointer(4265.0);
+        const bool limited = second_pair_drag && distance_staged(short_start, 4285.0) &&
+            distance_staged(short_transition, 4245.0);
+        io.AddKeyEvent(ImGuiKey_Escape, true);
+        plan_frame();
+        check("plan_pair_limit_and_escape", limited && !editor.dragging() &&
+              distance_staged(short_start, 4350.0) && distance_staged(short_transition, 4310.0));
+        io.AddKeyEvent(ImGuiKey_Escape, false);
+        release();
+        check("plan_transition_drag_single", drag(4310.0, 4315.0) &&
+              distance_staged(short_transition, 4315.0) && distance_staged(short_start, 4350.0));
+        check("plan_end_pair", drag(4540.0, 4530.0) &&
+              distance_staged(curve_id("Curve.End", 4540.0), 4530.0) &&
+              distance_staged(curve_id("Curve.BeginTransition", 4500.0), 4490.0));
+        check("plan_change_pair", drag(4640.0, 4650.0) &&
+              distance_staged(curve_id("Curve.Change", 4640.0), 4650.0) &&
+              distance_staged(curve_id("Curve.BeginTransition", 4600.0), 4610.0));
+        check("plan_begin_circular_pair", drag(4840.0, 4850.0) &&
+              distance_staged(curve_id("Curve.BeginCircular", 4840.0), 4850.0) &&
+              distance_staged(curve_id("Curve.BeginTransition", 4800.0), 4810.0));
+        const auto staged_before_interpolate = editor.drafts().size();
+        check("plan_interpolate_drag_single", drag(5300.0, 5310.0) &&
+              editor.drafts().size() == staged_before_interpolate + 1 &&
+              distance_staged(curve_id("Curve.Interpolate", 5300.0), 5310.0));
+
+        const std::string legacy = curve_id("Legacy.Curve", 5000.0);
+        const std::string legacy_cant = curve_id("Legacy.Curve", 5100.0);
+        const bool legacy_drag = drag(5000.0, 5005.0) && drag(5100.0, 5110.0);
+        check("plan_legacy_drag", legacy_drag && distance_staged(legacy, 5005.0) &&
+              distance_staged(legacy_cant, 5110.0) && drag(5200.0, 5205.0) &&
+              distance_staged(curve_id("Legacy.Curve", 5200.0), 5205.0));
+        focus(5050.0);
+        move_pointer(5050.0);
+        const bool legacy_wheel = wheel(1.0f) && editor.drafts().at(legacy).radius == 455.0;
+        focus(5150.0);
+        move_pointer(5150.0);
+        check("plan_legacy_wheel", legacy_wheel && wheel(1.0f) &&
+              editor.drafts().at(legacy_cant).radius == -445.0);
+
+        const std::string grade = row_id(app.model_.gradient_rows, "Gradient.Begin", 4410.0);
+        focus(4410.0);
+        move_pointer(4410.0);
+        const bool half_tick = wheel(0.5f) && editor.drafts().count(grade) == 0;
+        check("plan_gradient_wheel_priority", half_tick && wheel(0.5f) &&
+              editor.drafts().at(grade).gradient->value() == 6.1 &&
+              !editor.drafts().at(short_start).radius);
+        check("plan_gradient_opposite_steps", wheel(-1.0f) && editor.drafts().count(grade) == 0 &&
+              wheel(-1.0f) && editor.drafts().at(grade).gradient->value() == 5.9 &&
+              wheel(2.0f) && editor.drafts().at(grade).gradient->value() == 6.1);
+        io.AddKeyEvent(ImGuiMod_Shift, true);
+        plan_frame();
+        check("plan_shift_wheel_reserved", !wheel(1.0f) &&
+              editor.drafts().at(grade).gradient->value() == 6.1);
+        io.AddKeyEvent(ImGuiMod_Shift, false);
+        plan_frame();
+        if (!wait_preview()) throw std::runtime_error("gradient preview is not ready");
+        const auto& grade_plan = app.current_plan_data();
+        const auto* grade_overlay = editor.overlay(grade_plan, app.plan_data_cache_.generation, plan_transform);
+        const auto& grade_profile = app.current_profile_data();
+        const auto shows_grade = [&](const auto& marker) { return marker.edit_id == grade && marker.label == "6.1"; };
+        check("plan_gradient_preview_labels",
+              std::any_of(grade_overlay->gradient_markers.begin(), grade_overlay->gradient_markers.end(), shows_grade) &&
+              std::any_of(grade_profile.gradient_edit_markers.begin(), grade_profile.gradient_edit_markers.end(), shows_grade) &&
+              std::any_of(grade_profile.gradient_labels.begin(), grade_profile.gradient_labels.end(),
+                          [](const auto& label) { return label.text == "6.1"; }));
+
         editor.step_radius(curve, -1);
         check("positive_to_zero", editor.drafts().at(curve).radius == 0.0);
         editor.step_radius(curve, -1);
@@ -293,6 +448,11 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
         check("source_fidelity", bytes(map) == root_text &&
               saved_bytes.find("Curve.Begin( -10 , $cant );") != std::string::npos &&
               saved_bytes.find("// curve comment\r\n") != std::string::npos &&
+              saved_bytes.find("Legacy.Curve(455);") != std::string::npos &&
+              saved_bytes.find("lEgAcY.CuRvE( -445 # keep radius comment, including comma\r\n"
+                               "    , $cant );") != std::string::npos &&
+              saved_bytes.find("gRaDiEnT.BeGiN( // keep grade comment\r\n"
+                               "    6.0999999999999996 );") != std::string::npos &&
               saved_bytes.find("Gradient.Interpolate($grade+2);\r\n") != std::string::npos &&
               saved_bytes.find("Gradient.Interpolate();\r\n") != std::string::npos);
         auto reopen = load_map_worker(path, unit_distance, false, 0.0, 0.0, unit_distance, options);
