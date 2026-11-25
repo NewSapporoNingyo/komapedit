@@ -10,6 +10,7 @@
 #include "touch_input.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "implot.h"
 
 #include <windows.h>
@@ -300,10 +301,41 @@ void App::reset_plot_axes() {
     profile_plot_rect_valid_ = false;
 }
 
+void App::render_plot_mileage(ImGuiID plot_id, bool include_profile, bool include_radius) {
+    if (!is_2d_mileage_mode()) return;
+    const bool creating = mode_ == Mode::NewAtMileage;
+    // ImPlot defers hover for overlapping items until the next frame.
+    const bool hovered = ImPlot::IsPlotHovered() ||
+        (creating && ImGui::GetCurrentContext()->HoveredId == plot_id);
+    if (hovered && (!creating || (pick_slot_ == 0 && edit_actions_available()))) {
+        const double distance = ImPlot::GetPlotMousePos().x;
+        const bool in_range = distance >= dmin_ && distance <= dmax_;
+        if (!creating || in_range) set_crosshair_cursor();
+        if (in_range) {
+            update_measure(distance);
+            if (creating) {
+                if (measure_distance_ && is_canvas_left_click(plot_id)) {
+                    open_new_element_wizard(measure_distance_);
+                }
+            } else if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                center_plan_at_distance(distance);
+                request_plot_focus(distance, include_profile, include_radius);
+            }
+        }
+    }
+    if (measure_distance_) {
+        const double distance = *measure_distance_;
+        ImPlot::PlotInfLines("##measure_mileage", &distance, 1, {
+            ImPlotProp_LineColor, ImVec4(1, 0.2f, 0.2f, 1),
+            ImPlotProp_LineWeight, 2.0f,
+            ImPlotProp_Flags, ImPlotItemFlags_NoLegend});
+    }
+}
+
 void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
     if (!show_profile_graph_) return;
     using canvas2d::AlignmentDragSurface;
-    ScopedImPlotFitButton disable_fit(mode_ == Mode::Measure);
+    ScopedImPlotFitButton disable_fit(is_2d_mileage_mode());
     ImGuiIO& io = ImGui::GetIO();
     const bool mouse_in_profile_plot = profile_plot_rect_valid_ &&
         point_in_rect(io.MousePos, profile_plot_pos_, profile_plot_size_);
@@ -364,6 +396,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
     bool consumed_profile_y_zoom = false;
     bool open_profile_marker_popup = false;
     if (ImPlot::BeginPlot("##ProfilePlot", size, flags)) {
+        const ImGuiID plot_id = ImGui::GetItemID();
         ImVec2 frame_min = ImGui::GetItemRectMin();
         ImVec2 frame_max = ImGui::GetItemRectMax();
         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoLabel, ImPlotAxisFlags_NoLabel);
@@ -481,16 +514,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
                 }
             }
         }
-        if (mode_ == Mode::Measure && ImPlot::IsPlotHovered()) {
-            set_crosshair_cursor();
-            ImPlotPoint p = ImPlot::GetPlotMousePos();
-            if (p.x >= dmin_ && p.x <= dmax_) update_measure(p.x);
-        }
-        handle_measure_plot_double_click(false, true);
-        if (mode_ == Mode::Measure && measure_distance_) {
-            double x = *measure_distance_;
-            ImPlot::PlotInfLines("##measure_profile", &x, 1, {ImPlotProp_LineColor, ImVec4(1, 0.2f, 0.2f, 1), ImPlotProp_LineWeight, 2.0f, ImPlotProp_Flags, ImPlotItemFlags_NoLegend});
-        }
+        render_plot_mileage(plot_id, false, true);
         ImPlotRect limits = ImPlot::GetPlotLimits();
         profile_x_span_ = std::abs(limits.X.Size());
         profile_plot_pos_ = ImPlot::GetPlotPos();
@@ -552,7 +576,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
 
 void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
     if (!show_radius_graph_) return;
-    ScopedImPlotFitButton disable_fit(mode_ == Mode::Measure);
+    ScopedImPlotFitButton disable_fit(is_2d_mileage_mode());
     const CanvasLineWidthSettings line_widths = clamp_canvas_line_widths(canvas_line_widths_);
     const ImVec2 grid_line_size(line_widths.background_grid_px, line_widths.background_grid_px);
     ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(4.0f, 4.0f));
@@ -561,6 +585,7 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
     ImPlot::PushStyleVar(ImPlotStyleVar_MinorGridSize, grid_line_size);
     bool consumed_radius_x_zoom = false;
     if (ImPlot::BeginPlot("##RadiusPlot", size, ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
+        const ImGuiID plot_id = ImGui::GetItemID();
         ImVec2 frame_min = ImGui::GetItemRectMin();
         ImVec2 frame_max = ImGui::GetItemRectMax();
         ImPlot::SetupAxis(ImAxis_X1, nullptr, ImPlotAxisFlags_NoLabel);
@@ -594,16 +619,7 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
                 }
             }
         }
-        if (mode_ == Mode::Measure && ImPlot::IsPlotHovered()) {
-            set_crosshair_cursor();
-            ImPlotPoint p = ImPlot::GetPlotMousePos();
-            if (p.x >= dmin_ && p.x <= dmax_) update_measure(p.x);
-        }
-        handle_measure_plot_double_click(true, false);
-        if (mode_ == Mode::Measure && measure_distance_) {
-            double x = *measure_distance_;
-            ImPlot::PlotInfLines("##measure_radius", &x, 1, {ImPlotProp_LineColor, ImVec4(1, 0.2f, 0.2f, 1), ImPlotProp_LineWeight, 2.0f, ImPlotProp_Flags, ImPlotItemFlags_NoLegend});
-        }
+        render_plot_mileage(plot_id, true, false);
         ImPlotRect limits = ImPlot::GetPlotLimits();
         radius_x_span_ = std::abs(limits.X.Size());
         ImVec2 plot_pos = ImPlot::GetPlotPos();
@@ -651,8 +667,9 @@ void App::render_plots() {
         }
     }
     render_mode_grid_controls();
+    const auto displayed_mileage = measure_distance_;
     if (pick_slot_ != 0) ImGui::TextUnformatted(tr("hint.pick_bg_station").c_str());
-    else if (mode_ == Mode::Measure && !measure_text_.empty()) ImGui::TextUnformatted(measure_text_.c_str());
+    else if (is_2d_mileage_mode() && !measure_text_.empty()) ImGui::TextUnformatted(measure_text_.c_str());
     else ImGui::TextDisabled("%s", has_model_ ? "" : tr("status.no_map").c_str());
 
     ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -687,6 +704,7 @@ void App::render_plots() {
             render_radius_plot(profile, graph_avail);
         }
     }
+    if (mode_ == Mode::NewAtMileage && displayed_mileage != measure_distance_) wake_main_window();
     if (has_model_) finish_pending_load_timing(std::chrono::steady_clock::now());
     focus_plots_next_ = false;
     ImGui::End();

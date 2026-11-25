@@ -505,6 +505,11 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
             render_plan();
         };
 
+        io.AddMousePosEvent(plan_hit.x, plan_hit.y);
+        render_plan();
+        check("plan_mileage_hover_feedback", app.measure_distance_ == track_point.d &&
+              !app.measure_text_.empty() && !app.new_element_wizard_.open);
+
         press_plan_at(plan_hit);
         const bool opened_on_press = app.new_element_wizard_.open;
         release_plan();
@@ -530,10 +535,57 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
         io.AddMousePosEvent(plan_hit.x + io.MouseDragThreshold + 1.0f, plan_hit.y);
         release_plan();
         check("plan_mileage_release_motion", !app.new_element_wizard_.open);
+
+        render_charts();
+        const ImVec2 profile_hit(app.profile_plot_pos_.x + app.profile_plot_size_.x * 0.5f,
+                                 app.profile_plot_pos_.y + app.profile_plot_size_.y * 0.5f);
+        const ImVec2 radius_hit(500.0f, 510.0f);
+        const auto release_chart = [&] {
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            render_charts();
+        };
+        const auto check_chart_pick = [&](const char* name, ImVec2 position) {
+            app.clear_measure();
+            io.AddMousePosEvent(position.x, position.y);
+            render_charts();
+            const auto hovered_mileage = app.measure_distance_;
+            const bool shows_measurement = hovered_mileage && !app.measure_text_.empty();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            render_charts();
+            const bool opened_on_press = app.new_element_wizard_.open;
+            release_chart();
+            const bool opens_with_mileage = app.new_element_wizard_.open &&
+                app.new_element_wizard_.distance_prefill == hovered_mileage;
+            check(name, shows_measurement && !opened_on_press && opens_with_mileage);
+            if (!shows_measurement || opened_on_press || !opens_with_mileage) {
+                out << name << " measurement=" << shows_measurement
+                    << " opened_on_press=" << opened_on_press
+                    << " matching_prefill=" << opens_with_mileage << '\n';
+            }
+            app.new_element_wizard_.open = false;
+        };
+        check_chart_pick("profile_mileage_click_prefill", profile_hit);
+        check_chart_pick("radius_mileage_click_prefill", radius_hit);
+
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        render_charts();
+        io.AddMousePosEvent(radius_hit.x + 40.0f, radius_hit.y);
+        render_charts();
+        release_chart();
+        check("chart_mileage_drag_release", !app.new_element_wizard_.open);
+
+        app.radius_x_span_ = 100.0;
+        app.request_plot_focus(app.dmax_ + 1000.0, false, true);
+        render_charts();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        render_charts();
+        release_chart();
+        check("chart_mileage_out_of_range", !app.new_element_wizard_.open);
+
         const bool retains_navigation_setting = app.current_view_2d_settings().mode == 1;
         app.apply_edit_mode_enabled(false);
         check("plan_mileage_restores_navigation", retains_navigation_setting &&
-              app.mode_ == Mode::Measure);
+              app.mode_ == Mode::Measure && !app.measure_distance_ && app.measure_text_.empty());
     } catch (const std::exception& error) {
         out << "alignment_error=" << error.what() << '\n';
         return false;

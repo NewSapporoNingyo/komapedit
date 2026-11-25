@@ -23,7 +23,6 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
-#include "implot.h"
 
 #include <windows.h>
 
@@ -804,7 +803,7 @@ void App::set_2d_mode(Mode mode) {
         previous_navigation_mode_ = mode_;
     }
     if (mode_ == Mode::Edit) plan_alignment_->cancel_drag();
-    if (mode_ == Mode::Measure) clear_measure();
+    if (is_2d_mileage_mode()) clear_measure();
     mode_ = mode;
     wake_main_window();
 }
@@ -884,15 +883,6 @@ void App::request_plot_focus(double distance, bool include_profile, bool include
         focus_radius_next_ = true;
         focus_radius_distance_ = distance;
     }
-}
-
-void App::handle_measure_plot_double_click(bool include_profile, bool include_radius) {
-    if (mode_ != Mode::Measure || !ImPlot::IsPlotHovered() || !ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) return;
-    ImPlotPoint p = ImPlot::GetPlotMousePos();
-    if (p.x < dmin_ || p.x > dmax_) return;
-    update_measure(p.x);
-    center_plan_at_distance(p.x);
-    request_plot_focus(p.x, include_profile, include_radius);
 }
 
 void App::jump_to_distance(double distance) {
@@ -999,7 +989,8 @@ void App::render_plan_canvas(ImVec2 size) {
     avail.y = std::max(avail.y, 50.0f);
     const bool canvas_pressed = ImGui::InvisibleButton(
         "PlanCanvasButton", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    const bool left_click = new_at_mileage_mode && is_canvas_left_click(canvas_pressed);
+    const bool left_click = new_at_mileage_mode && canvas_pressed &&
+        is_canvas_left_click(ImGui::GetItemID());
     const bool mileage_mode_dragging = new_at_mileage_mode && ImGui::IsItemActive() &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left);
     bool hovered = ImGui::IsItemHovered();
@@ -1367,9 +1358,12 @@ void App::render_plan_canvas(ImVec2 size) {
     if (new_at_mileage_mode && hovered && edit_actions_available() &&
         !picking_background_station && !touch_multi_input &&
         !plan_view_.dragging && !rotate_plan) {
-        if (const auto distance = nearest_measure_distance()) {
+        hovered_measure_distance = nearest_measure_distance();
+        if (hovered_measure_distance) {
             set_crosshair_cursor();
-            if (left_click && !was_rotating && !io.KeyCtrl) open_new_element_wizard(distance);
+            if (left_click && !was_rotating && !io.KeyCtrl) {
+                open_new_element_wizard(hovered_measure_distance);
+            }
         }
     }
 
@@ -1907,7 +1901,7 @@ void App::render_plan_canvas(ImVec2 size) {
         update_measure(*hovered_measure_distance);
     }
 
-    if (mode_ == Mode::Measure && measure_distance_ && !data.own.empty()) {
+    if (is_2d_mileage_mode() && measure_distance_ && !data.own.empty()) {
         auto it = std::lower_bound(data.own.begin(), data.own.end(), *measure_distance_, [](const TrackPoint& p, double d) { return p.d < d; });
         if (it == data.own.end()) {
             --it;

@@ -473,26 +473,6 @@ Canvas3DSceneContextAction Canvas3D::Impl::render_scene_marker_context_popup(
     return action;
 }
 
-std::optional<double> Canvas3D::Impl::render_scene_mileage_context_popup(
-    const Canvas3DSceneUiText& ui_text,
-    const Canvas3DSceneContextMenuOptions& context_menu_options) {
-    std::optional<double> requested_mileage;
-    if (ImGui::BeginPopup("ScenePreviewMileageContext")) {
-        if (scene_interaction_mode != Canvas3DSceneInteractionMode::NewAtMileage ||
-            !scene_context_mileage) {
-            ImGui::CloseCurrentPopup();
-        } else if (ImGui::MenuItem(ui_text.add_map_element_at_mileage, nullptr, false,
-                                  context_menu_options.new_element_enabled)) {
-            requested_mileage = scene_context_mileage;
-        }
-        ImGui::EndPopup();
-    }
-    if (!ImGui::IsPopupOpen("ScenePreviewMileageContext")) {
-        scene_context_mileage.reset();
-    }
-    return requested_mileage;
-}
-
 void Canvas3D::Impl::draw_scene_mileage_label(ImVec2 origin,
                                      ImVec2 end,
                                      ImVec2 pointer_pos,
@@ -545,12 +525,11 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
     ImVec2 origin = ImGui::GetCursorScreenPos();
     const bool canvas_pressed = ImGui::InvisibleButton(
         "ScenePreview3DCanvas", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    const bool left_click = is_canvas_left_click(canvas_pressed);
+    const bool left_click = canvas_pressed && is_canvas_left_click(ImGui::GetItemID());
     bool hovered = ImGui::IsItemHovered();
     const bool context_popup_open =
         ImGui::IsPopupOpen("ScenePreviewObjectContext") ||
-        ImGui::IsPopupOpen("ScenePreviewMarkerContext") ||
-        ImGui::IsPopupOpen("ScenePreviewMileageContext");
+        ImGui::IsPopupOpen("ScenePreviewMarkerContext");
     const bool loading_before_render = scene_stats().loading;
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 pointer_pos = io.MousePos;
@@ -653,18 +632,11 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
             ImGui::OpenPopup("ScenePreviewMarkerContext");
         }
     }
-    if (!stats.loading && new_at_mileage_mode && right_click && scene_hovered_mileage) {
-        scene_context_mileage = scene_hovered_mileage;
-        ImGui::OpenPopup("ScenePreviewMileageContext");
-    }
     result.context_action = render_scene_context_popup(ui_text, context_menu_options);
     if (result.context_action.kind == Canvas3DSceneContextActionKind::None) {
         result.context_action = render_scene_marker_context_popup(
             ui_text, context_menu_options);
     }
-    result.new_element_mileage =
-        render_scene_mileage_context_popup(ui_text, context_menu_options);
-
     if (left_click && scene_active && !loading_before_render && !stats.loading &&
         !context_popup_open && !gizmo_held_left && !gizmo_consumes_left) {
         if (new_at_mileage_mode && context_menu_options.new_element_enabled) {

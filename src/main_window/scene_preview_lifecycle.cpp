@@ -396,8 +396,6 @@ void App::render_scene_preview_window() {
         Canvas3DSceneUiText scene_ui_text;
         scene_ui_text.mileage = tr("info.mileage").c_str();
         scene_ui_text.unit_m = tr("unit.m").c_str();
-        scene_ui_text.add_map_element_at_mileage =
-            tr("menu.add_map_element_at_current_mileage").c_str();
         scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect").c_str();
         scene_ui_text.element_properties = tr("dialog.element_properties").c_str();
         scene_ui_text.delete_element = tr("button.delete").c_str();

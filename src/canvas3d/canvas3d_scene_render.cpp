@@ -811,13 +811,9 @@ void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 m
 
     double visible_min = scene_camera_distance - scene_window_back_m;
     double visible_max = scene_camera_distance + effective_window_forward_m;
-    if (scene_interaction_mode == Canvas3DSceneInteractionMode::NewAtMileage) {
-        if (mileage_pick_enabled) {
-            scene_hovered_mileage = pick_scene_mileage(
-                mouse_local, width, height, visible_min, visible_max);
-        } else if (scene_context_mileage) {
-            scene_hovered_mileage = scene_context_mileage;
-        }
+    if (mileage_pick_enabled && scene_interaction_mode == Canvas3DSceneInteractionMode::NewAtMileage) {
+        scene_hovered_mileage = pick_scene_mileage(
+            mouse_local, width, height, visible_min, visible_max);
     }
     std::map<std::string, std::vector<SceneInstanceData>> visible_instances;
     std::map<int, std::vector<SceneVisibleInstanceRef>> visible_object_instances;

@@ -351,7 +351,6 @@ void Canvas3D::Impl::clear_scene() {
     scene_hovered_object_index = -1;
     scene_hovered_marker_index = -1;
     scene_hovered_mileage.reset();
-    scene_context_mileage.reset();
     scene_context_object_index = -1;
     scene_context_marker_index = -1;
     scene_hover_highlight_batch.clear();
@@ -447,7 +446,6 @@ void Canvas3D::Impl::set_scene_interaction_mode(Canvas3DSceneInteractionMode mod
     scene_hovered_object_index = -1;
     scene_hovered_marker_index = -1;
     scene_hovered_mileage.reset();
-    scene_context_mileage.reset();
     scene_context_object_index = -1;
     scene_context_marker_index = -1;
     scene_hover_highlight_batch.clear();
@@ -606,7 +604,6 @@ void Canvas3D::Impl::release_scene_resources() {
     scene_cached_repeater_world_count = 0;
     scene_mileage_pick_points.clear();
     scene_hovered_mileage.reset();
-    scene_context_mileage.reset();
     scene_placement_locations.clear();
     scene_repeater_locations.clear();
     scene_structure_edit = SceneStructureEditState{};

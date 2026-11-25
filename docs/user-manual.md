@@ -177,9 +177,11 @@ The Profile chart shows mileage and elevation. The Curve Radius chart distinguis
 - Move the pointer near the track to see its mileage, elevation, gradient, curve radius, and current speed limit.
 - Double-click the Plan, Profile, or Curve Radius chart to move all three measurement positions to that mileage.
 
-#### Plan: Add Map Element at Current Mileage
+#### Add Map Elements by Mileage in 2D
 
-Enable editing and select the track pin on the 2D toolbar. Move the pointer near the own track until it becomes a crosshair. Left-click to open the New Map Element Wizard with `distance` filled in from the nearest track sample. Drag to pan the plan. Turning off editing restores the preceding Move or Measure mode.
+Enable editing and select the track pin on the 2D toolbar. Move the pointer near the own track in the Plan, or over the Profile or Curve Radius chart to pick a mileage along the horizontal axis. The Plan marks the mileage with a red X, both charts draw red vertical lines, and the readout above the Plan shows the same route information as Measure mode.
+
+Left-click a valid position to open the New Map Element Wizard with `distance` filled in. Drag to pan the view. Turning off editing restores the preceding Move or Measure mode.
 
 #### Own-Track Alignment Editing
 
@@ -357,7 +359,7 @@ Set the camera speed in `3D Canvas Settings`. Use the toolbar to jump to a stati
 #### Add Map Element at Current Mileage
 
 - The nearest whole-meter cross-section on the own-track plane and its mileage label appear near the pointer.
-- With editing enabled, left-click this position to open the wizard with `distance` prefilled. The right-click menu offers the same action.
+- With editing enabled, left-click this position to open the wizard with `distance` prefilled.
 
 #### Scene Overlay and Settings
 
@@ -432,7 +434,7 @@ Open `Properties/Edit` and drag a supported object's gizmo to adjust its draft, 
 
 #### New Map Element Wizard
 
-Open the wizard from toolbar `Add Map Element` or by picking a mileage in the 2D plan or 3D scene. Choose a target source file and template, then enter the parameters. Any loaded map source file, including a blank or distance-free file, can be a target.
+Open the wizard from toolbar `Add Map Element` or by picking a mileage in the 2D view or 3D scene. Choose a target source file and template, then enter the parameters. Any loaded map source file, including a blank or distance-free file, can be a target.
 
 When creating or moving an element, the program arranges distance statements automatically while preserving other statements and comments. If manual placement is needed, select a highlighted statement boundary in Text Preview and click `OK` to continue. If a distance expression is required, enter its source text in the prompt and click `Apply`.
 

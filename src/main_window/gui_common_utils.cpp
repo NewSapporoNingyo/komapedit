@@ -158,9 +158,9 @@ std::string format_elapsed_seconds_value(double elapsed_seconds) {
     return elapsed.str();
 }
 
-bool is_canvas_left_click(bool button_pressed) {
-    if (!button_pressed || !ImGui::IsMouseReleased(ImGuiMouseButton_Left) ||
-        ImGui::GetKeyOwner(ImGuiKey_MouseLeft) != ImGui::GetItemID()) {
+bool is_canvas_left_click(ImGuiID input_id) {
+    if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left) ||
+        ImGui::GetKeyOwner(ImGuiKey_MouseLeft) != input_id) {
         return false;
     }
 

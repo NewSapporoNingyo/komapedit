@@ -874,10 +874,6 @@ struct Canvas3D::Impl {
         const Canvas3DSceneUiText& ui_text,
         const Canvas3DSceneContextMenuOptions& context_menu_options);
 
-    std::optional<double> render_scene_mileage_context_popup(
-        const Canvas3DSceneUiText& ui_text,
-        const Canvas3DSceneContextMenuOptions& context_menu_options);
-
     static void draw_scene_mileage_label(ImVec2 origin,
                                          ImVec2 end,
                                          ImVec2 pointer_pos,
@@ -1054,7 +1050,6 @@ struct Canvas3D::Impl {
     int scene_hovered_object_index = -1;
     int scene_hovered_marker_index = -1;
     std::optional<double> scene_hovered_mileage;
-    std::optional<double> scene_context_mileage;
     int scene_context_object_index = -1;
     int scene_context_marker_index = -1;
     canvas3d_detail::SceneHighlightBatch scene_hover_highlight_batch;

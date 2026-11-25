@@ -209,7 +209,7 @@ struct CanvasLineWidthSettings {
 
 std::wstring utf8_to_wide(const std::string& text);
 std::string wide_to_utf8(const std::wstring& text);
-bool is_canvas_left_click(bool button_pressed);
+bool is_canvas_left_click(ImGuiID input_id);
 void set_crosshair_cursor();
 void set_move_cursor();
 std::string format_double(double value, int precision = 6);
@@ -2841,6 +2841,7 @@ private:
         bool enabled) const;
     void render_profile_plot(const ProfileData& data, ImVec2 size);
     void render_radius_plot(const ProfileData& data, ImVec2 size);
+    void render_plot_mileage(ImGuiID plot_id, bool include_profile, bool include_radius);
     void render_plan_marker_context_menu(
         const char* popup_id,
         const std::vector<PlanContextMenuEntry>& entries);
@@ -3051,6 +3052,7 @@ private:
     size_t nearest_own_index(double distance) const;
     std::optional<TrackPoint> track_info_at(double distance) const;
     std::optional<SpeedLimit> speed_at(double distance) const;
+    bool is_2d_mileage_mode() const { return mode_ == Mode::Measure || mode_ == Mode::NewAtMileage; }
     void clear_measure();
     void set_2d_mode(Mode mode);
     void update_measure(double distance);
@@ -3059,7 +3061,6 @@ private:
     std::optional<ImVec2> plan_point_from_model_xy(double x, double y) const;
     void focus_plan_at_model_point(double x, double y, std::optional<double> distance = std::nullopt);
     void request_plot_focus(double distance, bool include_profile, bool include_radius);
-    void handle_measure_plot_double_click(bool include_profile, bool include_radius);
     void jump_to_distance(double distance);
     bool export_csv_to_directory(const std::filesystem::path& dir, std::string& error) const;
     void export_csv();
