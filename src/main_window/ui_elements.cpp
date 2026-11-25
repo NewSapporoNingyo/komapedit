@@ -1148,12 +1148,12 @@ void App::render_status_bar() {
         const bool count_region_hovered = ImGui::IsItemHovered();
         const bool open_diagnostics = ImGui::IsItemClicked();
 
-        const ImVec4 count_background = darkened_theme_color(theme_color_);
+        const ImU32 count_background = ImGui::GetColorU32(darkened_theme_color(theme_color_));
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         draw_list->AddRectFilled(count_region_min,
                                  ImVec2(count_region_min.x + count_region_size.x,
                                         count_region_min.y + count_region_size.y),
-                                 ImGui::GetColorU32(count_background));
+                                 count_background);
         const float text_y = count_region_min.y +
                              (status_bar_height - error_text_size.y) * 0.5f;
         const float error_text_x = count_region_min.x + horizontal_padding;
@@ -1167,8 +1167,37 @@ void App::render_status_bar() {
         if (count_region_hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         if (open_diagnostics) ImGui::OpenPopup("##StatusDiagnosticsPopup");
 
+        constexpr std::array<char, 3> edit_symbols{'+', '-', 'M'};
+        const std::array<size_t, 3> edit_counts{
+            pending_edit_counts_.added, pending_edit_counts_.deleted, pending_edit_counts_.modified};
+        std::array<std::array<char, 32>, 3> edit_count_text{};
+        std::array<float, 3> edit_count_text_width{};
+        float edit_count_width = horizontal_padding * 2.0f + count_spacing * 2.0f;
+        for (size_t i = 0; i < edit_counts.size(); ++i) {
+            auto& label = edit_count_text[i];
+            std::snprintf(label.data(), label.size(), "%c %zu", edit_symbols[i], edit_counts[i]);
+            edit_count_text_width[i] = ImGui::CalcTextSize(label.data()).x;
+            edit_count_width += edit_count_text_width[i];
+        }
+        const ImVec2 edit_count_max(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(),
+                                    count_region_min.y + status_bar_height);
+        const ImVec2 edit_count_min(edit_count_max.x - edit_count_width, count_region_min.y);
+        draw_list->AddRectFilled(edit_count_min, edit_count_max, count_background);
+        float edit_count_x = edit_count_min.x + horizontal_padding;
+        const ImU32 edit_count_color = ImGui::GetColorU32(ImGuiCol_Text);
+        for (size_t i = 0; i < edit_count_text.size(); ++i) {
+            draw_list->AddText(ImVec2(edit_count_x, text_y), edit_count_color, edit_count_text[i].data());
+            edit_count_x += edit_count_text_width[i] + count_spacing;
+        }
+        if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(edit_count_min, edit_count_max)) {
+            ImGui::SetTooltip("%s", tr("status.edit.pending_counts").c_str());
+        }
+
         ImGui::SameLine(0.0f, horizontal_padding);
         ImGui::SetCursorPosY((status_bar_height - status_font_size) * 0.5f);
+        const ImVec2 status_text_min = ImGui::GetCursorScreenPos();
+        const float status_text_right = std::max(status_text_min.x, edit_count_min.x - horizontal_padding);
+        ImGui::PushClipRect(status_text_min, ImVec2(status_text_right, edit_count_max.y), true);
         // Route edits and saves do not reload the current map. Show the Route
         // warning while scenario_route_changed_ is set; a saved warning remains
         // until Scenario reload even if a draft restores the original paths.
@@ -1179,6 +1208,7 @@ void App::render_status_bar() {
             ImGui::SameLine(0.0f, 0.0f);
             ImGui::TextUnformatted(program_status_elapsed_suffix_.c_str());
         }
+        ImGui::PopClipRect();
         if (edit_ui_operation_pending() &&
             std::string_view(program_status_key_) ==
                 pending_edit_ui_operation_.progress_status_key) {

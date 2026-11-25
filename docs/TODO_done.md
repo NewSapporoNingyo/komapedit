@@ -168,6 +168,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### User Interface and Utilities
 
+- [x] Show unsaved additions, deletions, and modifications at the right end of the status bar (S4). The counts follow the applied map ledger, including resource-list rows. Debug edit roundtrip covers mixed changes, repeated edits, reverting edits, and save conflicts. GUI acceptance on a real route verified Save, Reload, and switching maps.
 - [x] Add Korean for all 606 UI keys and Korean versions of the README, user manual, developer guide, and AI-assisted development guide. The language menu offers `한국어`, settings store `language=ko`, and Windows Malgun Gothic supplies Hangul glyphs. The Debug build, all seven CTests, and the headless settings round trip passed. Language switching, restart, glyph rendering, layout, and wording remain for manual acceptance.
 - [x] Add Hong Kong Traditional Chinese for all 605 localized UI keys, using Hong Kong wording and 行/欄/單元格 for table rows/columns/cells. Add `香港繁體` after `台湾繁體` under `中文`, with canonical `zh-HK` settings persistence. Preserve the original four dictionaries, unlocalized diagnostics/parameter labels, fonts, and editing/backend behavior. Debug build and all seven CTests passed, including five-language key, placeholder, lookup, and Hong Kong terminology checks. Menu interaction, language persistence across restarts, glyphs, layout, and wording await manual review; no headless or GUI automation was run.
 - [x] Add Message from Creator using ordinary `//--kme--message-from-creator:"content"` comments. Create literal single-line messages from the New Map Element Wizard's Other category below a selected Map header, display root/loaded-Include messages once per physical location with popup pagination, and retain root-Map suppression in `history.ini` independently of recent-file history. The Auxiliary Info -> Other -> Custom Messages tab shows source locations and supports editing/deletion with in-tab Apply and toolbar Save/Revert through the shared source-backed lifecycle. Add typed contracts and isolated Debug headless coverage.
@@ -378,6 +379,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 用户界面与辅助功能
 
+- [x] 在状态栏最右侧显示待保存的新增、删除和更改数量（S4）。计数来自已应用的地图编辑账本，包含资源列表行。Debug 编辑往返验证覆盖混合变更、重复编辑、还原和保存冲突。真实线路 GUI 验收验证了保存、重载和切图。
 - [x] 为全部 606 个本地化 UI 键新增韩语，并新增 README、用户手册、开发者指南和 AI 辅助开发指南的韩语版。语言菜单提供 `한국어`，配置保存为 `language=ko`，韩文字形由 Windows 自带的 Malgun Gothic 提供。Debug 构建、全部七项 CTest 和 headless 设置往返验证通过。界面切换、重启恢复、字形显示、排版和措辞留待人工确认。
 - [x] 为全部 605 个本地化 UI 键新增香港繁体中文，采用香港用语，表格 row/column/cell 分别使用「行／欄／單元格」。在 `中文` 子菜单的 `台湾繁體` 后加入 `香港繁體`，支持规范保存值 `zh-HK`。保留原有四套文案、未本地化的诊断正文和参数标签、字体以及编辑与后台行为。Debug 构建与全部七项 CTest 通过，涵盖五语键集、占位符、语言查找和香港关键术语检查。菜单操作、重启后的语言保持、缺字、排版和实际措辞留待人工确认；本次未运行 headless 或 GUI 自动化测试。
 - [x] 通过普通 `//--kme--message-from-creator:"content"` 注释实现 Message from Creator。在新建地图元素向导的“其它”分类中，将单行原文消息插入所选 Map 文件头下方；弹窗分页展示主地图和已加载 Include 中的消息，同一物理位置只显示一次，并在 `history.ini` 中按主 Map 持久保存抑制偏好，不受最近文件列表限制。“辅助信息 -> 其它 -> 自定义消息”标签页显示源码位置，支持编辑、删除及页内“应用”，保存／撤销使用顶部工具栏并沿用共享源码编辑流程。补充类型化契约与隔离夹具的 Debug headless 验证。

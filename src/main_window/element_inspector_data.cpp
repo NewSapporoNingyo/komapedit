@@ -1290,6 +1290,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             pending.key() = edit_id;
             pending.mapped().edit_id = edit_id;
             pending_edit_changes_.insert(std::move(pending));
+            refresh_pending_edit_counts();
         }
         auto snapshot = original_edit_rows_.extract(request.edit_id);
         if (!snapshot.empty()) {

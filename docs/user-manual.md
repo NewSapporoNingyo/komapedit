@@ -53,7 +53,7 @@ The main window contains these areas:
 - **Central workspace**: Shows the 2D View, File Structure Diagram, Text Preview, Structure Model Preview, and 3D Scene Preview. Windows can be stacked as tabs or dragged to other docking positions.
 - **Map information tables**: Usually docked on the right. They show stations, structures, signals, sounds, and other map elements.
 - **Console window**: Usually docked at the lower right. It shows detailed messages from map loading, model loading, editing, and saving.
-- **Bottom status bar**: Shows the current operation and the number of errors and warnings.
+- The **bottom status bar** shows the current operation, diagnostic counts, and unsaved map edit counts.
 
 If you close a window, reopen it from `Map Info List`, `2D View`, `3D View`, or `Auxiliary Info`. Window visibility and docking layout are saved automatically.
 
@@ -138,7 +138,8 @@ The global shortcuts are `F5` for Reload and `Ctrl+Shift+S` for Save. See sectio
 #### Bottom Status Bar
 
 - `Err` and `Warn` on the left show the number of errors and warnings. Click this area to view a summary.
-- The status text on the right shows states such as Loading, Ready, Applying changes, and Saved. After a long operation finishes, it also shows the elapsed time.
+- The status text in the middle shows states such as Loading, Ready, Applying changes, and Saved. After a long operation finishes, it also shows the elapsed time.
+- `+`, `-`, and `M` on the far right count unsaved additions, deletions, and modifications applied to the map working copy. Each edited element or resource-list row counts once. Hover over the counts for the legend. Saving the map, reverting all edits, reloading from disk, or opening another map clears the counts.
 
 #### Console Window
 

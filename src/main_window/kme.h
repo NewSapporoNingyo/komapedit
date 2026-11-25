@@ -2023,6 +2023,11 @@ public:
 #endif
 
 private:
+#ifndef NDEBUG
+    static void debug_check_pending_edit_counts(const std::filesystem::path& map_path,
+                                                const std::filesystem::path& other_map_path,
+                                                double unit_distance, std::ostream& out);
+#endif
     class EditTimingScope {
     public:
         EditTimingScope(App& app, const char* operation)
@@ -2122,6 +2127,11 @@ private:
     bool edit_mode_warning_dont_show_ = false;
     bool edit_registry_loaded_ = false;
     std::map<std::string, MapElementPendingChange> pending_edit_changes_;
+    struct PendingEditCounts {
+        size_t added = 0;
+        size_t deleted = 0;
+        size_t modified = 0;
+    } pending_edit_counts_;
     bool edit_memory_matches_pending_ledger_ = true;
     std::map<std::string, MapElementPreviewSnapshot> original_edit_rows_;
     std::map<std::string, DistanceResolutionChoice> distance_resolution_choices_;
@@ -2638,6 +2648,7 @@ private:
     static MapModel build_model_from_handle(void* handle, const std::string& path,
                                             LoadModelOptions options);
     void clear_pending_edit_state();
+    void refresh_pending_edit_counts();
     bool has_pending_edits() const;
     bool parse_and_log_edit_report(const KvEditReportSnapshot& report,
                                    const std::string& success_prefix,

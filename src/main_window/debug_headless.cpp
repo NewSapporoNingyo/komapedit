@@ -4705,6 +4705,161 @@ int App::run_debug_headless_own_track_edit(
     return failed_cases == 0 ? 0 : 3;
 }
 
+void App::debug_check_pending_edit_counts(const std::filesystem::path& map_path,
+                                          const std::filesystem::path& other_map_path,
+                                          double unit_distance, std::ostream& out) {
+    UserSettings settings;
+    settings.edit_mode_enabled = true;
+    App app(nullptr, settings, 1.0f, false, false);
+    app.unit_distance_ = unit_distance;
+    app.scene_auto_load_on_map_open_ = false;
+    app.history_path_ = map_path.parent_path() / "pending-counts-history.ini";
+
+    const auto require = [&](bool condition, const char* step) {
+        if (condition) return;
+        std::lock_guard<std::mutex> lock(app.log_mutex_);
+        for (const auto& log : app.logs_) out << log.text << '\n';
+        throw std::runtime_error(step);
+    };
+    const auto expect_counts = [&](const char* step, size_t added, size_t deleted, size_t modified) {
+        const auto& counts = app.pending_edit_counts_;
+        out << "pending_edit_counts." << step << '=' << counts.added << ','
+            << counts.deleted << ',' << counts.modified << '\n';
+        require(counts.added == added && counts.deleted == deleted && counts.modified == modified, step);
+    };
+    const auto finish_open = [&] {
+        app.stop_loader();
+        app.poll_loader();
+        app.stop_loader();
+        app.poll_loader();
+        require(app.has_model_ && app.edit_registry_loaded_, "ready_to_edit");
+    };
+    const auto structure_at = [&](double distance) -> const TableRow& {
+        const auto& rows = app.model_.structures;
+        const auto row = std::find_if(rows.begin(), rows.end(), [&](const TableRow& entry) {
+            return table_cell_number(entry, "distance") == distance;
+        });
+        require(row != rows.end(), "fixture_structure_found");
+        return *row;
+    };
+    const auto draft_x = [&](const std::string& edit_id, const char* value) {
+        require(app.open_element_inspector({edit_id, "structure.put"}), "structure_inspector_opened");
+        auto* field = find_inspector_field(app.inspector_, "x");
+        require(field && !field->read_only && !field->disabled, "structure_x_editable");
+        set_edit_field_buffer(*field, value);
+    };
+    const auto read_source = [&] {
+        std::ifstream input(map_path, std::ios::binary);
+        require(static_cast<bool>(input), "map_source_readable");
+        return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    };
+    const auto write_source = [&](const std::string& bytes) {
+        std::ofstream output(map_path, std::ios::binary | std::ios::trunc);
+        output << bytes;
+        output.close();
+        require(static_cast<bool>(output), "map_fixture_written");
+    };
+
+    const std::string baseline = read_source();
+    const std::string map_name = wide_to_utf8(map_path.wstring());
+    app.open_document(map_name);
+    finish_open();
+    const std::string modified_id = structure_at(100.0).edit_id;
+    const std::string deleted_id = structure_at(125.0).edit_id;
+    const std::string source = structure_at(100.0).source.file_path;
+    const std::string source_hash = find_model_source_file(app.model_, source)->source_hash;
+
+    draft_x(modified_id, "2");
+    expect_counts("draft", 0, 0, 0);
+    app.apply_inspector_changes();
+    expect_counts("first_update", 0, 0, 1);
+
+    MapElementPendingChange added;
+    added.edit_id = added.change_id = "pending-counts-insert";
+    added.row_kind = "structure.put";
+    added.operation = "insert";
+    added.target_file_path = source;
+    added.expected_source_hash = source_hash;
+    added.field_changes = {{"method", "Put"}, {"distance", "200"}, {"structureKey", "pole"},
+                           {"trackKey", "0"}, {"x", "5"}, {"y", "2"}, {"z", "3"}, {"rx", "0"},
+                           {"ry", "0"}, {"rz", "0"}, {"tilt", "0"}, {"span", "25"}};
+    MapElementPendingChange deleted;
+    deleted.edit_id = deleted.change_id = deleted_id;
+    deleted.row_kind = "structure.put";
+    deleted.operation = "delete";
+    deleted.expected_source_hash = source_hash;
+    auto candidate = app.pending_edit_changes_;
+    candidate.emplace(added.edit_id, added);
+    candidate.emplace(deleted_id, deleted);
+    require(app.apply_edit_ledger_to_preview(candidate, std::nullopt, false), "mixed_batch_applied");
+    expect_counts("mixed_batch", 1, 1, 1);
+
+    draft_x(modified_id, "3");
+    app.apply_inspector_changes();
+    require(table_cell_number(structure_at(100.0), "x") == 3.0, "second_update_applied");
+    expect_counts("second_update", 1, 1, 1);
+    auto invalid = app.pending_edit_changes_;
+    invalid.at(modified_id).field_changes.at("x") = "invalid";
+    require(!app.apply_edit_ledger_to_preview(invalid, std::nullopt, false), "invalid_apply_rejected");
+    expect_counts("failed_apply", 1, 1, 1);
+
+    const std::string added_id = structure_at(200.0).edit_id;
+    draft_x(added_id, "6");
+    app.apply_inspector_changes();
+    require(table_cell_number(structure_at(200.0), "x") == 6.0, "insert_update_applied");
+    expect_counts("update_of_insert", 1, 1, 1);
+
+    const TableRow& list_row = app.model_.structure_models.front();
+    MapElementPendingChange list_change;
+    list_change.edit_id = list_change.change_id = list_row.edit_id;
+    list_change.row_kind = "structure.model";
+    list_change.expected_source_hash = find_model_source_file(app.model_, list_row.source.file_path)->source_hash;
+    list_change.field_changes.emplace("filePath", "pole-revised.csv");
+    candidate = app.pending_edit_changes_;
+    candidate.emplace(list_change.edit_id, list_change);
+    require(app.apply_edit_ledger_to_preview(candidate, std::nullopt, false), "list_update_applied");
+    expect_counts("resource_list", 1, 1, 2);
+
+    draft_x(modified_id, "1");
+    app.apply_inspector_changes();
+    expect_counts("single_revert", 1, 1, 1);
+    require(app.delete_element_target({added_id, "structure.put"}), "insert_deleted");
+    expect_counts("delete_of_insert", 0, 1, 1);
+    require(app.revert_all_pending_edits() && read_source() == baseline, "revert_all_restored_map");
+    expect_counts("revert_all", 0, 0, 0);
+
+    draft_x(modified_id, "3");
+    app.apply_inspector_changes();
+    const std::string external_edit = baseline + "# External fixture edit\n";
+    write_source(external_edit);
+    require(!app.save_pending_document_changes() && read_source() == external_edit, "conflicting_save_rejected");
+    expect_counts("failed_save", 0, 0, 1);
+    write_source(baseline);
+    require(app.save_pending_document_changes() && read_source() != baseline, "map_saved");
+    expect_counts("saved", 0, 0, 0);
+
+    draft_x(structure_at(100.0).edit_id, "4");
+    app.apply_inspector_changes();
+    app.reload_current_map_and_model_preview();
+    require(app.popups_.reload_unsaved_confirm, "reload_requires_confirmation");
+    expect_counts("reload_prompt", 0, 0, 1);
+    app.execute_pending_reload_action();
+    finish_open();
+    require(table_cell_number(structure_at(100.0), "x") == 3.0, "reload_read_saved_value");
+    expect_counts("reloaded", 0, 0, 0);
+
+    draft_x(structure_at(100.0).edit_id, "4");
+    app.apply_inspector_changes();
+    const std::string other_map = wide_to_utf8(other_map_path.wstring());
+    app.open_document(other_map);
+    require(app.pending_document_open_.has_value(), "switch_requires_confirmation");
+    expect_counts("switch_prompt", 0, 0, 1);
+    app.perform_open_document(std::move(*app.pending_document_open_));
+    finish_open();
+    require(app.file_path_ == other_map, "switched_map_loaded");
+    expect_counts("switched_map", 0, 0, 0);
+}
+
 int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_distance,
                                            const std::string& output_path) {
     std::ofstream output_file;
@@ -5262,6 +5417,22 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
             if (!direct_matches) exit_code = 15;
         }
         if (direct_reload.handle) kv_free(direct_reload.handle);
+    }
+
+    if (exit_code == 0) {
+        write_map_fixture(temp_map);
+        ImGui::CreateContext();
+        ImPlot::CreateContext();
+        ImGui::GetIO().IniFilename = nullptr;
+        try {
+            debug_check_pending_edit_counts(temp_map, temp_direct_map, unit_distance, *out);
+            *out << "pending_edit_counts.result=PASS\n";
+        } catch (const std::exception& error) {
+            *out << "pending_edit_counts.result=FAIL " << error.what() << '\n';
+            exit_code = 16;
+        }
+        ImPlot::DestroyContext();
+        ImGui::DestroyContext();
     }
 
     std::filesystem::remove_all(temp_root);

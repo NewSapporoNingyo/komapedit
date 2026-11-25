@@ -223,6 +223,7 @@ void App::clear_pending_edit_state() {
     clear_scene_placement_edit_target();
     pending_edit_ui_operation_ = PendingEditUiOperationState{};
     pending_edit_changes_.clear();
+    refresh_pending_edit_counts();
     edit_memory_matches_pending_ledger_ = true;
     original_edit_rows_.clear();
     distance_resolution_choices_.clear();
@@ -237,6 +238,20 @@ void App::clear_pending_edit_state() {
     other_track_rename_ = OtherTrackRenameState{};
     new_element_wizard_ = NewElementWizardState{};
     discard_all_editable_list_drafts();
+}
+
+void App::refresh_pending_edit_counts() {
+    pending_edit_counts_ = {};
+    for (const auto& entry : pending_edit_changes_) {
+        const std::string& operation = entry.second.operation;
+        if (operation == "insert") {
+            ++pending_edit_counts_.added;
+        } else if (operation == "delete") {
+            ++pending_edit_counts_.deleted;
+        } else {
+            ++pending_edit_counts_.modified;
+        }
+    }
 }
 
 bool App::has_pending_edits() const {
@@ -1807,6 +1822,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
     }
     pending_edit_changes_ = changes;
+    refresh_pending_edit_counts();
     timing.next("preview.refresh");
     refresh_local_preview_after_edits(refresh_targets);
     if (ended_batch) {
@@ -1894,6 +1910,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
     distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
     text_preview_.placement = TextPreviewPlacementState{};
     pending_edit_changes_.clear();
+    refresh_pending_edit_counts();
     edit_memory_matches_pending_ledger_ = true;
     original_edit_rows_.clear();
     timing.next("save.text");
