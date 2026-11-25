@@ -207,6 +207,11 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Fix Station.List serialization for BVE: when an edited or inserted station-definition row is written, blank `stoppageTime`, `signalFlag`, `alightingTime`, `passengers`, `doorReopen`, and `stuckInDoor` fields are emitted as `0`; station keys/names, times, and sound keys remain empty when blank, while untouched source rows retain their original text.
 - [x] Fix the blank-map/new-reference workflow: `Include` and the five `*.Load` references may target any loaded non-resource-list map source file, including completely distance-free blank maps; the New Map Element wizard accepts the same targets and appends a canonical tail distance block for a source with zero or one numeric distance statement without moving existing statements; a header-only resource list takes its first row directly from an `Add Row` button or context-menu insertion, and maploader appends that row after the header with the format's initial CSV field count (Signal widths may subsequently change); one ledger batch that mixes unsaved `*.Load` insertions with resource-list row edits is now planned in two stages so list-row editIds resolve against a working copy that already contains the new Loads, eliminating `unsupported or unknown editId` failures; and editable-list context-menu actions are deferred until after table rendering, fixing the crash when choosing `Insert Row Below`.
 - [x] Treat a `Curve.Interpolate` interval whose evaluated endpoint radii are both zero as straight in the 3D scene route overlay, reusing the localized `Straight` label while preserving the two-endpoint display when either radius is nonzero.
+- [x] Refresh other 2D plan markers when an alignment drag ends and the edited alignment is displayed.
+- [x] Use the selected theme color on enabled toolbar icon buttons to make their backgrounds easier to distinguish from disabled buttons.
+- [x] Support dragging gradient markers in profile edit mode.
+- [x] Display a single radius label for each curve statement across its visible circular and transition segments.
+- [x] Switch the profile and curve-radius plots to Edit mode when the 2D view switches from Measure to Edit.
 
 ## 简体中文
 
@@ -413,3 +418,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 修复空白地图/新建引用工作流：`Include` 与五种 `*.Load` 引用可选择任意已加载的非资源列表地图源文件，包括完全无距离语句的空白地图；“新建地图元素”向导也可选择这些目标，对于只有零或一条数值距离语句的源文件，会在不移动既有语句的前提下追加规范尾部距离块；仅有文件头的资源列表可通过“新增行”按钮或右键插入直接创建首行，maploader 将该行按相应格式的初始 CSV 字段数追加到文件头之后（Signal 后续可调整宽度）；同一账本同时含有未保存 `*.Load` 插入与资源列表行编辑时改为两阶段规划，使列表行 editId 在已包含新 Load 的临时工作副本中解析，消除 `unsupported or unknown editId` 报错；资源列表右键菜单动作延迟到表格渲染结束后执行，修复点击“在下方新增行”时崩溃的问题。
 - [x] 将全局保存快捷键从 `Ctrl+S` 改为 `Ctrl+Shift+S`，并在 3D 画布悬停时屏蔽该保存组合键对应的 `S` 后退输入；普通 `S` 与 `Ctrl+S` 相机移动保持不变。
 - [x] 修复 3D 场景线路信息中的 `Curve.Interpolate` 显示：两端求值后的半径均为零时复用现有本地化“直线”标签；任一端半径非零时仍显示两个端点。
+- [x] 2D 平面图拖动结束并更新线形后，同步刷新其他标记的位置。
+- [x] 使用当前主题色增强启用的图标按钮背景，提高与禁用状态的对比度。
+- [x] 纵断面图在编辑模式下支持拖动坡度标记。
+- [x] 同一曲线语句的圆曲线段与缓和段共用一个半径标签。
+- [x] 2D 视图从测量切换到编辑模式时，纵断面图和曲线半径图同步切换。
