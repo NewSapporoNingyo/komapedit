@@ -358,9 +358,10 @@ void App::render_scene_preview_window() {
             scene_mode = Canvas3DSceneInteractionMode::Select;
         }
         ImGui::SameLine();
-        if (toolbar_icons_.button(toolbar_icons::Icon::MileageSelect, tr("mode.mileage_select").c_str(),
-                                  previous_mode == Canvas3DSceneInteractionMode::MileageSelect)) {
-            scene_mode = Canvas3DSceneInteractionMode::MileageSelect;
+        if (toolbar_icons_.button(toolbar_icons::Icon::MileageSelect,
+                                  tr("menu.add_map_element_at_current_mileage").c_str(),
+                                  previous_mode == Canvas3DSceneInteractionMode::NewAtMileage)) {
+            scene_mode = Canvas3DSceneInteractionMode::NewAtMileage;
         }
         if (previous_mode != scene_mode) {
             scene_preview_canvas_->set_scene_interaction_mode(scene_mode);

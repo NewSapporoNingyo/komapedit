@@ -427,7 +427,9 @@ void App::apply_edit_mode_enabled(bool enabled) {
     persist_user_settings();
 
     if (!edit_mode_enabled_) {
-        if (mode_ == Mode::Edit) set_2d_mode(previous_navigation_mode_);
+        if (mode_ == Mode::Edit || mode_ == Mode::NewAtMileage) {
+            set_2d_mode(previous_navigation_mode_);
+        }
         plan_alignment_->clear_drafts();
         clear_scene_placement_edit_target();
         inspector_.open = false;

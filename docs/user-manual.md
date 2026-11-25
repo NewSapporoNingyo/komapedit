@@ -177,6 +177,10 @@ The Profile chart shows mileage and elevation. The Curve Radius chart distinguis
 - Move the pointer near the track to see its mileage, elevation, gradient, curve radius, and current speed limit.
 - Double-click the Plan, Profile, or Curve Radius chart to move all three measurement positions to that mileage.
 
+#### Plan: Add Map Element at Current Mileage
+
+Enable editing and select the track pin on the 2D toolbar. Move the pointer near the own track until it becomes a crosshair. Left-click to open the New Map Element Wizard with `distance` filled in from the nearest track sample. Drag to pan the plan. Turning off editing restores the preceding Move or Measure mode.
+
 #### Own-Track Alignment Editing
 
 Enable **Edit Mode** and select the pencil in the 2D toolbar. This exits Measure Mode in the plan, Profile, and Curve Radius charts. Drag a curve, transition, or gradient endpoint along the plan track, or drag a gradient marker horizontally in the Profile. Mileage snaps in 5 m increments relative to the start of the drag. Use **Esc** to restore the value at the start of the current drag.
@@ -322,14 +326,14 @@ The top of the window has `Start 3D Scene Preview`, `Reload (Models)`, and `Clos
 - `Reload (Models)` reads the scene models again while keeping the current map and camera position.
 - `Close` releases the current scene but can leave the preview window open.
 
-Beside `Mode`, use the hand, pointer, or track pin to switch to `Move`, `Select`, or `Mileage Select`. An outline marks the active mode, and hovering over a button shows its name.
+Beside `Mode`, use the hand, pointer, or track pin to switch to `Move`, `Select`, or `Add Map Element at Current Mileage`. An outline marks the active mode, and hovering over a button shows its name.
 The `Translate` and `Rotate` icons to their right control the placement gizmo. See [Live Adjustment in the 3D Scene](#live-adjustment-in-the-3d-scene).
 
 #### Move Mode and Shortcuts
 
 The following controls are available while the pointer is over the 3D canvas.
 
-Keyboard movement works in `Move`, `Select`, and `Mileage Select` modes. Dragging with the left mouse button to turn the view works only in `Move` mode.
+Keyboard movement works in all three modes. In `Move` mode, drag with the left mouse button to turn the view.
 
 | Action | Function |
 | --- | --- |
@@ -345,14 +349,15 @@ Set the camera speed in `3D Canvas Settings`. Use the toolbar to jump to a stati
 #### Select Mode
 
 - Move the pointer over a scene object or marker to highlight it.
+- With editing enabled, left-click a highlighted editable target to open `Properties/Edit`. Drag a placement gizmo to adjust the object.
 - Right-click an object or marker to locate its Map Info table. For a Repeater, you can also jump to the start or end/change position.
 - Right-click a signal and choose `Switch Signal Aspect` to switch its preview model by aspect index and structure key.
 - With editing enabled, the same menu also provides `Properties/Edit` and delete actions. See section 10 for edit gizmos.
 
-#### Mileage Select Mode
+#### Add Map Element at Current Mileage
 
 - The nearest whole-meter cross-section on the own-track plane and its mileage label appear near the pointer.
-- With editing enabled, right-click this position and choose `Add Map Element at Current Mileage`. The wizard fills in `distance` automatically.
+- With editing enabled, left-click this position to open the wizard with `distance` prefilled. The right-click menu offers the same action.
 
 #### Scene Overlay and Settings
 
@@ -427,7 +432,7 @@ Open `Properties/Edit` and drag a supported object's gizmo to adjust its draft, 
 
 #### New Map Element Wizard
 
-Open the wizard from toolbar `Add Map Element`, or right-click the current mileage in 3D `Mileage Select` mode. Choose a target source file and template, then enter the parameters. Any loaded map source file, including a blank or distance-free file, can be a target.
+Open the wizard from toolbar `Add Map Element` or by picking a mileage in the 2D plan or 3D scene. Choose a target source file and template, then enter the parameters. Any loaded map source file, including a blank or distance-free file, can be a target.
 
 When creating or moving an element, the program arranges distance statements automatically while preserving other statements and comments. If manual placement is needed, select a highlighted statement boundary in Text Preview and click `OK` to continue. If a distance expression is required, enter its source text in the prompt and click `Apply`.
 

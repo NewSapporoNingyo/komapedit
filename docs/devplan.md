@@ -17,9 +17,9 @@ S1–S4 记录已完成阶段，S5–S25 记录按前置条件和实现复杂度
 
 | 位置 | 现有基础 | 后续开发重点 |
 | --- | --- | --- |
-| [三维操纵器](../src/canvas3d/canvas3d_scene_gizmo.cpp)、[场景交互](../src/canvas3d/canvas3d_scene_ui.cpp) | 位移与里程拖动、三轴旋转、工具栏切换操纵器模式、场景元素拾取和里程右键新建 | 单击打开属性、场景点选新建、快速布景放置及他轨道变化点操纵器 |
-| [新建元素向导](../src/main_window/new_element_wizard.cpp)、[文件内容与创建](../src/main_window/app_dialogs.cpp)、[项目模板](../src/main_window/new_project.cpp) | 预填里程的新建元素向导、单文件创建和 BVETs Project 模板 | 2D／3D 点选新建、快捷放置批次以及他列车定义文件创建 |
-| [2D 画布](../src/canvas2d/canvas2D.cpp)、[线形编辑](../src/canvas2d/canvas2d_alignment.cpp)、[快照接收](../src/main_window/map_snapshot_hydration.cpp) | 移动、测量及编辑模式，里程命中、自轨道端点拖动、半径滚轮和草稿预览 | 地图元素点选新建、他轨道变化点拖动 |
+| [三维操纵器](../src/canvas3d/canvas3d_scene_gizmo.cpp)、[场景交互](../src/canvas3d/canvas3d_scene_ui.cpp) | 位移与里程拖动、三轴旋转、工具栏切换操纵器模式、单击打开属性和点选里程新建 | 快速布景放置及他轨道变化点操纵器 |
+| [新建元素向导](../src/main_window/new_element_wizard.cpp)、[文件内容与创建](../src/main_window/app_dialogs.cpp)、[项目模板](../src/main_window/new_project.cpp) | 2D／3D 点选里程预填向导、单文件创建和 BVETs Project 模板 | 快捷放置批次以及他列车定义文件创建 |
+| [2D 画布](../src/canvas2d/canvas2D.cpp)、[线形编辑](../src/canvas2d/canvas2d_alignment.cpp)、[快照接收](../src/main_window/map_snapshot_hydration.cpp) | 移动、测量、编辑和点选里程新建，自轨道端点拖动、半径滚轮和草稿预览 | 他轨道变化点拖动 |
 | [模型预览](../src/canvas3d/canvas3d_model_preview.cpp)、[预览窗口与加载流程](../src/main_window/scene_preview_lifecycle.cpp) | 从布景列表或文件打开单个模型，使用独立相机和渲染目标 | 参考网格及轴向标注、单体与连续快速放置、模型组合与预设落位 |
 | [背景图变换](../src/canvas2d/canvas2d_background.cpp)、[背景图历史](../src/main_window/background_image.cpp) | 画布坐标变换、背景图位姿、两点对齐和按地图恢复 | 独立线形草稿的背景图、现有地图背景图的拖动手柄 |
 | [解析器](../src/maploader/maploader_parser.cpp)、[类型化快照](../src/maploader/maploader_snapshot.cpp)、[他列车表格](../src/table/datatable_route_tables.cpp) | 他列车定义、启用时间和停止点数据，分组表格与路径定位；外部定义文件中的资源键提取 | 地图内语句编辑、新建，以及外部定义文件的完整文档模型 |
@@ -43,7 +43,7 @@ S1–S4 记录已完成阶段，S5–S25 记录按前置条件和实现复杂度
 | [S3](#s3) | 2D 自轨道线形编辑与视图工具栏 | 现有视图模式、操纵器、自轨道编辑身份和几何计算 | [已完成](TODO_done.md#2d-平面图与图表显示) |
 | [S4](#s4) | 未保存地图元素变更统计 | 现有编辑账本与工作副本生命周期 | [已完成](TODO_done.md#用户界面与辅助功能) |
 | [S5](#s5) | 3D 模型预览参考网格 | 现有模型坐标与预览相机 | [S5 待办](../TODO.md#s5) |
-| [S6](#s6) | 2D／3D 地图元素快捷操作 | [S3](#s3) 的工具栏交互，现有里程命中与属性入口 | [S6 待办](../TODO.md#s6) |
+| [S6](#s6) | 2D／3D 地图元素快捷操作 | [S3](#s3) 的工具栏交互，现有里程命中与属性入口 | [已完成](TODO_done.md#用户界面与辅助功能) |
 | [S7](#s7) | 2D 背景图操纵工具 | 现有背景图变换、数值调整和历史记录 | [S7 待办](../TODO.md#s7) |
 | [S8](#s8) | 资源列表注释 | 注释语法、行归属和类型化发布 | [S8 待办](../TODO.md#s8) |
 | [S9](#s9) | 多步撤销、重做与后台热应用 | 现有类型化编辑、账本及工作副本生命周期 | [S9 待办](../TODO.md#s9) |
@@ -167,16 +167,11 @@ Debug 编辑往返验证覆盖混合批次、连续修改、新增后修改和�
 
 ## S6 2D／3D 地图元素快捷操作
 
-2D 平面图已有用于测量的里程命中，3D 场景已有里程拾取、右键新建入口和按目标打开属性的延迟请求。复用 [S3](#s3) 的视图工具栏和现有[新建元素向导](../src/main_window/new_element_wizard.cpp)。
+两处画布的轨道定位图标均切换到“在当前里程新建地图元素”。2D 复用测量的自轨道拾取，3D 显示整米横断面和里程。编辑模式下，单击命中的里程可打开[新建元素向导](../src/main_window/new_element_wizard.cpp)并预填距离。
 
-1. 在 2D 平面图工具栏增加“在当前里程新建”模式，复用[测量的自轨道里程命中](../src/canvas2d/canvas2d_interaction.cpp)。单击有效里程时打开向导并预填距离。
-2. 将 3D 场景工具栏的“距离选择”改为“在当前里程新建”。沿用[场景里程拾取](../src/canvas3d/canvas3d_scene_ui.cpp)，单击有效点时直接打开同一向导。
-3. 3D 选择模式下，单击可编辑对象或标记时提交现有的属性请求。沿用场景拾取优先级和全局编辑状态，由宿主延迟打开属性。拖动手势交给操纵器。
-4. 验收有效和无效点选、向导里程预填、重叠目标选择、单击与拖动的区分，以及两处工具栏的六语提示。
+在 3D 选择模式下，单击高亮的可编辑对象或标记会提交延迟属性请求。重叠时沿用场景拾取结果，操纵器优先处理自身的拖动手势。
 
-**完成条件**
-
-2D 平面图和 3D 场景均可通过一次里程点击打开预填距离的新建元素向导。3D 选择模式可以单击可编辑地图元素打开属性。
+Debug 构建、七项 CTest、自轨道无界面契约和指定线路的全屏 GUI 验收均通过。验收覆盖里程预填、无效点击、重叠拾取、拖动和两处工具栏的六语提示。
 
 <a id="s7"></a>
 

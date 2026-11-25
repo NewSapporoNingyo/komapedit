@@ -9,6 +9,7 @@
 #include "../canvas2d/canvas2d_alignment.h"
 #include "../canvas2d/canvas2d_marker_cache.h"
 #include "../canvas2d/canvas2d_primitives.h"
+#include "imgui_internal.h"
 #include "implot.h"
 
 #include <fstream>
@@ -467,6 +468,72 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
         app.cancel_distance_resolution_workflow();
         check("revert_discards_draft", app.revert_all_pending_edits() &&
               !editor.dirty() && bytes(include) == saved_bytes);
+
+        app.set_2d_mode(Mode::Measure);
+        app.set_2d_mode(Mode::Edit);
+        app.set_2d_mode(Mode::NewAtMileage);
+        const auto& own = app.current_plan_data().own;
+        const TrackPoint track_point = own.at(own.size() / 2);
+        app.plan_view_.cx = track_point.x;
+        app.plan_view_.cy = track_point.y;
+        app.plan_view_.scale = 2.0;
+        app.plan_view_.fitted = true;
+        app.keep_plan_view_ = true;
+        const auto render_plan = [&] {
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(io.DisplaySize);
+            ImGui::Begin("Plan mileage contract", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+            app.render_plan_canvas(ImVec2(800, 600));
+            const auto* child = ImGui::GetCurrentWindowRead()->DC.ChildWindows.back();
+            const ImRect bounds(child->DC.CursorStartPos, child->ContentRegionRect.Max);
+            ImGui::End();
+            ImGui::Render();
+            return bounds;
+        };
+        const ImRect plan_bounds = render_plan();
+        const ImVec2 plan_hit = plan_bounds.GetCenter();
+        const auto press_plan_at = [&](ImVec2 position) {
+            io.AddMousePosEvent(position.x, position.y);
+            render_plan();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            render_plan();
+        };
+        const auto release_plan = [&] {
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            render_plan();
+        };
+
+        press_plan_at(plan_hit);
+        const bool opened_on_press = app.new_element_wizard_.open;
+        release_plan();
+        check("plan_mileage_click_prefill", !opened_on_press && app.new_element_wizard_.open &&
+              app.new_element_wizard_.distance_prefill == track_point.d);
+        app.new_element_wizard_.open = false;
+
+        press_plan_at(ImVec2(plan_bounds.Min.x + 40.0f, plan_bounds.Min.y + 40.0f));
+        release_plan();
+        check("plan_mileage_blank_click", !app.new_element_wizard_.open);
+
+        press_plan_at(plan_hit);
+        const double center_before_drag = app.plan_view_.cx;
+        io.AddMousePosEvent(plan_hit.x + 40.0f, plan_hit.y);
+        render_plan();
+        const bool panned_on_first_drag_frame = app.plan_view_.cx != center_before_drag;
+        io.AddMousePosEvent(plan_hit.x, plan_hit.y);
+        render_plan();
+        release_plan();
+        check("plan_mileage_drag_release", panned_on_first_drag_frame && !app.new_element_wizard_.open);
+
+        press_plan_at(plan_hit);
+        io.AddMousePosEvent(plan_hit.x + io.MouseDragThreshold + 1.0f, plan_hit.y);
+        release_plan();
+        check("plan_mileage_release_motion", !app.new_element_wizard_.open);
+        const bool retains_navigation_setting = app.current_view_2d_settings().mode == 1;
+        app.apply_edit_mode_enabled(false);
+        check("plan_mileage_restores_navigation", retains_navigation_setting &&
+              app.mode_ == Mode::Measure);
     } catch (const std::exception& error) {
         out << "alignment_error=" << error.what() << '\n';
         return false;

@@ -811,7 +811,7 @@ void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 m
 
     double visible_min = scene_camera_distance - scene_window_back_m;
     double visible_max = scene_camera_distance + effective_window_forward_m;
-    if (scene_interaction_mode == Canvas3DSceneInteractionMode::MileageSelect) {
+    if (scene_interaction_mode == Canvas3DSceneInteractionMode::NewAtMileage) {
         if (mileage_pick_enabled) {
             scene_hovered_mileage = pick_scene_mileage(
                 mouse_local, width, height, visible_min, visible_max);

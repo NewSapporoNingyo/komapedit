@@ -47,7 +47,7 @@ struct Canvas3DTrackVisibility {
 enum class Canvas3DSceneInteractionMode {
     Move,
     Select,
-    MileageSelect,
+    NewAtMileage,
 };
 
 enum class Canvas3DPlacementGizmoMode {

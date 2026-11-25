@@ -468,7 +468,8 @@ View2DSettings App::current_view_2d_settings() const {
     view.show_profile_graph = show_profile_graph_;
     view.show_radius_graph = show_radius_graph_;
     view.show_background_image = bg_show_;
-    const Mode navigation_mode = mode_ == Mode::Edit ? previous_navigation_mode_ : mode_;
+    const Mode navigation_mode = mode_ == Mode::Edit || mode_ == Mode::NewAtMileage
+        ? previous_navigation_mode_ : mode_;
     view.mode = navigation_mode == Mode::Measure ? 1 : 0;
     view.grid_mode = grid_mode_ == GridMode::Movable ? 1 : (grid_mode_ == GridMode::None ? 2 : 0);
     return view;

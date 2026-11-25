@@ -158,6 +158,25 @@ std::string format_elapsed_seconds_value(double elapsed_seconds) {
     return elapsed.str();
 }
 
+bool is_canvas_left_click(bool button_pressed) {
+    if (!button_pressed || !ImGui::IsMouseReleased(ImGuiMouseButton_Left) ||
+        ImGui::GetKeyOwner(ImGuiKey_MouseLeft) != ImGui::GetItemID()) {
+        return false;
+    }
+
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.MouseSource == ImGuiMouseSource_TouchScreen ||
+        ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left)) {
+        return false;
+    }
+
+    // ImGui accumulates drag distance while the button is held.
+    const ImVec2 start = io.MouseClickedPos[ImGuiMouseButton_Left];
+    const float dx = io.MousePos.x - start.x;
+    const float dy = io.MousePos.y - start.y;
+    return dx * dx + dy * dy < io.MouseDragThreshold * io.MouseDragThreshold;
+}
+
 void set_crosshair_cursor() {
     ::SetCursor(::LoadCursor(nullptr, IDC_CROSS));
 }

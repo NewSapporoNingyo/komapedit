@@ -799,7 +799,10 @@ void App::clear_measure() {
 
 void App::set_2d_mode(Mode mode) {
     if (mode == mode_) return;
-    if (mode == Mode::Edit) previous_navigation_mode_ = mode_;
+    if ((mode == Mode::Edit || mode == Mode::NewAtMileage) &&
+        (mode_ == Mode::Pan || mode_ == Mode::Measure)) {
+        previous_navigation_mode_ = mode_;
+    }
     if (mode_ == Mode::Edit) plan_alignment_->cancel_drag();
     if (mode_ == Mode::Measure) clear_measure();
     mode_ = mode;
@@ -923,6 +926,15 @@ void App::render_mode_grid_controls() {
     }
     ImGui::EndDisabled();
 
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!edit_actions_available());
+    if (toolbar_icons_.button(toolbar_icons::Icon::MileageSelect,
+                              tr("menu.add_map_element_at_current_mileage").c_str(),
+                              previous_mode == Mode::NewAtMileage)) {
+        set_2d_mode(Mode::NewAtMileage);
+    }
+    ImGui::EndDisabled();
+
     ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
     ImGui::AlignTextToFramePadding();
     ImGui::Text("%s:", tr("frame.grid").c_str());
@@ -974,6 +986,7 @@ void App::finish_pending_load_timing_after_plan_data_ready() {
 void App::render_plan_canvas(ImVec2 size) {
     debug_plan_stage("start");
     const bool alignment_mode = mode_ == Mode::Edit && !model_.own.empty();
+    const bool new_at_mileage_mode = mode_ == Mode::NewAtMileage;
     if (alignment_mode) {
         plan_alignment_->set_source(model_, plan_data_source_revision_, repeater_marker_cache_);
     }
@@ -984,7 +997,11 @@ void App::render_plan_canvas(ImVec2 size) {
     ImVec2 avail = ImGui::GetContentRegionAvail();
     avail.x = std::max(avail.x, 50.0f);
     avail.y = std::max(avail.y, 50.0f);
-    ImGui::InvisibleButton("PlanCanvasButton", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const bool canvas_pressed = ImGui::InvisibleButton(
+        "PlanCanvasButton", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const bool left_click = new_at_mileage_mode && is_canvas_left_click(canvas_pressed);
+    const bool mileage_mode_dragging = new_at_mileage_mode && ImGui::IsItemActive() &&
+        ImGui::IsMouseDragging(ImGuiMouseButton_Left);
     bool hovered = ImGui::IsItemHovered();
     bool picking_background_station = pick_slot_ != 0;
     if (hovered && picking_background_station) {
@@ -1292,19 +1309,21 @@ void App::render_plan_canvas(ImVec2 size) {
     }
 
     const bool touch_multi_input = touch.active_count >= 2 || touch.pinch;
+    const bool was_rotating = plan_view_.rotating;
     const bool rotate_plan = hovered && !alignment_input && !touch_multi_input &&
         io.KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left);
     if (hovered && !alignment_input && mode_ != Mode::Measure &&
         !touch_multi_input && !picking_background_station &&
-        ImGui::IsMouseDown(ImGuiMouseButton_Left) && !rotate_plan) {
+        ImGui::IsMouseDown(ImGuiMouseButton_Left) && !rotate_plan &&
+        (!new_at_mileage_mode || mileage_mode_dragging)) {
         if (!plan_view_.dragging) {
-            plan_view_.dragging = true;
-            plan_view_.last_mouse = mouse;
-        } else {
-            ImVec2 delta(mouse.x - plan_view_.last_mouse.x, mouse.y - plan_view_.last_mouse.y);
-            plan_view_.pan_by_screen_delta(delta);
-            plan_view_.last_mouse = mouse;
+            plan_view_.last_mouse = mileage_mode_dragging
+                ? io.MouseClickedPos[ImGuiMouseButton_Left] : mouse;
         }
+        plan_view_.dragging = true;
+        const ImVec2 delta(mouse.x - plan_view_.last_mouse.x, mouse.y - plan_view_.last_mouse.y);
+        plan_view_.pan_by_screen_delta(delta);
+        plan_view_.last_mouse = mouse;
         set_move_cursor();
     } else {
         plan_view_.dragging = false;
@@ -1340,8 +1359,17 @@ void App::render_plan_canvas(ImVec2 size) {
                 update_measure(*clicked_distance);
                 request_plot_focus(*clicked_distance, true, true);
             }
-        } else if (!data.own.empty()) {
+        } else if (!new_at_mileage_mode && !data.own.empty()) {
             fit_plan();
+        }
+    }
+
+    if (new_at_mileage_mode && hovered && edit_actions_available() &&
+        !picking_background_station && !touch_multi_input &&
+        !plan_view_.dragging && !rotate_plan) {
+        if (const auto distance = nearest_measure_distance()) {
+            set_crosshair_cursor();
+            if (left_click && !was_rotating && !io.KeyCtrl) open_new_element_wizard(distance);
         }
     }
 

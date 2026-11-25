@@ -209,6 +209,7 @@ struct CanvasLineWidthSettings {
 
 std::wstring utf8_to_wide(const std::string& text);
 std::string wide_to_utf8(const std::wstring& text);
+bool is_canvas_left_click(bool button_pressed);
 void set_crosshair_cursor();
 void set_move_cursor();
 std::string format_double(double value, int precision = 6);
@@ -2282,7 +2283,7 @@ private:
     bool show_othertracks_window_ = true;
 
     enum class GridMode { Fixed, Movable, None };
-    enum class Mode { Pan, Measure, Edit };
+    enum class Mode { Pan, Measure, Edit, NewAtMileage };
     std::unique_ptr<canvas2d::AlignmentEditor> plan_alignment_;
     GridMode grid_mode_ = GridMode::Fixed;
     Mode mode_ = Mode::Pan;

@@ -478,7 +478,7 @@ std::optional<double> Canvas3D::Impl::render_scene_mileage_context_popup(
     const Canvas3DSceneContextMenuOptions& context_menu_options) {
     std::optional<double> requested_mileage;
     if (ImGui::BeginPopup("ScenePreviewMileageContext")) {
-        if (scene_interaction_mode != Canvas3DSceneInteractionMode::MileageSelect ||
+        if (scene_interaction_mode != Canvas3DSceneInteractionMode::NewAtMileage ||
             !scene_context_mileage) {
             ImGui::CloseCurrentPopup();
         } else if (ImGui::MenuItem(ui_text.add_map_element_at_mileage, nullptr, false,
@@ -543,8 +543,9 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
     avail.y = std::max(avail.y, 50.0f);
 
     ImVec2 origin = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton("ScenePreview3DCanvas", avail,
-                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const bool canvas_pressed = ImGui::InvisibleButton(
+        "ScenePreview3DCanvas", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const bool left_click = is_canvas_left_click(canvas_pressed);
     bool hovered = ImGui::IsItemHovered();
     const bool context_popup_open =
         ImGui::IsPopupOpen("ScenePreviewObjectContext") ||
@@ -561,6 +562,8 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
     int width = std::max(1, static_cast<int>(std::round(avail.x)));
     int height = std::max(1, static_cast<int>(std::round(avail.y)));
     const bool rotation_dragging = scene_structure_edit.dragging_gizmo == SceneGizmoTarget::Rotation;
+    const bool gizmo_held_left = scene_structure_edit.dragging_gizmo != SceneGizmoTarget::None ||
+        scene_structure_edit.rotation_waiting_for_release;
     if (scene_active && !loading_before_render) {
         result.placement_drag = handle_scene_structure_gizmo_input(
             hovered, width, height, mouse_local);
@@ -571,10 +574,11 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
     } else if (rotation_dragging) {
         result.placement_drag = cancel_scene_rotation_drag();
     }
+    const bool gizmo_consumes_left = scene_structure_gizmo_consumes_left_input();
     if (scene_active) {
         render_scene_preview_target(
             width, height, mouse_local,
-            (hovered || context_popup_open) && !scene_structure_gizmo_consumes_left_input(),
+            (hovered || context_popup_open) && !gizmo_consumes_left,
             hovered && !loading_before_render);
     } else {
         std::string error;
@@ -611,21 +615,21 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
     }
 
     const bool select_mode = scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
-    const bool mileage_select_mode =
-        scene_interaction_mode == Canvas3DSceneInteractionMode::MileageSelect;
-    if (mileage_select_mode && !stats.loading && hovered &&
+    const bool new_at_mileage_mode =
+        scene_interaction_mode == Canvas3DSceneInteractionMode::NewAtMileage;
+    if (new_at_mileage_mode && !stats.loading && hovered &&
         scene_hovered_mileage) {
         draw_scene_mileage_label(origin, end, pointer_pos,
                                  *scene_hovered_mileage, ui_text);
     }
-    const bool marker_context_available =
+    const Canvas3DSceneMarker* hovered_marker =
         scene_hovered_marker_index >= 0 &&
-        static_cast<size_t>(scene_hovered_marker_index) < scene_data.markers.size() &&
-        (scene_marker_has_list_target(
-             scene_data.markers[static_cast<size_t>(scene_hovered_marker_index)]) ||
-         scene_marker_has_edit_target(
-             scene_data.markers[static_cast<size_t>(scene_hovered_marker_index)]));
-    if (!stats.loading && scene_structure_gizmo_consumes_left_input()) {
+        static_cast<size_t>(scene_hovered_marker_index) < scene_data.markers.size()
+        ? &scene_data.markers[static_cast<size_t>(scene_hovered_marker_index)] : nullptr;
+    const bool marker_edit_target = hovered_marker && scene_marker_has_edit_target(*hovered_marker);
+    const bool marker_context_available = hovered_marker &&
+        (marker_edit_target || scene_marker_has_list_target(*hovered_marker));
+    if (!stats.loading && gizmo_consumes_left) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
     } else if (!stats.loading && select_mode && hovered &&
                (scene_hovered_object_index >= 0 ||
@@ -649,7 +653,7 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
             ImGui::OpenPopup("ScenePreviewMarkerContext");
         }
     }
-    if (!stats.loading && mileage_select_mode && right_click && scene_hovered_mileage) {
+    if (!stats.loading && new_at_mileage_mode && right_click && scene_hovered_mileage) {
         scene_context_mileage = scene_hovered_mileage;
         ImGui::OpenPopup("ScenePreviewMileageContext");
     }
@@ -660,6 +664,27 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
     }
     result.new_element_mileage =
         render_scene_mileage_context_popup(ui_text, context_menu_options);
+
+    if (left_click && scene_active && !loading_before_render && !stats.loading &&
+        !context_popup_open && !gizmo_held_left && !gizmo_consumes_left) {
+        if (new_at_mileage_mode && context_menu_options.new_element_enabled) {
+            result.new_element_mileage = scene_hovered_mileage;
+        } else if (select_mode && context_menu_options.element_properties_enabled) {
+            if (scene_hovered_object_index >= 0) {
+                const auto& object = scene_data.objects[static_cast<size_t>(scene_hovered_object_index)];
+                if (const char* row_kind = scene_object_edit_row_kind(object);
+                    row_kind && !object.edit_id.empty()) {
+                    result.context_action.kind = Canvas3DSceneContextActionKind::EditElement;
+                    result.context_action.edit_id = object.edit_id;
+                    result.context_action.row_kind = row_kind;
+                }
+            } else if (marker_edit_target && !hovered_marker->edit_id.empty()) {
+                result.context_action.kind = Canvas3DSceneContextActionKind::EditElement;
+                result.context_action.edit_id = hovered_marker->edit_id;
+                result.context_action.row_kind = hovered_marker->row_kind;
+            }
+        }
+    }
 #ifndef NDEBUG
     scene_frame_profiler.end_frame(context);
 #endif
