@@ -693,10 +693,19 @@ void App::render_model_preview_window() {
             }
             ImGui::EndPopup();
         }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!model_preview_canvas_->has_model());
+        if (toolbar_icons_.button(toolbar_icons::Icon::GridMovable,
+                                  tr("button.model_preview_reference_grid").c_str(),
+                                  model_preview_show_reference_grid_)) {
+            model_preview_show_reference_grid_ = !model_preview_show_reference_grid_;
+            wake_main_window();
+        }
+        ImGui::EndDisabled();
         ImGui::PopStyleVar();
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + toolbar_padding_y);
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        model_preview_canvas_->render(avail);
+        model_preview_canvas_->render(avail, model_preview_show_reference_grid_);
     }
     focus_model_preview_next_ = false;
     ImGui::End();

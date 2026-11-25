@@ -981,13 +981,16 @@ void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 m
     update_scene_fps_counter();
 }
 
-void Canvas3D::Impl::render_scene(int width, int height) {
+std::optional<Mat4> Canvas3D::Impl::render_model_preview_target(int width, int height,
+                                                               bool show_reference_grid) {
     std::string error;
     if (!ensure_render_target(width, height, error)) {
         if (last_error != error) last_error = error;
-        return;
+        return std::nullopt;
     }
-    if (has_model() && !ensure_scene_pipeline(error)) {
+    const bool model_loaded = has_model();
+    const bool scene_pipeline_ready = model_loaded && ensure_scene_pipeline(error);
+    if (model_loaded && !scene_pipeline_ready) {
         if (last_error != error) last_error = error;
     }
 
@@ -997,7 +1000,8 @@ void Canvas3D::Impl::render_scene(int width, int height) {
     context->ClearRenderTargetView(render_rtv, clear_color);
     context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, k_scene_depth_clear, 0);
 
-    if (has_model() && scene_vertex_shader && scene_pixel_shader &&
+    std::optional<Mat4> reference_projection;
+    if (model_loaded && scene_vertex_shader && scene_pixel_shader &&
         scene_input_layout && scene_constant_buffer &&
         scene_depth_state && rasterizer_state && sampler_state && blend_state) {
         D3D11_VIEWPORT viewport = {};
@@ -1033,9 +1037,14 @@ void Canvas3D::Impl::render_scene(int width, int height) {
         } else {
             draw_scene_mesh(vertex_buffer, index_buffer, model_preview_instance_buffer,
                             parts, materials, 1, view_proj, rasterizer_state);
+            if (show_reference_grid && scene_pipeline_ready) {
+                reference_projection = multiply(world, view_proj);
+                draw_model_preview_reference_grid(*reference_projection);
+            }
         }
     }
 
     ID3D11RenderTargetView* null_rtv = nullptr;
     context->OMSetRenderTargets(1, &null_rtv, nullptr);
+    return reference_projection;
 }

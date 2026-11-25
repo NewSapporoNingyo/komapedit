@@ -45,8 +45,8 @@ void Canvas3D::set_background_color(ImVec4 color) {
     impl_->background_color_value = clamp_theme_color(color);
 }
 
-void Canvas3D::render(ImVec2 size) {
-    impl_->render(size);
+void Canvas3D::render(ImVec2 size, bool show_reference_grid) {
+    impl_->render(size, show_reference_grid);
 }
 
 bool Canvas3D::load_scene(Canvas3DScene scene, std::string& error,

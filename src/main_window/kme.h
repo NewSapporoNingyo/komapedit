@@ -2583,6 +2583,7 @@ private:
     std::unique_ptr<Canvas3D> model_preview_canvas_;
     std::unique_ptr<Canvas3D> scene_preview_canvas_;
     ImVec4 model_preview_bg_color_ = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    bool model_preview_show_reference_grid_ = false;
     bool scene_preview_started_ = false;
     bool scene_preview_dirty_ = true;
     bool scene_preview_preserve_models_on_rebuild_ = false;

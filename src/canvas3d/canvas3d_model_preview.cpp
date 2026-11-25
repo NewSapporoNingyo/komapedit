@@ -14,12 +14,45 @@
 #include "imgui.h"
 #include <d3d11.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <string>
 #include <vector>
 
 using namespace canvas3d_detail;
+
+namespace {
+constexpr int k_reference_grid_half_cells = 6;
+constexpr float k_reference_axis_radius_factor = 0.8f;
+constexpr ImU32 k_reference_grid_color = IM_COL32(78, 92, 110, 196);
+
+struct ReferenceAxis {
+    const char* label;
+    Vec3 direction;
+    ImU32 color;
+};
+
+// BVE forward corresponds to negative Z in the imported mesh.
+constexpr std::array<ReferenceAxis, 3> k_reference_axes = {{
+    {"+X", {1.0f, 0.0f, 0.0f}, IM_COL32(235, 67, 67, 255)},
+    {"+Y", {0.0f, 1.0f, 0.0f}, IM_COL32(73, 205, 91, 255)},
+    {"+Z", {0.0f, 0.0f, -1.0f}, IM_COL32(65, 126, 245, 255)},
+}};
+
+constexpr UINT k_reference_grid_vertex_count =
+    4 * (2 * k_reference_grid_half_cells + 1) + 2 * k_reference_axes.size();
+
+double reference_grid_spacing(float radius) {
+    const double target = static_cast<double>(radius) / 4.0;
+    const double decade = std::pow(10.0, std::floor(std::log10(target)));
+    for (double multiplier : {1.0, 2.0, 5.0}) {
+        const double step = multiplier * decade;
+        if (step >= target) return step;
+    }
+    return 10.0 * decade;
+}
+} // namespace
 
 bool Canvas3D::Impl::load_model(const std::string& path, std::string& error) {
     model_load_warnings.clear();
@@ -98,6 +131,10 @@ bool Canvas3D::Impl::upload_model(const MlMeshData& data, const std::string& pat
         release_resources();
         return false;
     }
+    if (!upload_model_preview_reference_grid(data, error)) {
+        release_resources();
+        return false;
+    }
 
     parts.reserve(data.part_count);
     for (size_t i = 0; i < data.part_count; ++i) {
@@ -135,6 +172,91 @@ bool Canvas3D::Impl::upload_model(const MlMeshData& data, const std::string& pat
     pitch = 0.0f;
     distance_factor = 2.8f;
     return true;
+}
+
+bool Canvas3D::Impl::upload_model_preview_reference_grid(const MlMeshData& data,
+                                                        std::string& error) {
+    const double step = reference_grid_spacing(data.radius);
+    const double grid_x = std::round(data.center[0] / step) * step;
+    const double grid_z = std::round(data.center[2] / step) * step;
+    const double extent = k_reference_grid_half_cells * step;
+    const auto coordinate = [](double value) {
+        constexpr double limit = std::numeric_limits<float>::max();
+        return static_cast<float>(std::clamp(value, -limit, limit));
+    };
+    const float left = coordinate(grid_x - extent);
+    const float right = coordinate(grid_x + extent);
+    const float back = coordinate(grid_z - extent);
+    const float front = coordinate(grid_z + extent);
+
+    std::array<SceneMarkerVertex, k_reference_grid_vertex_count> vertices;
+    auto vertex = vertices.begin();
+    const auto append_line = [&](Vec3 a, Vec3 b, ImU32 color) {
+        *vertex++ = {a.x, a.y, a.z, 0.0f, 0.0f, color};
+        *vertex++ = {b.x, b.y, b.z, 0.0f, 0.0f, color};
+    };
+    for (int i = -k_reference_grid_half_cells; i <= k_reference_grid_half_cells; ++i) {
+        const float x = coordinate(grid_x + i * step);
+        const float z = coordinate(grid_z + i * step);
+        append_line({x, 0.0f, back}, {x, 0.0f, front}, k_reference_grid_color);
+        append_line({left, 0.0f, z}, {right, 0.0f, z}, k_reference_grid_color);
+    }
+    const float axis_length = data.radius * k_reference_axis_radius_factor;
+    for (const ReferenceAxis& axis : k_reference_axes) {
+        append_line({}, axis.direction * axis_length, axis.color);
+    }
+
+    D3D11_BUFFER_DESC desc = {};
+    desc.ByteWidth = sizeof(vertices);
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA initial_data = {};
+    initial_data.pSysMem = vertices.data();
+    const HRESULT hr = device->CreateBuffer(&desc, &initial_data, &model_preview_reference_grid_buffer);
+    if (FAILED(hr)) {
+        error = hresult_text("CreateBuffer(model preview reference grid)", hr);
+        return false;
+    }
+    return true;
+}
+
+void Canvas3D::Impl::draw_model_preview_reference_grid(const Mat4& model_to_clip) {
+    SceneMarkerConstants constants = {};
+    constants.view_proj = model_to_clip;
+    context->UpdateSubresource(scene_marker_constant_buffer, 0, nullptr, &constants, 0, 0);
+
+    const UINT stride = sizeof(SceneMarkerVertex);
+    const UINT offset = 0;
+    context->IASetInputLayout(scene_marker_input_layout);
+    context->IASetVertexBuffers(0, 1, &model_preview_reference_grid_buffer, &stride, &offset);
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+    context->VSSetShader(scene_marker_vertex_shader, nullptr, 0);
+    context->VSSetConstantBuffers(0, 1, &scene_marker_constant_buffer);
+    context->PSSetShader(scene_marker_pixel_shader, nullptr, 0);
+    context->OMSetDepthStencilState(scene_depth_read_state, 0);
+    context->OMSetBlendState(blend_state, nullptr, 0xffffffff);
+    context->Draw(k_reference_grid_vertex_count, 0);
+}
+
+void Canvas3D::Impl::draw_model_preview_axis_labels(ImDrawList& draw, ImVec2 origin, ImVec2 size,
+                                                   const Mat4& model_to_clip) const {
+    draw.PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
+    const float axis_length = radius * k_reference_axis_radius_factor;
+    for (const ReferenceAxis& axis : k_reference_axes) {
+        const Vec4 clip = transform_point_row(axis.direction * axis_length, model_to_clip);
+        if (!(clip.w > 0.0f && clip.z >= 0.0f && clip.z <= clip.w &&
+              std::abs(clip.x) <= clip.w && std::abs(clip.y) <= clip.w)) continue;
+
+        const ImVec2 tip(origin.x + (0.5f + 0.5f * clip.x / clip.w) * size.x,
+                         origin.y + (0.5f - 0.5f * clip.y / clip.w) * size.y);
+        const ImVec2 text_size = ImGui::CalcTextSize(axis.label);
+        const ImVec2 label(tip.x + 4.0f, tip.y - text_size.y * 0.5f);
+        draw.AddRectFilled(ImVec2(label.x - 2.0f, label.y - 1.0f),
+                           ImVec2(label.x + text_size.x + 2.0f, label.y + text_size.y + 1.0f),
+                           IM_COL32(18, 21, 27, 225), 3.0f);
+        draw.AddText(label, axis.color, axis.label);
+    }
+    draw.PopClipRect();
 }
 
 void Canvas3D::Impl::clear_model() {
@@ -180,7 +302,7 @@ void Canvas3D::Impl::draw_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size) 
     draw->PopClipRect();
 }
 
-void Canvas3D::Impl::render(ImVec2 requested_size) {
+void Canvas3D::Impl::render(ImVec2 requested_size, bool show_reference_grid) {
     ImVec2 avail = requested_size;
     if (avail.x <= 0.0f || avail.y <= 0.0f) avail = ImGui::GetContentRegionAvail();
     avail.x = std::max(avail.x, 50.0f);
@@ -211,7 +333,7 @@ void Canvas3D::Impl::render(ImVec2 requested_size) {
 
     int width = std::max(1, static_cast<int>(std::round(avail.x)));
     int height = std::max(1, static_cast<int>(std::round(avail.y)));
-    render_scene(width, height);
+    const auto reference_projection = render_model_preview_target(width, height, show_reference_grid);
 
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImVec2 end(origin.x + avail.x, origin.y + avail.y);
@@ -219,6 +341,9 @@ void Canvas3D::Impl::render(ImVec2 requested_size) {
         draw->AddImage(reinterpret_cast<void*>(render_srv), origin, end);
     } else {
         draw->AddRectFilled(origin, end, IM_COL32(0, 0, 0, 255));
+    }
+    if (reference_projection) {
+        draw_model_preview_axis_labels(*draw, origin, avail, *reference_projection);
     }
     draw_overlay(draw, origin, avail);
 }
@@ -234,6 +359,7 @@ void Canvas3D::Impl::release_resources() {
     model_preview_instances.clear();
     release_com(model_preview_instance_buffer);
     model_preview_instance_capacity = 0;
+    release_com(model_preview_reference_grid_buffer);
     release_com(vertex_buffer);
     release_com(index_buffer);
     index_count = 0;

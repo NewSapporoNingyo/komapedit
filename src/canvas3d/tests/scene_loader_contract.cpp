@@ -220,6 +220,7 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
         shader_error.clear();
         result.shader_pipeline_retry = failed_as_expected && ensure_scene_pipeline(shader_error) &&
             scene_marker_vertex_shader && scene_marker_mask_pixel_shader && scene_marker_pick_constant_buffer;
+        result.model_preview_reference_grid = debug_check_model_preview_reference_grid(result.error);
 
         result.model_bounds = model_bounds_contract();
         CpuModelData radius_overflow;

@@ -35,6 +35,8 @@ struct Canvas3D::Impl {
 
     bool upload_model(const MlMeshData& data, const std::string& path, std::string& error);
 
+    bool upload_model_preview_reference_grid(const MlMeshData& data, std::string& error);
+
     void clear_model();
 
     bool has_model() const;
@@ -292,6 +294,7 @@ struct Canvas3D::Impl {
     bool debug_check_scene_rotation_gizmo();
     bool debug_check_scene_rotation_rings();
     Canvas3DSceneRenderContractResult debug_check_scene_render();
+    bool debug_check_model_preview_reference_grid(std::string& error);
 
     Canvas3DSceneLoaderContractResult debug_run_scene_loader_contract(
         const std::string& valid_model_path,
@@ -886,11 +889,17 @@ struct Canvas3D::Impl {
         const Canvas3DSceneUiText& ui_text,
         const Canvas3DSceneContextMenuOptions& context_menu_options);
 
-    void render_scene(int width, int height);
+    std::optional<canvas3d_detail::Mat4> render_model_preview_target(
+        int width, int height, bool show_reference_grid);
+
+    void draw_model_preview_reference_grid(const canvas3d_detail::Mat4& model_to_clip);
+
+    void draw_model_preview_axis_labels(ImDrawList& draw, ImVec2 origin, ImVec2 size,
+                                        const canvas3d_detail::Mat4& model_to_clip) const;
 
     void draw_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size) const;
 
-    void render(ImVec2 requested_size);
+    void render(ImVec2 requested_size, bool show_reference_grid);
 
     void release_resources();
 
@@ -937,6 +946,7 @@ struct Canvas3D::Impl {
     ID3D11BlendState* blend_state = nullptr;
     ID3D11Buffer* vertex_buffer = nullptr;
     ID3D11Buffer* index_buffer = nullptr;
+    ID3D11Buffer* model_preview_reference_grid_buffer = nullptr;
     ID3D11Buffer* model_preview_instance_buffer = nullptr;
     UINT model_preview_instance_capacity = 0;
     std::vector<canvas3d_detail::MeshPart> parts;

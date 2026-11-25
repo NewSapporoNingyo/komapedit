@@ -331,6 +331,7 @@ struct Canvas3DSceneLoaderContractResult {
     bool full_model_reload = false;
     bool put_between_model_reload = false;
     bool shader_pipeline_retry = false;
+    bool model_preview_reference_grid = false;
     size_t geometry_model_load_count = 0;
     size_t full_model_load_count = 0;
     float geometry_model_bounds_max_x = 0.0f;
@@ -541,7 +542,7 @@ public:
     const std::string& model_path() const;
     void set_background_color(ImVec4 color);
 
-    void render(ImVec2 size);
+    void render(ImVec2 size, bool show_reference_grid = false);
     bool load_scene(Canvas3DScene scene, std::string& error,
                     bool preserve_loaded_models = false,
                     bool preserve_camera = false);

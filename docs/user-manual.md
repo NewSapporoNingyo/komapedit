@@ -308,6 +308,7 @@ The toolbar provides these actions:
 - **Reload**: Reads the current model, materials, and textures again.
 - **Clear**: Removes the current model from the preview.
 - **Background Color**: Selects any RGB color or uses the white, black, gray, blue, or green shortcut colors.
+- **Reference Grid** toggles the model's XZ grid and its BVE `+X`, `+Y`, and `+Z` directions. It starts off and keeps its state when you switch or reload models in the same session.
 - Drag with the left mouse button to rotate the model. Scroll the mouse wheel to zoom.
 
 Check the Console for details of model or texture loading failures.

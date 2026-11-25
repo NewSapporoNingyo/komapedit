@@ -2846,7 +2846,7 @@ int run_debug_headless_scene_loader_contract(
         contract.texture_cache_reuse && contract.upload_failure_cleanup &&
         contract.numeric_boundaries && contract.put_between_preparation &&
         contract.geometry_model_reuse && contract.full_model_reload && contract.put_between_model_reload &&
-        contract.shader_pipeline_retry &&
+        contract.shader_pipeline_retry && contract.model_preview_reference_grid &&
         resource_safety.image_layout &&
         resource_safety.image_decode && resource_safety.numeric_conversion && background_texture;
     *out << "stage=worker-contract-complete\n"
@@ -2881,6 +2881,7 @@ int run_debug_headless_scene_loader_contract(
          << " bounds_max_x=" << contract.full_model_bounds_max_x << "\n"
          << "put_between_model_reload=" << (contract.put_between_model_reload ? "PASS" : "FAIL") << "\n"
          << "shader_pipeline_retry=" << (contract.shader_pipeline_retry ? "PASS" : "FAIL") << "\n"
+         << "model_preview_reference_grid=" << (contract.model_preview_reference_grid ? "PASS" : "FAIL") << "\n"
          << "image_layout=" << (resource_safety.image_layout ? "PASS" : "FAIL") << "\n"
          << "image_decode=" << (resource_safety.image_decode ? "PASS" : "FAIL") << "\n"
          << "numeric_conversion="

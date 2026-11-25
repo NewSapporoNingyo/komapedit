@@ -98,6 +98,96 @@ bool Canvas3D::Impl::debug_read_scene_render_pixels(std::vector<std::uint8_t>& r
     return true;
 }
 
+bool Canvas3D::Impl::debug_check_model_preview_reference_grid(std::string& error) {
+    std::array<MlVertex, 4> vertices = {{
+        {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+        {1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+        {1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+        {-1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+    }};
+    unsigned int indices[] = {0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2};
+    MlMeshPart part = {0, IM_ARRAYSIZE(indices), 0};
+    MlMaterial material = {nullptr, {1.0f, 1.0f, 1.0f, 1.0f}};
+    MlMeshData model = {};
+    model.vertices = vertices.data();
+    model.vertex_count = vertices.size();
+    model.indices = indices;
+    model.index_count = IM_ARRAYSIZE(indices);
+    model.parts = &part;
+    model.part_count = 1;
+    model.materials = &material;
+    model.material_count = 1;
+    model.bounds_min[0] = model.bounds_min[1] = -1.0f;
+    model.bounds_max[0] = model.bounds_max[1] = 1.0f;
+    model.radius = std::sqrt(2.0f);
+    if (!upload_model(model, "reference-grid-fixture", error)) return false;
+
+    constexpr int target_width = 256;
+    constexpr int target_height = 192;
+    int width = 0;
+    int height = 0;
+    std::vector<std::uint8_t> off, on, pixels;
+    const auto read_pixels = [&](std::vector<std::uint8_t>& image) {
+        return debug_read_scene_render_pixels(image, width, height, error);
+    };
+    const auto pixel_near = [&](const std::vector<std::uint8_t>& image,
+                                const Mat4& projection, Vec3 point,
+                                const std::array<std::uint8_t, 3>& rgb) {
+        const Vec4 clip = transform_point_row(point, projection);
+        if (!(clip.w > 0.0f && std::abs(clip.x) < clip.w && std::abs(clip.y) < clip.w)) return false;
+        const int x = static_cast<int>((0.5f + 0.5f * clip.x / clip.w) * width);
+        const int y = static_cast<int>((0.5f - 0.5f * clip.y / clip.w) * height);
+        for (int row = std::max(0, y - 2); row <= std::min(height - 1, y + 2); ++row) {
+            for (int col = std::max(0, x - 2); col <= std::min(width - 1, x + 2); ++col) {
+                const size_t offset = (static_cast<size_t>(row) * width + col) * 4;
+                if (std::equal(rgb.begin(), rgb.end(), image.data() + offset)) return true;
+            }
+        }
+        return false;
+    };
+
+    yaw = 0.62f;
+    pitch = 0.36f;
+    const bool initial_off = !render_model_preview_target(target_width, target_height, false);
+    if (!read_pixels(off)) return false;
+    const auto front = render_model_preview_target(target_width, target_height, true);
+    if (!read_pixels(on)) return false;
+    bool grid_visible = false;
+    for (size_t i = 0; i < on.size(); i += 4) {
+        if (off[i] == 0 && off[i + 1] == 0 && off[i + 2] == 0 &&
+            on[i] > 0 && on[i] < on[i + 1] && on[i + 1] < on[i + 2] && on[i + 2] < 120) {
+            grid_visible = true;
+            break;
+        }
+    }
+    const bool toggled_off = !render_model_preview_target(target_width, target_height, false);
+    if (!read_pixels(pixels)) return false;
+    const bool restored = initial_off && toggled_off && off == pixels;
+
+    const Vec3 bve_z_sample = {0.0f, 0.0f, -0.4f * model.radius};
+    const std::array<std::uint8_t, 3> blue = {65, 126, 245};
+    const bool occluded = front && pixel_near(on, *front, bve_z_sample, {255, 255, 255}) &&
+        !pixel_near(on, *front, bve_z_sample, blue);
+    yaw += 3.14159265f;
+    distance_factor = 2.5f;
+    const auto back = render_model_preview_target(target_width, target_height, true);
+    if (!read_pixels(pixels)) return false;
+    const bool bve_z_visible = back && pixel_near(pixels, *back, bve_z_sample, blue);
+
+    clear_model();
+    const bool empty = !render_model_preview_target(target_width, target_height, true);
+    if (!read_pixels(pixels)) return false;
+    bool blank = empty && !model_preview_reference_grid_buffer;
+    for (size_t i = 0; blank && i < pixels.size(); i += 4) {
+        blank = pixels[i] == 0 && pixels[i + 1] == 0 && pixels[i + 2] == 0;
+    }
+    if (restored && grid_visible && occluded && bve_z_visible && blank) return true;
+    error = "model preview grid render contract failed: restored=" + std::to_string(restored) +
+        " grid_visible=" + std::to_string(grid_visible) + " occluded=" + std::to_string(occluded) +
+        " bve_z_visible=" + std::to_string(bve_z_visible) + " blank=" + std::to_string(blank);
+    return false;
+}
+
 bool Canvas3D::Impl::debug_check_scene_edit_target(const Canvas3DPlacementEditTarget& target) const {
     const auto equal_value = [](double a, double b) { return std::abs(a - b) <= 1e-9; };
     const auto parameters_match = [&](const auto& source) {
