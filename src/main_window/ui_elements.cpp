@@ -961,11 +961,13 @@ void App::render_menu() {
         }
         ImGui::MenuItem(tr("chk.bgimg_show").c_str(), nullptr, &bg_show_);
         if (ImGui::MenuItem(tr("button.adjust_bg").c_str())) {
-            sync_pending_background_values();
-            popups_.background_adjust = true;
+            if (!show_background_adjust_) sync_pending_background_values();
+            show_background_adjust_ = true;
+            focus_background_adjust_next_ = true;
         }
         if (ImGui::MenuItem(tr("button.align_to_station").c_str(), nullptr, false,
                             has_model_ && model_.stations.size() >= 2 && !bg_image_.path.empty())) {
+            cancel_background_drag();
             align_pick1_.reset();
             align_pick2_.reset();
             pick_slot_ = 0;
@@ -1409,6 +1411,7 @@ void App::render() {
     render_othertracks_window();
     render_station_list_window();
     render_console();
+    render_background_adjust_window();
     render_plots();
     render_file_structure_window();
     render_text_preview_window();

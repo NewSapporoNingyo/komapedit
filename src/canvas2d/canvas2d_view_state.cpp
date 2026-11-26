@@ -26,21 +26,23 @@ ImVec2 View2D::world_to_screen(double x, double y, ImVec2 origin, ImVec2 size) c
 }
 
 ImVec2 View2D::screen_to_world(ImVec2 point, ImVec2 origin, ImVec2 size) const {
-    const double rx = (point.x - origin.x - size.x * 0.5) / scale;
-    const double ry = (point.y - origin.y - size.y * 0.5) / scale;
+    const auto [dx, dy] = screen_delta_to_world(
+        point.x - origin.x - size.x * 0.5, point.y - origin.y - size.y * 0.5);
+    return ImVec2(static_cast<float>(cx + dx), static_cast<float>(cy + dy));
+}
+
+std::pair<double, double> View2D::screen_delta_to_world(double dx, double dy) const {
     const double c = std::cos(rotation);
     const double s = std::sin(rotation);
-    return ImVec2(static_cast<float>(c * rx + s * ry + cx),
-                  static_cast<float>(-s * rx + c * ry + cy));
+    const double rx = dx / scale;
+    const double ry = dy / scale;
+    return {c * rx + s * ry, -s * rx + c * ry};
 }
 
 void View2D::pan_by_screen_delta(ImVec2 delta) {
-    const double c = std::cos(rotation);
-    const double s = std::sin(rotation);
-    const double wx = -(c * delta.x / scale + s * delta.y / scale);
-    const double wy = s * delta.x / scale - c * delta.y / scale;
-    cx += wx;
-    cy += wy;
+    const auto [dx, dy] = screen_delta_to_world(delta.x, delta.y);
+    cx -= dx;
+    cy -= dy;
 }
 
 void View2D::fit(double xmin, double ymin, double xmax, double ymax, ImVec2 size) {

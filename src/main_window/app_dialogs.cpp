@@ -420,6 +420,73 @@ std::string App::choose_folder_dialog(const char* title_key) {
     return selected;
 }
 
+void App::render_background_adjust_window() {
+    if (!show_background_adjust_) return;
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::SetNextWindowPos(
+        ImVec2(viewport->WorkPos.x + std::max(0.0f, viewport->WorkSize.x - 340.0f * dpi_scale_),
+               viewport->WorkPos.y + 44.0f * dpi_scale_),
+        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(300.0f * dpi_scale_, 0.0f));
+    if (std::exchange(focus_background_adjust_next_, false)) {
+        ImGui::SetNextWindowFocus();
+        wake_main_window();
+    }
+    const std::string title = tr("dialog.bgimage_adjust") + "###BackgroundImageAdjust";
+    bool open = true;
+    if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoCollapse)) {
+        const bool editing_blocked = bg_drag_.has_value() || pick_slot_ != 0;
+        ImGui::BeginDisabled(editing_blocked);
+        if (ImGui::BeginTable("bg_adjust_params", 2, ImGuiTableFlags_SizingStretchProp)) {
+            const auto row = [&](const char* key) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(tr(key).c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::SetNextItemWidth(160.0f * dpi_scale_);
+            };
+            const auto input = [&](const char* id, const char* key, double& value) {
+                row(key);
+                ImGui::InputDouble(id, &value, 0.0, 0.0, "%.3f");
+            };
+            input("##bg_adjust_x", "label.bgimg_x", pending_bg_transform_.x);
+            input("##bg_adjust_y", "label.bgimg_y", pending_bg_transform_.y);
+            input("##bg_adjust_width", "label.bgimg_width", pending_bg_transform_.width);
+            input("##bg_adjust_height", "label.bgimg_height", pending_bg_transform_.height);
+            input("##bg_adjust_rotation", "label.bgimg_rotation", pending_bg_transform_.rotation_deg);
+            row("label.bgimg_brightness");
+            float brightness = static_cast<float>(pending_bg_brightness_);
+            if (ImGui::SliderFloat("##bg_adjust_brightness", &brightness, 1.0f, 200.0f, "%.0f%%",
+                                   ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
+                pending_bg_brightness_ = brightness;
+            }
+            ImGui::EndTable();
+        }
+        ImGui::EndDisabled();
+
+        const bool valid = pending_bg_transform_.valid();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 260.0f * dpi_scale_);
+        ImGui::TextUnformatted(tr(valid ? "hint.bgimage_drag" : "hint.bgimage_geometry").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        ImGui::BeginDisabled(editing_blocked || !valid);
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            apply_pending_background_values(true);
+            open = false;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) open = false;
+    }
+    ImGui::End();
+    if (!open) close_background_adjust();
+}
+
 void App::render_popups() {
     if (signal_aspect_column_confirmation_ &&
         signal_aspect_column_confirmation_->popup_requested) {
@@ -1178,53 +1245,6 @@ void App::render_popups() {
             cp_start_ = std::max(0.0, round_to_100(model_.own.empty() ? 0.0 : model_.own.at(0, 0)) - 500.0);
             cp_end_ = round_to_100(model_.own.empty() ? 0.0 : model_.own.at(model_.own.rows - 1, 0)) + 500.0;
             cp_interval_ = 25.0;
-        }
-        ImGui::EndPopup();
-    }
-
-    if (popups_.background_adjust) {
-        ImGui::OpenPopup(tr("dialog.bgimage_adjust").c_str());
-        popups_.background_adjust = false;
-    }
-    if (ImGui::BeginPopupModal(tr("dialog.bgimage_adjust").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (ImGui::BeginTable("bg_adjust_params", 2, ImGuiTableFlags_SizingStretchProp)) {
-            auto input_row = [](const char* id, const std::string& label, double& value, const char* format) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(label.c_str());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::SetNextItemWidth(220.0f);
-                ImGui::InputDouble(id, &value, 0.0, 0.0, format);
-            };
-            auto slider_row = [](const char* id, const std::string& label, double& value, double min_value, double max_value, const char* format) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(label.c_str());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::SetNextItemWidth(220.0f);
-                float slider_value = static_cast<float>(std::clamp(value, min_value, max_value));
-                if (ImGui::SliderFloat(id, &slider_value, static_cast<float>(min_value), static_cast<float>(max_value), format,
-                                       ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
-                    value = slider_value;
-                }
-            };
-            input_row("##bg_adjust_x", tr("label.bgimg_x"), pending_bg_x_, "%.3f");
-            input_row("##bg_adjust_y", tr("label.bgimg_y"), pending_bg_y_, "%.3f");
-            input_row("##bg_adjust_width", tr("label.bgimg_width"), pending_bg_width_, "%.3f");
-            input_row("##bg_adjust_height", tr("label.bgimg_height"), pending_bg_height_, "%.3f");
-            input_row("##bg_adjust_rotation", tr("label.bgimg_rotation"), pending_bg_rotation_deg_, "%.3f");
-            slider_row("##bg_adjust_brightness", tr("label.bgimg_brightness"), pending_bg_brightness_, 1.0, 200.0, "%.0f%%");
-            ImGui::EndTable();
-        }
-        ImGui::Separator();
-        if (ImGui::Button(tr("button.ok").c_str())) {
-            apply_pending_background_values(true);
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(tr("button.cancel").c_str())) {
-            sync_pending_background_values();
-            ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }

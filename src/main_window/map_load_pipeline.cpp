@@ -320,6 +320,7 @@ void App::begin_map_load(std::string path, bool preserve_settings, bool record_h
                          bool notify_creator_messages) {
     if (path.empty() || load_state_.running || edit_ui_operation_pending()) return;
     auto load_started_at = std::chrono::steady_clock::now();
+    close_background_adjust();
 
     if (preserve_settings && !view_to_restore) view_to_restore = capture_map_view_state();
 

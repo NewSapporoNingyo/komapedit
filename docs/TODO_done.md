@@ -79,6 +79,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Support jumping to stations and numeric map distances.
 - [x] Import a background image and adjust its position, size, rotation, and brightness.
 - [x] Align a background image using two station positions.
+- [x] [S7](devplan.md#s7) Add a floating background adjustment panel with direct move, image-axis resize, and center rotation handles. Save each completed drag to map history and share its preview with the numeric fields. Debug contracts covered rotated coordinates, Shift scaling, Escape cancellation, and texture reuse. Full-screen acceptance covered numeric and brightness adjustments, two-point alignment, and reopening the selected map.
 - [x] Structure and repeater placement markers on the plan view.
 - [x] Display signal position markers on the plan view.
 - [x] Display `Section.Begin`/`Section.BeginNew` markers with their signal-index parameter labels on the plan view.
@@ -292,6 +293,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 支持车站跳转和数字里程跳转
 - [x] 支持导入背景图，并调整位置、尺寸、旋转角和亮度
 - [x] 支持使用两个车站位置对齐背景图
+- [x] [S7](devplan.md#s7) 使用浮动面板和画布手柄直接移动背景图、沿图像轴缩放和绕图心旋转。数值控件与手柄共用预览，拖动完成后写入地图历史。Debug 契约覆盖旋转坐标、Shift 等比缩放、Esc 取消和纹理复用，实图全屏验收覆盖数值和亮度调整、两点对齐及重开恢复。
 - [x] 平面图上的布景与连续布景位置标记
 - [x] 平面图上显示信号位置标记
 - [x] 平面图上显示 `Section.Begin`/`Section.BeginNew` 标记及其信号索引参数标签

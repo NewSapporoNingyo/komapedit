@@ -646,6 +646,7 @@ void App::render_plots() {
     if (!show_plots_window_) {
         profile_plot_rect_valid_ = false;
         plan_alignment_->cancel_drag();
+        cancel_background_drag();
         finish_pending_load_timing_after_plan_data_ready();
         return;
     }
@@ -655,6 +656,7 @@ void App::render_plots() {
     if (!ImGui::Begin(title.c_str(), &show_plots_window_)) {
         profile_plot_rect_valid_ = false;
         plan_alignment_->cancel_drag();
+        cancel_background_drag();
         focus_plots_next_ = false;
         finish_pending_load_timing_after_plan_data_ready();
         ImGui::End();

@@ -263,6 +263,129 @@ HeadlessResourceSafetyContractResult run_debug_resource_safety_contract(
     return result;
 }
 
+bool App::debug_background_drag_contract(const std::filesystem::path& directory, std::ostream& out) {
+    bool passed = true;
+    const auto check = [&](const char* name, bool value) {
+        out << "background_" << name << '=' << (value ? "PASS" : "FAIL") << '\n';
+        passed = value && passed;
+    };
+    const ImVec2 origin(15.0f, 29.0f);
+    const ImVec2 size(900.0f, 700.0f);
+    const auto* texture = bg_image_.srv;
+    history_path_ = directory / "history.ini";
+    recent_maps_.clear();
+    creator_message_history_.clear();
+    file_path_ = (directory / "drag-map.txt").u8string();
+    plan_view_.rotation = 0.55;
+    plan_view_.scale = 0.8;
+    plan_view_.cx = 100.0;
+    plan_view_.cy = -50.0;
+    show_background_adjust_ = true;
+    bg_transform_ = {125.0, -65.0, 320.0, 180.0, 32.0};
+    sync_pending_background_values();
+    pending_bg_transform_.x += 11.0;
+    pending_bg_brightness_ = 180.0;
+    auto& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 900.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.Fonts->Build();
+    const auto frame = [&](ImVec2 pointer, bool hovered = true) {
+        io.AddMousePosEvent(pointer.x, pointer.y);
+        ImGui::NewFrame();
+        const bool consumed = process_background_drag(origin, size, 1.0f, hovered, true);
+        ImGui::EndFrame();
+        return consumed;
+    };
+    const auto mouse_button = [&](bool down, ImVec2 pointer, bool hovered = true) {
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        return frame(pointer, hovered);
+    };
+    const auto point = [&](const canvas2d::BackgroundTransform& pose, double x, double y) {
+        const double angle = pose.rotation_deg * 3.14159265358979323846 / 180.0;
+        return plan_view_.world_to_screen(pose.x + x * std::cos(angle) - y * std::sin(angle),
+            pose.y + x * std::sin(angle) + y * std::cos(angle), origin, size);
+    };
+    const auto points_are_close = [](ImVec2 a, ImVec2 b, float tolerance) {
+        return std::hypot(a.x - b.x, a.y - b.y) < tolerance;
+    };
+    const auto history_bytes = [&]() {
+        std::ifstream input(history_path_, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    };
+
+    const auto typed = pending_bg_transform_;
+    const ImVec2 move_start = point(typed, 20.0, 15.0);
+    const ImVec2 move_end = point(typed, 62.0, -3.0);
+    frame(move_start);
+    check("interior_captures_drag", mouse_button(true, move_start) && bg_drag_.has_value());
+    frame(move_end, false);
+    check("move_uses_typed_preview", points_are_close(point(pending_bg_transform_, 0.0, 0.0),
+        point(typed, 42.0, -18.0), 2.0f) && bg_transform_.x == 125.0);
+    check("preview_reuses_texture_without_history", bg_image_.srv == texture && history_bytes().empty());
+    check("release_outside_commits", mouse_button(false, move_end, false) && !bg_drag_ &&
+        bg_transform_ == pending_bg_transform_ && bg_image_.srv == texture &&
+        bg_brightness_ != pending_bg_brightness_ && !history_bytes().empty());
+    const auto moved = bg_transform_;
+    const auto saved_move = history_bytes();
+
+    plan_view_.scale = 1.4;
+    const ImVec2 edge_start = point(moved, moved.width * 0.5, moved.height * 0.15);
+    const ImVec2 edge_end = point(moved, moved.width * 0.5 + 80.0, moved.height * 0.15 + 20.0);
+    frame(edge_start);
+    mouse_button(true, edge_start);
+    frame(edge_end);
+    const auto edge = pending_bg_transform_;
+    check("edge_local_axis_and_anchor", std::abs(edge.width - moved.width - 80.0) < 2.0 &&
+        edge.height == moved.height && points_are_close(point(edge, -edge.width * 0.5, 0.0),
+        point(moved, -moved.width * 0.5, 0.0), 0.02f));
+    io.AddKeyEvent(ImGuiMod_Shift, true);
+    frame(edge_end);
+    const auto scaled = pending_bg_transform_;
+    check("shift_preserves_drag_start_ratio", scaled.height > edge.height &&
+        std::abs(scaled.width / scaled.height - moved.width / moved.height) < 1e-12 &&
+        points_are_close(point(scaled, -scaled.width * 0.5, 0.0),
+                         point(moved, -moved.width * 0.5, 0.0), 0.02f));
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    const bool escape_consumed = frame(edge_end);
+    io.AddKeyEvent(ImGuiMod_Shift, false);
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    frame(edge_start);
+    check("escape_restores_and_consumes_release", escape_consumed && mouse_button(false, edge_start) &&
+        !bg_drag_ && pending_bg_transform_ == moved && bg_transform_ == moved && history_bytes() == saved_move);
+
+    const ImVec2 corner_start = point(moved, moved.width * 0.5, moved.height * 0.5);
+    const ImVec2 corner_end = point(moved, moved.width * 0.5 + 35.0, moved.height * 0.5 - 25.0);
+    frame(corner_start);
+    mouse_button(true, corner_start);
+    frame(corner_end);
+    mouse_button(false, corner_end);
+    const auto resized = bg_transform_;
+    check("corner_axes_and_anchor", std::abs(resized.width - moved.width - 35.0) < 2.0 &&
+        std::abs(resized.height - moved.height + 25.0) < 2.0 &&
+        points_are_close(point(resized, -resized.width * 0.5, -resized.height * 0.5),
+        point(moved, -moved.width * 0.5, -moved.height * 0.5), 0.02f));
+
+    const ImVec2 turn_start = point(resized, 0.0, -resized.height * 0.5 - 28.0 / plan_view_.scale);
+    const ImVec2 center = point(resized, 0.0, 0.0);
+    const ImVec2 turn_end(center.x - (turn_start.y - center.y), center.y + (turn_start.x - center.x));
+    frame(turn_start);
+    mouse_button(true, turn_start);
+    frame(turn_end);
+    mouse_button(false, turn_end);
+    const auto rotated = bg_transform_;
+    check("rotation_keeps_center_and_size", std::abs(rotated.rotation_deg - resized.rotation_deg - 90.0) < 2.0 &&
+        rotated.x == resized.x && rotated.y == resized.y &&
+        rotated.width == resized.width && rotated.height == resized.height && bg_image_.srv == texture);
+
+    const HistoryState saved = load_history_state(history_path_);
+    close_background_adjust();
+    clear_background_image();
+    check("history_restores_confirmed_pose", bg_show_ && saved.recent_maps.size() == 1 &&
+        apply_background_history(saved.recent_maps.front().background) && bg_transform_ == rotated &&
+        bg_brightness_ == saved.recent_maps.front().background.brightness);
+    return passed;
+}
+
 bool App::debug_background_texture_contract(ID3D11Device* device,
                                              const std::string& image_path,
                                              std::ostream& out) {
@@ -339,16 +462,14 @@ bool App::debug_background_texture_contract(ID3D11Device* device,
         app.sync_pending_background_values();
         app.apply_pending_background_values(false);
         check("unchanged_reuses_texture", app.bg_image_.srv == original.value);
-        app.pending_bg_x_ += 10;
-        app.pending_bg_y_ -= 20;
-        app.pending_bg_width_ *= 2;
-        app.pending_bg_height_ *= 3;
-        app.pending_bg_rotation_deg_ += 30;
+        app.pending_bg_transform_.x += 10;
+        app.pending_bg_transform_.y -= 20;
+        app.pending_bg_transform_.width *= 2;
+        app.pending_bg_transform_.height *= 3;
+        app.pending_bg_transform_.rotation_deg += 30;
         app.apply_pending_background_values(false);
         check("geometry_reuses_texture", app.bg_image_.srv == original.value &&
-            app.bg_x_ == app.pending_bg_x_ && app.bg_y_ == app.pending_bg_y_ &&
-            app.bg_width_ == app.pending_bg_width_ && app.bg_height_ == app.pending_bg_height_ &&
-            app.bg_rotation_deg_ == app.pending_bg_rotation_deg_);
+            app.bg_transform_ == app.pending_bg_transform_);
         app.pending_bg_brightness_ = 200;
         app.apply_pending_background_values(false);
         check("brightness_rebuilds_texture", app.bg_image_.srv != original.value &&
@@ -385,6 +506,9 @@ bool App::debug_background_texture_contract(ID3D11Device* device,
             app.bg_image_.srv != previous.value && app.bg_image_.brightness == 150 &&
             pixel(app.bg_image_.srv) == std::array<unsigned char, 4>{120, 60, 30, 255});
 
+        HeldView drag_texture(app.bg_image_.srv);
+        passed = app.debug_background_drag_contract(fixture.directory, out) && passed;
+
         // Same pixel data, build and Apply path for before/after measurements.
         app.bg_image_.release();
         app.bg_image_.width = app.bg_image_.height = 1024;
@@ -398,7 +522,7 @@ bool App::debug_background_texture_contract(ID3D11Device* device,
             const auto started = std::chrono::steady_clock::now();
             for (int iteration = 0; iteration < 8; ++iteration) {
                 HeldView before(app.bg_image_.srv);
-                app.pending_bg_x_ += 1;
+                app.pending_bg_transform_.x += 1;
                 app.apply_pending_background_values(false);
                 replacements += app.bg_image_.srv != before.value ? 1 : 0;
             }
@@ -468,11 +592,11 @@ BackgroundHistory App::current_background_history() const {
     if (bg_image_.path.empty()) return bg;
     bg.has_image = true;
     bg.image_path = normalized_storage_path(bg_image_.path);
-    bg.x = bg_x_;
-    bg.y = bg_y_;
-    bg.width = bg_width_;
-    bg.height = bg_height_;
-    bg.rotation_deg = bg_rotation_deg_;
+    bg.x = bg_transform_.x;
+    bg.y = bg_transform_.y;
+    bg.width = bg_transform_.width;
+    bg.height = bg_transform_.height;
+    bg.rotation_deg = bg_transform_.rotation_deg;
     bg.brightness = bg_brightness_;
     return bg;
 }
@@ -485,30 +609,28 @@ void App::save_current_background_to_history() {
 }
 
 void App::sync_pending_background_values() {
-    pending_bg_x_ = bg_x_;
-    pending_bg_y_ = bg_y_;
-    pending_bg_width_ = bg_width_;
-    pending_bg_height_ = bg_height_;
-    pending_bg_rotation_deg_ = bg_rotation_deg_;
+    pending_bg_transform_ = bg_transform_;
     pending_bg_brightness_ = bg_brightness_;
 }
 
 void App::apply_pending_background_values(bool save_history_entry) {
-    bg_x_ = pending_bg_x_;
-    bg_y_ = pending_bg_y_;
-    bg_width_ = pending_bg_width_;
-    bg_height_ = pending_bg_height_;
-    bg_rotation_deg_ = pending_bg_rotation_deg_;
+    bg_transform_ = pending_bg_transform_;
     bg_brightness_ = std::clamp(pending_bg_brightness_, 1.0, 200.0);
     pending_bg_brightness_ = bg_brightness_;
     if (!bg_image_.pixels_rgba.empty()) rebuild_background_texture();
     if (save_history_entry) save_current_background_to_history();
 }
 
-void App::clear_background_image() {
-    bg_image_.release();
-    bg_show_ = false;
+void App::close_background_adjust() {
+    cancel_background_drag();
+    show_background_adjust_ = false;
+    focus_background_adjust_next_ = false;
     sync_pending_background_values();
+}
+
+void App::clear_background_image() {
+    close_background_adjust();
+    bg_image_.release();
 }
 
 bool App::apply_background_history(const BackgroundHistory& background) {
@@ -527,25 +649,21 @@ bool App::apply_background_history(const BackgroundHistory& background) {
         return false;
     }
 
-    bg_x_ = background.x;
-    bg_y_ = background.y;
-    bg_width_ = background.width;
-    bg_height_ = background.height;
-    bg_rotation_deg_ = background.rotation_deg;
+    bg_transform_ = {background.x, background.y, background.width,
+                     background.height, background.rotation_deg};
     bg_brightness_ = std::clamp(background.brightness, 1.0, 200.0);
-    bg_show_ = settings_.view_2d.show_background_image;
     if (!load_background_image(background.image_path, false)) {
-        bg_show_ = false;
         sync_pending_background_values();
         return false;
     }
-    if (bg_width_ <= 0.0) bg_width_ = static_cast<double>(bg_image_.width);
-    if (bg_height_ <= 0.0) bg_height_ = static_cast<double>(bg_image_.height);
+    if (bg_transform_.width <= 0.0) bg_transform_.width = static_cast<double>(bg_image_.width);
+    if (bg_transform_.height <= 0.0) bg_transform_.height = static_cast<double>(bg_image_.height);
     sync_pending_background_values();
     return true;
 }
 
 bool App::load_background_image(const std::string& path, bool reset_parameters) {
+    cancel_background_drag();
     bg_image_.release();
     auto fail = [&](const std::string& reason) {
         bg_image_.release();
@@ -568,8 +686,8 @@ bool App::load_background_image(const std::string& path, bool reset_parameters) 
         bg_image_.height = static_cast<int>(decoded.height);
         bg_image_.pixels_rgba = std::move(decoded.pixels);
         if (reset_parameters) {
-            bg_width_ = static_cast<double>(decoded.width);
-            bg_height_ = static_cast<double>(decoded.height);
+            bg_transform_.width = static_cast<double>(decoded.width);
+            bg_transform_.height = static_cast<double>(decoded.height);
             bg_brightness_ = 100.0;
         }
         if (!rebuild_background_texture()) {

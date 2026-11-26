@@ -10,7 +10,7 @@
 #include "multilanguage.h"
 #include "operation_timing.h"
 #include "toolbar_icons.h"
-#include "../canvas2d/canvas2d_view_state.h"
+#include "../canvas2d/canvas2d_background.h"
 
 #include "imgui.h"
 
@@ -2381,7 +2381,6 @@ private:
     struct PopupState {
         bool range = false;
         bool control_points = false;
-        bool background_adjust = false;
         bool background_align = false;
         bool about = false;
         bool ui_settings = false;
@@ -2593,18 +2592,14 @@ private:
 
     TextureImage bg_image_;
     bool bg_show_ = true;
-    double bg_x_ = 0.0;
-    double bg_y_ = 0.0;
-    double bg_width_ = 5000.0;
-    double bg_height_ = 5000.0;
-    double bg_rotation_deg_ = 0.0;
+    canvas2d::BackgroundTransform bg_transform_{0.0, 0.0, 5000.0, 5000.0, 0.0};
     double bg_brightness_ = 100.0;
-    double pending_bg_x_ = 0.0;
-    double pending_bg_y_ = 0.0;
-    double pending_bg_width_ = 5000.0;
-    double pending_bg_height_ = 5000.0;
-    double pending_bg_rotation_deg_ = 0.0;
+    canvas2d::BackgroundTransform pending_bg_transform_ = bg_transform_;
     double pending_bg_brightness_ = 100.0;
+    bool show_background_adjust_ = false;
+    bool focus_background_adjust_next_ = false;
+    std::optional<canvas2d::BackgroundDrag> bg_drag_;
+    bool bg_left_consumed_ = false;
     int station_jump_index_ = 0;
     char distance_jump_input_[32] = {};
     int align_station1_ = 0;
@@ -3072,12 +3067,25 @@ private:
     BackgroundHistory current_background_history() const;
     void sync_pending_background_values();
     void apply_pending_background_values(bool save_history_entry);
+    void render_background_adjust_window();
+    void close_background_adjust();
+    void cancel_background_drag();
     bool apply_background_history(const BackgroundHistory& background);
     void clear_background_image();
     bool load_background_image(const std::string& path, bool reset_parameters = true);
     bool rebuild_background_texture();
+    const canvas2d::BackgroundTransform& displayed_background_transform() const;
     std::optional<ImVec2> background_uv_from_world(ImVec2 world) const;
-    void draw_background(ImDrawList* draw, const View2D& view, ImVec2 origin, ImVec2 size);
+    std::optional<canvas2d::BackgroundQuad> draw_background(ImDrawList* draw, ImVec2 origin,
+                                                           ImVec2 size) const;
+    bool background_handles_available() const;
+    bool process_background_drag(ImVec2 origin, ImVec2 size, float handle_scale,
+                                 bool hovered, bool mouse_input);
+    void draw_background_handles(ImDrawList* draw, const canvas2d::BackgroundQuad& quad,
+                                 float handle_scale, bool hovered) const;
+#ifndef NDEBUG
+    bool debug_background_drag_contract(const std::filesystem::path& directory, std::ostream& out);
+#endif
     void apply_background_alignment();
     std::string open_map_dialog();
     std::string open_map_dialog(const std::string& initial_directory,

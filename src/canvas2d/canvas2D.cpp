@@ -1020,6 +1020,13 @@ void App::render_plan_canvas(ImVec2 size) {
     else if (touch.tap) mouse = touch.tap_pos;
     const bool show_plan_curves = show_curve_values_ || alignment_mode;
     const float marker_size_scale = marker_size_scale_from_percent(marker_size_percent_);
+    const float background_handle_scale =
+        ImGui::GetWindowDpiScale() * (ui_component_size_ / k_default_ui_component_size);
+    const bool background_mouse = io.MouseSource == ImGuiMouseSource_Mouse &&
+        touch.active_count == 0 && !touch.tap;
+    const bool background_input = process_background_drag(
+        origin, avail, background_handle_scale, hovered && !plan_alignment_->dragging(),
+        background_mouse);
     bool alignment_input = false;
     if (alignment_mode) {
         const auto input_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
@@ -1028,23 +1035,24 @@ void App::render_plan_canvas(ImVec2 size) {
         alignment_input = plan_alignment_->process_mouse(
             data, input_overlay, plan_alignment_->geometry(model_.own), input_transform, mouse,
             dmin_, dmax_, marker_size_scale,
-            hovered && !picking_background_station && !touch.tap && touch.active_count == 0 &&
+            hovered && !background_input && !picking_background_station && !touch.tap && touch.active_count == 0 &&
                 plan_alignment_actions_available(),
             show_plan_curves, plan_marker_selection_);
         if (plan_data_cache_.alignment_marker_revision != plan_alignment_->marker_revision()) {
             current_plan_data();
         }
     }
+    const bool canvas_tool_input = background_input || alignment_input;
     const auto* projection = alignment_reprojection();
     auto nearest_measure_distance = [&]() -> std::optional<double> {
         return nearest_plan_measure_distance(origin, avail, mouse);
     };
     std::optional<double> hovered_measure_distance;
-    if (hovered && mode_ == Mode::Measure && !data.own.empty()) {
+    if (hovered && !background_input && mode_ == Mode::Measure && !data.own.empty()) {
         hovered_measure_distance = nearest_measure_distance();
         if (hovered_measure_distance) set_crosshair_cursor();
     }
-    if (hovered && !alignment_input && io.MouseWheel != 0.0f) {
+    if (hovered && !canvas_tool_input && io.MouseWheel != 0.0f) {
         if (io.KeyShift) {
             plan_view_.rotation += io.MouseWheel * 5.0 * 3.14159265358979323846 / 180.0;
         } else {
@@ -1052,7 +1060,7 @@ void App::render_plan_canvas(ImVec2 size) {
             plan_view_.scale = std::clamp(plan_view_.scale * factor, 0.001, 10000.0);
         }
     }
-    if (hovered && !alignment_input && mode_ != Mode::Measure &&
+    if (hovered && !canvas_tool_input && mode_ != Mode::Measure &&
         pick_slot_ == 0 && touch.pinch && touch.active_count >= 2 &&
         point_near_canvas(touch.pinch_center, origin, avail, 0.0f)) {
         ImVec2 anchor_before = plan_view_.screen_to_world(touch.pinch_center, origin, avail);
@@ -1081,7 +1089,7 @@ void App::render_plan_canvas(ImVec2 size) {
     const double marker_hover_radius_sq = marker_hover_radius * marker_hover_radius;
     const bool marker_hits_enabled =
         hovered && mode_ != Mode::Measure &&
-        !picking_background_station && !plan_alignment_->dragging();
+        !background_input && !picking_background_station && !plan_alignment_->dragging();
     auto nearest_marker_hit = [&](const auto& markers,
                                   const PlanScreenTransform& hit_transform,
                                   bool suppressed = false) -> std::optional<MarkerHit> {
@@ -1289,7 +1297,7 @@ void App::render_plan_canvas(ImVec2 size) {
     bool touch_marker_context_requested =
         touch_input::consume_long_press_in_rect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y),
                                                 &touch_long_press_pos);
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || touch_marker_context_requested) {
+    if (!background_input && (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || touch_marker_context_requested)) {
         if (touch_marker_context_requested) plan_marker_selection_.clear();
         plan_context_menu_entries_ = collect_plan_context_entries(
             data, mouse, origin, avail, marker_canvas_margin,
@@ -1301,9 +1309,9 @@ void App::render_plan_canvas(ImVec2 size) {
 
     const bool touch_multi_input = touch.active_count >= 2 || touch.pinch;
     const bool was_rotating = plan_view_.rotating;
-    const bool rotate_plan = hovered && !alignment_input && !touch_multi_input &&
+    const bool rotate_plan = hovered && !canvas_tool_input && !touch_multi_input &&
         io.KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    if (hovered && !alignment_input && mode_ != Mode::Measure &&
+    if (hovered && !canvas_tool_input && mode_ != Mode::Measure &&
         !touch_multi_input && !picking_background_station &&
         ImGui::IsMouseDown(ImGuiMouseButton_Left) && !rotate_plan &&
         (!new_at_mileage_mode || mileage_mode_dragging)) {
@@ -1335,7 +1343,7 @@ void App::render_plan_canvas(ImVec2 size) {
         plan_view_.rotating = false;
     }
 
-    if (hovered && !alignment_input && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+    if (hovered && !canvas_tool_input && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         ImVec2 world = plan_view_.screen_to_world(mouse, origin, avail);
         if (pick_slot_ == 1) {
             if (auto uv = background_uv_from_world(world)) align_pick1_ = *uv;
@@ -1356,7 +1364,7 @@ void App::render_plan_canvas(ImVec2 size) {
     }
 
     if (new_at_mileage_mode && hovered && edit_actions_available() &&
-        !picking_background_station && !touch_multi_input &&
+        !background_input && !picking_background_station && !touch_multi_input &&
         !plan_view_.dragging && !rotate_plan) {
         hovered_measure_distance = nearest_measure_distance();
         if (hovered_measure_distance) {
@@ -1416,7 +1424,7 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
 
-    draw_background(draw, plan_view_, origin, avail);
+    const auto background_quad = draw_background(draw, origin, avail);
     debug_plan_stage("background_grid");
 
     auto draw_section = [&](const Section& sec, ImU32 color, float width) {
@@ -1940,6 +1948,10 @@ void App::render_plan_canvas(ImVec2 size) {
     if (alignment_mode) {
         plan_alignment_->draw_drag_label(canvas2d::AlignmentDragSurface::Plan,
                                          draw, mouse, marker_size_scale);
+    }
+    if (background_quad) {
+        draw_background_handles(draw, *background_quad, background_handle_scale,
+                                hovered && background_mouse && !alignment_input);
     }
     draw->PopClipRect();
     debug_plan_stage("overlays_done");

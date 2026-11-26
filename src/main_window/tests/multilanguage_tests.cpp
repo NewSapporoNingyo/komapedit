@@ -57,7 +57,7 @@ std::multiset<std::string> placeholders(std::string_view text) {
 }
 
 bool complete_translations(const Translation& translation) {
-    constexpr std::size_t expected_key_count = 618;
+    constexpr std::size_t expected_key_count = 620;
     struct LanguageTable {
         const char* name;
         Language language;

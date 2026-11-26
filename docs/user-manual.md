@@ -205,7 +205,10 @@ The plan alignment and Profile follow the draft as you edit. The other plan mark
 
 #### Background Image
 
-Click `Import` in the Background Image group of the `2D View` menu to select an image. `Show` controls its visibility, and `Adjust` sets its position, width, height, rotation, and brightness.
+Click `Import` in the Background Image group of the `2D View` menu to select an image. `Show` controls its visibility. `Adjust` opens a floating panel with live position, width, height, and rotation fields and a brightness slider.
+
+- With the panel open, drag inside the image to move it, drag an edge or corner to resize along the image axes, or drag the round handle to rotate around the image center. Hold `Shift` to keep the aspect ratio from the start of the drag.
+- Release the mouse to save the updated geometry. Press `Esc` during a drag to restore the geometry from the start of that drag. `OK` saves remaining numeric adjustments and brightness. `Cancel` discards unconfirmed adjustments.
 
 For a map with at least two stations, use `Align to Station`:
 
@@ -213,7 +216,7 @@ For a map with at least two stations, use `Align to Station`:
 2. Select a different station as `Station 2` and pick its position in the same way.
 3. Click `Apply` or `OK` to calculate the image position, scale, and rotation.
 
-The image path and alignment settings are saved for the current map or Scenario entry and restored when it is reopened.
+The current map or Scenario history stores the image path and alignment settings. Reopen from `Recent Maps` or reload with `F5` to restore the confirmed settings.
 
 ### 6. Map Information Tables
 

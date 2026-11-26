@@ -445,7 +445,7 @@ foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
 
 #### `src/canvas2d/canvas2d_background.h` 与 `src/canvas2d/canvas2d_background.cpp`
 
-- 背景图模块负责 world/UV 转换和屏幕四边形绘制，并以两个站点坐标与两个图片点计算比例、旋转和平移；`App` 包装层负责保存背景历史。
+- 背景图模块用同一屏幕四边形绘制图片和判定手柄命中。它将拖动位移转换为沿图像轴的缩放，并计算两点对齐变换。`App` 管理数值草稿、已提交的变换和按地图保存的历史。
 
 #### `src/canvas2d/canvas2d_primitives.h` 与 `src/canvas2d/canvas2d_primitives.cpp`
 

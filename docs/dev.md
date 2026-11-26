@@ -445,7 +445,7 @@ This section describes the main responsibilities of files in `include/` and `src
 
 #### `src/canvas2d/canvas2d_background.h` and `src/canvas2d/canvas2d_background.cpp`
 
-- The background module handles world/UV conversion and screen-quad drawing, and computes scale, rotation, and translation from two station coordinates and two image points; the `App` wrapper saves background history.
+- The background module projects a shared quad for rendering and handle hit testing. It converts drag displacement into image-axis resizing and computes the two-point alignment transform. `App` owns the numeric draft, committed transform, and per-map history.
 
 #### `src/canvas2d/canvas2d_primitives.h` and `src/canvas2d/canvas2d_primitives.cpp`
 

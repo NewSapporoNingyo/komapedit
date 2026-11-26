@@ -9,6 +9,8 @@
 
 #include "imgui.h"
 
+#include <utility>
+
 // Mutable camera-like state for the 2D plan canvas. Model-space route data is
 // kept outside this type; it owns only view transforms and pointer-drag state.
 struct View2D {
@@ -23,6 +25,7 @@ struct View2D {
 
     ImVec2 world_to_screen(double x, double y, ImVec2 origin, ImVec2 size) const;
     ImVec2 screen_to_world(ImVec2 point, ImVec2 origin, ImVec2 size) const;
+    std::pair<double, double> screen_delta_to_world(double dx, double dy) const;
     void pan_by_screen_delta(ImVec2 delta);
     void fit(double xmin, double ymin, double xmax, double ymax, ImVec2 size);
 };
