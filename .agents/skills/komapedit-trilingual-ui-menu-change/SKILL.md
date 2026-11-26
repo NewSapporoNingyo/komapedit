@@ -8,14 +8,14 @@ description: Make a small komapedit UI text, menu, toolbar, dialog, label, or He
 ## Edit the owning surface
 
 1. Find the existing control/menu/dialog in its actual render owner before adding wiring.
-2. Add or change the translation key in the English, Simplified Chinese, Taiwan Traditional Chinese, Hong Kong Traditional Chinese, Japanese, and Korean initializer blocks in `include/multilanguage.h`.
+2. Apply each translation-key addition, change, or removal to the English, Simplified Chinese, Taiwan Traditional Chinese, Hong Kong Traditional Chinese, Japanese, and Korean initializer blocks in `include/multilanguage.h`.
 3. Reuse neighboring GUI patterns and keep the patch local. For external links, reuse the established Win32 `ShellExecuteW` path.
 4. Keep console diagnostics English by default unless the existing surface is explicitly localized.
 5. Avoid post-initializer translation assignments or a second localization mechanism.
 
 ## Preserve behavior and layout
 
-1. Keep wording short enough for the target menu/toolbar width.
+1. Limit interface copy to control labels, short tooltips, prompts for the current step, and status or validation feedback. Put tutorials, general procedures, and gesture instructions in the user manual. Keep wording short enough for its control.
 2. Separate copy changes from settings, docking, or interaction changes unless the request includes both.
 3. Preserve UTF-8 text and check that the CJK strings decode correctly.
 4. Use Taiwan terminology for `zh_tw`, including 列 for table rows and 欄 for columns. Preserve existing unlocalized BVE parameter labels.
@@ -25,7 +25,7 @@ description: Make a small komapedit UI text, menu, toolbar, dialog, label, or He
 
 ## Validate
 
-1. Confirm the key exists exactly once in each of the six language blocks.
+1. Confirm each added or changed key occurs exactly once in every language block. Search for each removed key across the codebase and verify it has zero references. Update the translation contract's expected key count when adding or removing keys.
 2. Run the registered `multilanguage_contract` for translation-map parity, expected key count, nonempty text, matching placeholder names and counts, language lookup, and exact critical terminology.
 3. Run `git diff --check` on the touched files.
 4. Build Debug for code changes.

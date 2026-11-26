@@ -470,9 +470,11 @@ void App::render_background_adjust_window() {
         ImGui::EndDisabled();
 
         const bool valid = pending_bg_transform_.valid();
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 260.0f * dpi_scale_);
-        ImGui::TextUnformatted(tr(valid ? "hint.bgimage_drag" : "hint.bgimage_geometry").c_str());
-        ImGui::PopTextWrapPos();
+        if (!valid) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 260.0f * dpi_scale_);
+            ImGui::TextUnformatted(tr("hint.bgimage_geometry").c_str());
+            ImGui::PopTextWrapPos();
+        }
         ImGui::Separator();
         ImGui::BeginDisabled(editing_blocked || !valid);
         if (ImGui::Button(tr("button.ok").c_str())) {
