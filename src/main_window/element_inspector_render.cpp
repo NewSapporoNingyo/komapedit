@@ -306,135 +306,80 @@ void App::render_map_element_field_inputs(
     }
 }
 
+namespace {
+
+template<class RenderField, class MakeField, class Reindex>
+void render_ordered_inspector_fields(MapElementInspectorState& inspector,
+                                     const std::string& id,
+                                     bool (*is_field)(const MapElementEditFieldState&),
+                                     RenderField&& render_field, MakeField&& make_field,
+                                     Reindex&& reindex) {
+    std::vector<size_t> indices;
+    for (size_t index = 0; index < inspector.fields.size(); ++index) {
+        if (is_field(inspector.fields[index])) indices.push_back(index);
+    }
+    std::optional<size_t> remove_index;
+    std::optional<std::pair<size_t, size_t>> move_indices;
+    const float input_x = ImGui::GetCursorPosX();
+    const float input_width = std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.42f);
+    const float add_width = std::max(80.0f, input_width * 0.5f);
+    for (size_t index = 0; index < indices.size(); ++index) {
+        auto& field = inspector.fields[indices[index]];
+        const bool changed = edit_field_buffer_text(field) != field.original_value;
+        if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
+        render_field(field, input_width);
+        if (changed) ImGui::PopStyleColor();
+
+        const std::string row_id = id + std::to_string(index);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(index == 0);
+        if (ImGui::SmallButton((u8"\u2191" + row_id).c_str())) move_indices.emplace(index, index - 1);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(index + 1 == indices.size());
+        if (ImGui::SmallButton((u8"\u2193" + row_id).c_str())) move_indices.emplace(index, index + 1);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(indices.size() == 1);
+        if (ImGui::SmallButton(("-" + row_id).c_str())) remove_index = index;
+        ImGui::EndDisabled();
+    }
+
+    ImGui::SetCursorPosX(input_x + (input_width - add_width) * 0.5f);
+    if (ImGui::Button(("+" + id).c_str(), ImVec2(add_width, 0.0f))) {
+        inspector.fields.push_back(make_field(inspector, indices.size(), {}));
+    }
+    if (remove_index) {
+        const size_t index = indices[*remove_index];
+        inspector.fields.erase(inspector.fields.begin() + static_cast<std::ptrdiff_t>(index));
+    } else if (move_indices) {
+        const auto [from, to] = *move_indices;
+        std::swap(inspector.fields[indices[from]], inspector.fields[indices[to]]);
+    }
+    if (remove_index || move_indices) reindex(inspector);
+}
+
+} // namespace
+
 void App::render_repeater_structure_keys_edit_ui(MapElementInspectorState& inspector) {
     ImGui::Separator();
     ImGui::TextUnformatted(tr("label.repeater_structure_keys").c_str());
     ImGui::PushID(&inspector);
-    std::vector<size_t> key_field_indices;
-    for (size_t index = 0; index < inspector.fields.size(); ++index) {
-        if (is_repeater_structure_key_field(inspector.fields[index])) {
-            key_field_indices.push_back(index);
-        }
-    }
-    std::optional<size_t> remove_key_index;
-    std::optional<size_t> move_key_from;
-    std::optional<size_t> move_key_to;
-    const float structure_key_input_x = ImGui::GetCursorPosX();
-    const float structure_key_input_width =
-        std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.42f);
-    const float add_structure_key_button_width =
-        std::max(80.0f, structure_key_input_width * 0.5f);
-    for (size_t list_index = 0; list_index < key_field_indices.size(); ++list_index) {
-        MapElementEditFieldState& field = inspector.fields[key_field_indices[list_index]];
-        const bool changed = edit_field_buffer_text(field) != field.original_value;
-        if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
-        render_map_element_field_control(field, structure_key_input_width);
-        if (changed) ImGui::PopStyleColor();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(list_index == 0);
-        if (ImGui::SmallButton((u8"\u2191##RepeaterKey" + std::to_string(list_index)).c_str())) {
-            move_key_from = list_index;
-            move_key_to = list_index - 1;
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(list_index + 1 >= key_field_indices.size());
-        if (ImGui::SmallButton((u8"\u2193##RepeaterKey" + std::to_string(list_index)).c_str())) {
-            move_key_from = list_index;
-            move_key_to = list_index + 1;
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(key_field_indices.size() <= 1);
-        if (ImGui::SmallButton(("-##RepeaterKey" + std::to_string(list_index)).c_str())) {
-            remove_key_index = list_index;
-        }
-        ImGui::EndDisabled();
-    }
-    ImGui::SetCursorPosX(structure_key_input_x +
-                         (structure_key_input_width - add_structure_key_button_width) * 0.5f);
-    if (ImGui::Button("+##RepeaterKey", ImVec2(add_structure_key_button_width, 0.0f))) {
-        inspector.fields.push_back(make_repeater_structure_key_field(
-            inspector, key_field_indices.size(), {}));
-    }
-    if (remove_key_index && *remove_key_index < key_field_indices.size()) {
-        inspector.fields.erase(inspector.fields.begin() + static_cast<std::ptrdiff_t>(
-            key_field_indices[*remove_key_index]));
-    } else if (move_key_from && move_key_to &&
-               *move_key_from < key_field_indices.size() &&
-               *move_key_to < key_field_indices.size()) {
-        std::swap(inspector.fields[key_field_indices[*move_key_from]],
-                  inspector.fields[key_field_indices[*move_key_to]]);
-    }
-    if (remove_key_index || move_key_from) {
-        reindex_repeater_structure_key_fields(inspector);
-    }
+    render_ordered_inspector_fields(inspector, "##RepeaterKey", is_repeater_structure_key_field,
+        [this](MapElementEditFieldState& field, float width) {
+            render_map_element_field_control(field, width);
+        }, make_repeater_structure_key_field, reindex_repeater_structure_key_fields);
     ImGui::PopID();
 }
 
 void App::render_section_values_edit_ui(MapElementInspectorState& inspector) {
     ImGui::Separator();
     ImGui::TextUnformatted(tr("label.section_parameters").c_str());
-    std::vector<size_t> value_field_indices;
-    for (size_t index = 0; index < inspector.fields.size(); ++index) {
-        if (is_section_values_field(inspector.fields[index])) {
-            value_field_indices.push_back(index);
-        }
-    }
-    std::optional<size_t> remove_value_index;
-    std::optional<size_t> move_value_from;
-    std::optional<size_t> move_value_to;
-    const float section_value_input_x = ImGui::GetCursorPosX();
-    const float section_value_input_width =
-        std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.42f);
-    const float add_section_value_button_width =
-        std::max(80.0f, section_value_input_width * 0.5f);
-    for (size_t list_index = 0; list_index < value_field_indices.size(); ++list_index) {
-        MapElementEditFieldState& field = inspector.fields[value_field_indices[list_index]];
-        const bool changed = edit_field_buffer_text(field) != field.original_value;
-        if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
-        ImGui::SetNextItemWidth(section_value_input_width);
-        ImGui::InputText(field.label.c_str(), &field.value);
-        if (changed) ImGui::PopStyleColor();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(list_index == 0);
-        if (ImGui::SmallButton((u8"\u2191##SectionValue" + std::to_string(list_index)).c_str())) {
-            move_value_from = list_index;
-            move_value_to = list_index - 1;
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(list_index + 1 >= value_field_indices.size());
-        if (ImGui::SmallButton((u8"\u2193##SectionValue" + std::to_string(list_index)).c_str())) {
-            move_value_from = list_index;
-            move_value_to = list_index + 1;
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(value_field_indices.size() <= 1);
-        if (ImGui::SmallButton(("-##SectionValue" + std::to_string(list_index)).c_str())) {
-            remove_value_index = list_index;
-        }
-        ImGui::EndDisabled();
-    }
-    ImGui::SetCursorPosX(section_value_input_x +
-                         (section_value_input_width - add_section_value_button_width) * 0.5f);
-    if (ImGui::Button("+##SectionValue", ImVec2(add_section_value_button_width, 0.0f))) {
-        inspector.fields.push_back(make_section_values_field(
-            inspector, value_field_indices.size(), {}));
-    }
-    if (remove_value_index && *remove_value_index < value_field_indices.size()) {
-        inspector.fields.erase(inspector.fields.begin() + static_cast<std::ptrdiff_t>(
-            value_field_indices[*remove_value_index]));
-    } else if (move_value_from && move_value_to &&
-               *move_value_from < value_field_indices.size() &&
-               *move_value_to < value_field_indices.size()) {
-        std::swap(inspector.fields[value_field_indices[*move_value_from]],
-                  inspector.fields[value_field_indices[*move_value_to]]);
-    }
-    if (remove_value_index || move_value_from) {
-        reindex_section_values_fields(inspector);
-    }
+    render_ordered_inspector_fields(inspector, "##SectionValue", is_section_values_field,
+        [](MapElementEditFieldState& field, float width) {
+            ImGui::SetNextItemWidth(width);
+            ImGui::InputText(field.label.c_str(), &field.value);
+        }, make_section_values_field, reindex_section_values_fields);
 }
 
 void App::render_element_inspector() {

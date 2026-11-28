@@ -8,22 +8,14 @@
 
 #include <algorithm>
 #include <cctype>
-#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
-#include <fstream>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <windows.h>
-#endif
 
 namespace kme::maploader {
 
@@ -47,18 +39,6 @@ TextLineSpan text_line_span(std::string_view text, size_t begin) noexcept {
     return {content_end, next_begin};
 }
 
-size_t text_line_start_at(std::string_view text, size_t offset) noexcept {
-    offset = std::min(offset, text.size());
-    size_t line_start = 0;
-    while (line_start < text.size()) {
-        const TextLineSpan line = text_line_span(text, line_start);
-        if (offset < line.next_begin || offset <= line.content_end) return line_start;
-        if (!line.has_terminator()) break;
-        line_start = line.next_begin;
-    }
-    return line_start;
-}
-
 FileOpenFailureKind classify_file_open_failure(const std::filesystem::path& path) {
     std::error_code error;
     const bool exists = std::filesystem::exists(path, error);
@@ -80,15 +60,9 @@ std::string file_open_failure_message(const std::filesystem::path& path) {
 }
 
 std::string path_to_utf8(const std::filesystem::path& path) {
-#if defined(__cpp_char8_t)
-    auto s = path.u8string();
-    return std::string(reinterpret_cast<const char*>(s.data()), s.size());
-#else
     return path.u8string();
-#endif
 }
 
-#if defined(_WIN32)
 std::wstring utf8_to_wide(const std::string& utf8) {
     if (utf8.empty()) return {};
     int wide_len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
@@ -109,11 +83,6 @@ std::wstring utf8_to_wide(const std::string& utf8) {
 std::filesystem::path path_from_utf8(const std::string& utf8) {
     return std::filesystem::path(utf8_to_wide(utf8));
 }
-#else
-std::filesystem::path path_from_utf8(const std::string& utf8) {
-    return std::filesystem::path(utf8);
-}
-#endif
 
 std::filesystem::path join_utf8_path(const std::filesystem::path& root,
                                      const std::string& path_text) {
@@ -124,9 +93,8 @@ std::filesystem::path join_utf8_path(const std::filesystem::path& root,
 }
 
 std::string read_binary_file(const std::filesystem::path& path) {
-#if defined(_WIN32)
     std::unique_ptr<FILE, decltype(&std::fclose)> input(
-        _wfopen(path.wstring().c_str(), L"rb"), &std::fclose);
+        _wfopen(path.c_str(), L"rb"), &std::fclose);
     if (!input) {
         throw std::runtime_error(file_open_failure_message(path));
     }
@@ -143,18 +111,8 @@ std::string read_binary_file(const std::filesystem::path& path) {
         }
     }
     return result;
-#else
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        throw std::runtime_error(file_open_failure_message(path));
-    }
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    return buffer.str();
-#endif
 }
 
-#if defined(_WIN32)
 std::string wide_to_utf8(const std::wstring& wide) {
     if (wide.empty()) return {};
     int bytes = WideCharToMultiByte(CP_UTF8, 0, wide.data(),
@@ -182,11 +140,6 @@ std::string decode_codepage(const std::string& bytes, unsigned int codepage, boo
                         wide.data(), wide_len);
     return wide_to_utf8(wide);
 }
-#else
-std::string decode_codepage(const std::string& bytes, unsigned int, bool) {
-    return bytes;
-}
-#endif
 
 void append_utf8_codepoint(std::string& out, char32_t cp) {
     if (cp <= 0x7F) {
@@ -298,27 +251,7 @@ std::string append_utf16_bytes(const std::wstring& wide, bool little_endian) {
         out.push_back(static_cast<char>(0xfe));
         out.push_back(static_cast<char>(0xff));
     }
-    for (wchar_t wc : wide) {
-        uint32_t cp = static_cast<uint32_t>(wc);
-#if WCHAR_MAX > 0xffff
-        if (cp > 0xffff) {
-            cp -= 0x10000;
-            uint16_t high = static_cast<uint16_t>(0xd800 + ((cp >> 10) & 0x3ff));
-            uint16_t low = static_cast<uint16_t>(0xdc00 + (cp & 0x3ff));
-            uint16_t units[] = {high, low};
-            for (uint16_t unit : units) {
-                if (little_endian) {
-                    out.push_back(static_cast<char>(unit & 0xff));
-                    out.push_back(static_cast<char>((unit >> 8) & 0xff));
-                } else {
-                    out.push_back(static_cast<char>((unit >> 8) & 0xff));
-                    out.push_back(static_cast<char>(unit & 0xff));
-                }
-            }
-            continue;
-        }
-#endif
-        uint16_t unit = static_cast<uint16_t>(cp);
+    for (uint16_t unit : wide) {
         if (little_endian) {
             out.push_back(static_cast<char>(unit & 0xff));
             out.push_back(static_cast<char>((unit >> 8) & 0xff));
@@ -338,7 +271,6 @@ std::string encode_text_for_writeback(const std::string& utf8_text,
         return utf8_bom ? std::string("\xef\xbb\xbf") + utf8_text : utf8_text;
     }
 
-#if defined(_WIN32)
     std::wstring wide = utf8_to_wide(utf8_text);
     if (lower == "utf-16le") return append_utf16_bytes(wide, true);
     if (lower == "utf-16be") return append_utf16_bytes(wide, false);
@@ -359,18 +291,6 @@ std::string encode_text_for_writeback(const std::string& utf8_text,
         if (used_default) throw std::runtime_error("text cannot be represented as CP932");
         return out;
     }
-#else
-    if (lower == "cp932" || lower == "shift_jis" || lower == "sjis") {
-        if (std::any_of(utf8_text.begin(), utf8_text.end(), [](unsigned char ch) { return ch >= 0x80; })) {
-            throw std::runtime_error("CP932 writeback is only supported on Windows");
-        }
-        return utf8_text;
-    }
-    if (lower == "utf-16le" || lower == "utf-16be") {
-        throw std::runtime_error("UTF-16 writeback is only supported on Windows");
-    }
-#endif
-
     throw std::runtime_error("unsupported source encoding for writeback: " + encoding);
 }
 

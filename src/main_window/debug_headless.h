@@ -6,10 +6,47 @@
 
 #pragma once
 
+#include <iosfwd>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifndef NDEBUG
+#include <chrono>
+#include <filesystem>
+#include <thread>
+
+enum class HeadlessOutputMode { Binary, TextWithBom, BinaryWithBom, QuietBinary };
+std::ostream* open_headless_output(std::ofstream& file, const std::string& path,
+                                   HeadlessOutputMode mode = HeadlessOutputMode::Binary);
+std::string read_headless_file_bytes(const std::filesystem::path& path,
+                                     const char* missing_file_prefix = nullptr);
+
+struct HeadlessSceneWarmup {
+    int waiting_frames;
+    bool completed;
+    std::chrono::steady_clock::time_point finished_at;
+};
+
+template<class Render, class Ready>
+HeadlessSceneWarmup warm_headless_scene(std::chrono::steady_clock::time_point started,
+                                        Render&& render, Ready&& ready) {
+    for (int waiting_frames = 0; ; ++waiting_frames) {
+        render();
+        const bool completed = ready();
+        const auto finished_at = std::chrono::steady_clock::now();
+        if (completed || finished_at - started >= std::chrono::seconds(120)) {
+            return {waiting_frames, completed, finished_at};
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+struct ID3D11Device;
+struct ID3D11DeviceContext;
+
+bool create_headless_d3d_device(ID3D11Device*& device, ID3D11DeviceContext*& context, const char*& driver);
+
 class ScopedComApartment {
 public:
     ScopedComApartment();
@@ -425,6 +462,7 @@ HeadlessResourceSafetyContractResult run_debug_resource_safety_contract(
     const std::string& missing_image_path);
 
 std::vector<std::string> command_line_args_utf8();
+bool is_headless_load_map_command(std::string_view arg);
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args);
 HeadlessLoadScenarioOptions parse_headless_load_scenario_options(
     const std::vector<std::string>& args);

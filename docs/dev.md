@@ -272,7 +272,7 @@ This section describes the main responsibilities of files in `include/` and `src
 - **Track state machine**: `LastPos` holds the previous sample; `TrackPointer` advances own-track events by distance and supplies radius, gradient, cant, orientation, and coordinates for regular and event-boundary sampling.
 - **Curve mathematics**: `rotate_xy()`, Gaussian integration, and Fresnel series/asymptotics integrate local coordinates; `circular_curve*()` computes circular curves, while `halfsin_intermediate()`, `linear_transition_curve_local()`, and `transition_curve*()` compute half-sine/linear transitions. Key/hash structures cache repeated curve parameters.
 - **Gradient projection**: `constant_gradient_projection()`, `sinc()`, and `gradient_transition()` compute horizontal projection and elevation from route length; `build_gradient_projection_samples()` and `build_event_projected_distances()` map event distances to plan positions.
-- **Own-track generation**: `sorted_unique()` and `append_arange()` combine event and regular sample points; `generate_owntrack()` writes distance, XYZ, orientation, radius, gradient, cant, and related columns; `generate_curveradius()` produces curve-radius plot data.
+- **Own-track generation**: `sort_unique()` and `append_arange()` combine event and regular sample points; `generate_owntrack()` writes distance, XYZ, orientation, radius, gradient, cant, and related columns; `generate_curveradius()` produces curve-radius plot data.
 - **Other-track generation**: `relative_position()` computes curve-relative offsets; `CantProcessor` handles cant Begin/End/Interpolate; `build_othertrack_buffer()` combines position, X/Y interpolation, gauge, center, and cant into matrices aligned with the own track, with validity data.
 - **Relocation and placement**: `relocate()` translates geometry to stable local coordinates; `build_structure_put_buffer()` supplies distance-sampled transforms for structure placement.
 - **Adaptive scene control points**: angle/matrix helpers and `build_scene_adaptive_controlpoints()` combine events, model spans, curvature, gradients, and the requested range into control points with adaptive density.
@@ -366,7 +366,7 @@ This section describes the main responsibilities of files in `include/` and `src
 
 #### `src/main_window/runtime_paths.h` and `src/main_window/runtime_paths.cpp`
 
-- `executable_directory()` calls `GetModuleFileNameW()` once and caches the EXE directory; `dll_directory()` selects its `bin` subdirectory; `settings_directory()` creates and returns the `settings` subdirectory.
+- `executable_directory()` reads the module path with `GetModuleFileNameW()` into a growing buffer and caches the EXE directory. Startup reports a Win32 error if the path lookup fails. The EXE directory owns the `bin` and `settings` subdirectories.
 - `dll_path()` builds DLL paths; `load_dll()` loads dependencies from `bin` with restricted search flags and can return Win32 error codes.
 
 #### `src/main_window/app_settings.h` and `src/main_window/app_settings.cpp`
@@ -421,7 +421,7 @@ This section describes the main responsibilities of files in `include/` and `src
 
 #### `src/canvas2d/canvas2D.cpp`
 
-- **Queries and view data:** `nearest_own_index()`, `interp_own_z()`, `track_info_at()`, `speed_at()`, and `curve_sections()` sample values for measurements and overlays. `build_plan_data()` combines own/other tracks, stations, speed limits, and markers; `current_plan_data()` caches the result by model/geometry/visibility revision. Profile data uses the same build/current split.
+- **Queries and view data:** `nearest_own_index()`, `interp_own_z()`, `track_info_at()`, `speed_at()`, and `curve_sections()` sample values for measurements and overlays. `current_plan_data()` caches own-track samples, stations, speed limits, and markers by their geometry and visibility inputs. `fit_plan_view()` combines the cached bounds with visible other tracks and Repeater endpoints and block corners. Each side receives padding equal to 5% of the longest combined edge. Profile data uses the same build/current split.
 - **View controls and rendering:** Measurement, focus, coordinate conversion, and `jump_to_distance()` share navigation. `render_plan_canvas()` coordinates mouse/touch input, visible-distance calculation, and drawing the background, grid, tracks, Repeaters, stations, markers, labels, 3D position, and focus.
 
 #### `src/canvas2d/canvas2d_alignment.cpp` and `src/shared/own_track_geometry.cpp`
@@ -473,9 +473,9 @@ This section describes the main responsibilities of files in `include/` and `src
 | `scene_fog.cpp/.h`, `scene_shader_source.h` | CPU fog-keyframe construction/sampling and scene HLSL; `route_value_sampling_contract` validates the CPU logic and shader compilation |
 | `canvas3d_scene_lifecycle.cpp` | Scene replacement, dynamic/map/station refresh, visibility and settings, model requests, and resource lifetime |
 | `canvas3d_model_loader.cpp/.h` | Model-loader v2 client, WIC textures and caches, CPU model workers, upload queues, and diagnostics |
-| `canvas3d_put_between.cpp/.h` | Source-model preparation and deformation, asynchronous PutBetween preview, and publication after sequence checks |
+| `canvas3d_put_between.cpp/.h` | Source-model preparation and deformation, asynchronous PutBetween completion by request sequence and geometry generation, and worker restart |
 | `canvas3d_model_preview.cpp` | Single-model loading, resource cleanup, and interactive preview; the App entry point also opens models outside the Structure List |
-| `canvas3d_d3d_resources.cpp` | HLSL, shader pipelines, depth/blend/rasterizer states, render targets, and instance buffers |
+| `canvas3d_d3d_resources.cpp` | HLSL, mesh and scene shader pipelines, depth/blend/rasterizer states, render targets with shared resize ownership, and instance buffers |
 | `canvas3d_scene_geometry.cpp/.h` | Scene/track chunks, track placement frames, and Repeater instances and caches |
 | `canvas3d_scene_markers.cpp` | Marker vertices, text and icons, font caches, visible indices, and marker drawing |
 | `canvas3d_scene_camera.cpp` | Track sampling, camera movement and jumps, and focus-target state |
@@ -525,7 +525,7 @@ The following files are under `src/table/` and compiled separately by CMake. `Ap
 
 | Module | Responsibility |
 | --- | --- |
-| `datatable.cpp` | Shared cell/numeric conversion, basic table UI helpers, and semantic annotations for scene track keys |
+| `datatable.cpp` | Shared table window lifetime and dock/focus handling, cell and numeric conversion, and semantic annotations for scene track keys |
 | `datatable_internal.h` | Private inline column definitions and internal action/view/helper declarations; windows, cache construction, and specialized templates live in their respective `.cpp` files |
 | `datatable_cache.cpp` | Full `TableUiCache` hydration, dynamic Section/Signal columns, merged Repeater display rows, column-width measurement, and runtime speed-limit cache refresh |
 | `datatable_find.cpp` | Case-insensitive find/reset/step, unused-key search, and dedicated Structure/Signal/Sound App search APIs |
@@ -542,15 +542,15 @@ Map tables read `TableUiCache` and visibility state, and call shared `App` metho
 
 - `invalidate_table_cache()` clears revisions and derived rows; `reset_marker_visibility()` and `sync_marker_visibility_sizes()` keep 2D marker flags aligned with model row counts.
 - Structure, Repeater, and Signal `locate_*_on_plan/in_list/in_scene_preview()` functions update plan focus, table highlights/window visibility, and Canvas3D jumps. Repeater navigation also handles End and change boundaries.
-- `locate_standard_marker_on_plan()` and `locate_standard_marker_in_list()` implement the paired navigation functions shared by Beacon, Section, Irregularity, Sound/Noise, Background, Adhesion, CabIlluminance, Fog, DrawDistance, SpeedLimit, and related markers.
-- Locating an other-train stop opens its group and stop row. `locate_scene_marker_row_in_list()` and `locate_scene_marker_row_in_scene_preview()` map Canvas3D marker enums to the correct table/source row; `can_locate_scene_preview_row()` checks scene, index, and visibility conditions.
+- `standard_marker_navigation()` binds each standard marker kind to its Plan cache, visibility setting, table window, focus, scroll, and highlight state. A compile-time check requires one entry per kind between `None` and `Count`. The Plan, table, and Scene actions share this mapping.
+- Locating an other-train stop opens its group and stop row. `can_locate_scene_preview_row()` checks that the Scene has started and model loading is complete before navigation from a table or the Repeater Inspector.
 
 ### Debug entry points and contract tests
 
 #### `src/main_window/debug_headless.h`
 
 - Each `*Options` structure corresponds to a command-line mode: Map/Scenario loading; plan/scene/open/edit/table-cache benchmarks; scene loader and camera transfer; diagnostics popup; source anchor; roundtrip; distance/own-track/other-track; Station/resource lists; Repeater; Section; Include; new files/elements; table find; touch; and settings persistence.
-- The header declares Debug-only `run_debug_headless_*()` entry points; option structures connect command-line parsing in `main()` to the test implementations.
+- The header declares Debug-only `run_debug_headless_*()` entry points. The command registry in `win32_dx11_bootstrap.cpp` selects the parser and runner in dispatch priority order.
 
 #### `src/main_window/debug_headless.cpp`
 
@@ -735,7 +735,7 @@ Use the same route, parameters, build type, and load profile for before/after co
 
 `--profile-stages` records nested CPU stages and asynchronous GPU timestamps. Queries are preallocated and read across frames; only valid, ready samples count. GPU intervals include command gaps, and CPU parent stages include their children. Stage data locates bottlenecks; whole-frame CPU p95 determines acceptance.
 
-After timing, scene contracts compare double-precision instance fingerprints, pixels, and picking between direct computation and cached paths, covering camera movement/rotation, chunk jumps/returns, window changes, fog, and track guides. `--debug-headless-scene-loader-contract` uses temporary models and headless D3D to check:
+After timing, scene contracts compare double-precision instance fingerprints, pixels, and picking between direct computation and cached paths. Cases cover camera movement and rotation, chunk jumps and returns, window changes, fog, and track guides. The contracts also render the model preview reference grid and exercise PutBetween worker recovery with a loaded route model when available. `--debug-headless-scene-loader-contract` uses temporary models and headless D3D to check:
 
 - Repeater distance/model sequences, typed-list hydration, Include order, missing entries, zero-length segments, geometry jump anchors, tilt/span, invalid intervals, edit/restore invalidation, track replacement, and cache budgets.
 - Model-copy and PutBetween-worker failures, cancellation, request coordination, balanced DLL allocations/frees, and same-path model reuse/reload.
@@ -750,7 +750,7 @@ After timing, scene contracts compare double-precision instance fingerprints, pi
 
 Plan, scene, and own-track-edit share temporary Map/Include contracts for Interpolate's 0/1/2-argument forms, Apply/Delete/Reset, source identity, and unique editable markers. Real routes are checked against available targets; empty row, event, and marker sets must agree, and instance-dependent checks are reported as not applicable. Own-track-edit also checks Preview→Edit merging, including maps that select source files through `rand()`.
 
-`--debug-headless-table-cache-bench` uses Edit metadata and an ImGui/ImPlot context with INI persistence disabled. After warm-up, it separately measures cold-cache rebuild, one warm-cache hit, and one frame drawing all tables, checking fingerprints for rows, cells, identity, dynamic headers, and widths. Source byte/hash checks run outside the timed interval. Defaults are 5 repeats (range 1–100) and 25 m sampling.
+`--debug-headless-table-cache-bench` uses Edit metadata, a D3D11 device for toolbar textures, and an ImGui/ImPlot context with INI persistence disabled. Each sample measures a cold-cache rebuild, the mean time per hit across 100,000 warm-cache calls, and one frame drawing all tables. The benchmark verifies fingerprints for rows, cells, identity, dynamic headers, and widths. Source byte and hash checks run outside the timed interval. Defaults are 5 repeats (range 1–100) and 25 m sampling. Structure search reports `PASS`, `FAIL`, or `SKIP` with the reason for a skip.
 
 `--debug-headless-diagnostics-popup-bench` uses 100,000 mixed log entries to check concurrent ordering, snapshot-revision caching, and clipped rendering.
 

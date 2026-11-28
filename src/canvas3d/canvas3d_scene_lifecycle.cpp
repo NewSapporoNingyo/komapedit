@@ -27,6 +27,13 @@
 
 using namespace canvas3d_detail;
 
+namespace {
+void sort_scene_backgrounds(std::vector<Canvas3DBackgroundChange>& backgrounds) {
+    std::stable_sort(backgrounds.begin(), backgrounds.end(),
+        [](const auto& a, const auto& b) { return a.distance < b.distance; });
+}
+}
+
 Canvas3D::Impl::Impl(ID3D11Device* device, Canvas3DWakeCallback wake_callback)
     : wake_callback(wake_callback), device(device) {
     if (device) {
@@ -92,7 +99,6 @@ bool Canvas3D::Impl::load_scene(Canvas3DScene scene, std::string& error, bool pr
         release_scene_track_chunks();
         release_scene_marker_chunks();
         scene_chunks.clear();
-        scene_last_error.clear();
         scene_stats_value = {};
         scene_model_worker_count_value.store(0);
         scene_load_summary_pending = false;
@@ -106,10 +112,7 @@ bool Canvas3D::Impl::load_scene(Canvas3DScene scene, std::string& error, bool pr
     scene_placement_tracks.rebuild(scene_data);
     if (++scene_geometry_generation == 0) ++scene_geometry_generation;
     clear_scene_focus_highlight();
-    std::sort(scene_data.backgrounds.begin(), scene_data.backgrounds.end(),
-              [](const Canvas3DBackgroundChange& a, const Canvas3DBackgroundChange& b) {
-                  return a.distance < b.distance;
-              });
+    sort_scene_backgrounds(scene_data.backgrounds);
     if (scene_data.min_distance > scene_data.max_distance) {
         std::swap(scene_data.min_distance, scene_data.max_distance);
     }
@@ -192,7 +195,7 @@ std::vector<SceneModelLoadRequest> Canvas3D::Impl::reconcile_scene_model_request
 }
 
 bool Canvas3D::Impl::refresh_scene_dynamic_content(const MapModel& model, int station_index, std::string& error) {
-    kme::timing::GuiTiming::Stage edit_timing("scene.dynamic");
+    kme::timing::GuiTiming::Stage edit_timing(kme::timing::GuiStage::SceneDynamic);
     error.clear();
     if (!scene_active) return true;
     if (!device || !context) {
@@ -239,10 +242,7 @@ bool Canvas3D::Impl::refresh_scene_dynamic_content(const MapModel& model, int st
         return false;
     }
     scene_data.camera = old_camera;
-    std::sort(scene_data.backgrounds.begin(), scene_data.backgrounds.end(),
-              [](const Canvas3DBackgroundChange& a, const Canvas3DBackgroundChange& b) {
-                  return a.distance < b.distance;
-              });
+    sort_scene_backgrounds(scene_data.backgrounds);
     if (scene_data.min_distance > scene_data.max_distance) {
         std::swap(scene_data.min_distance, scene_data.max_distance);
     }
@@ -318,7 +318,6 @@ bool Canvas3D::Impl::refresh_scene_map_content(const MapModel& model,
         populate_canvas3d_scene_markers(scene_data, model);
         release_scene_marker_chunks();
         if (!build_scene_marker_chunks(error)) {
-            if (!error.empty()) scene_last_error = error;
             release_scene_marker_chunks();
             return false;
         }
@@ -390,7 +389,6 @@ bool Canvas3D::Impl::reload_scene_models(std::string& error) {
     scene_models.clear();
     scene_put_between_preview_base_model_keys.clear();
     release_scene_texture_cache();
-    scene_last_error.clear();
     scene_load_summary_pending = false;
     auto requests = collect_scene_model_load_requests();
     start_scene_model_worker(reconcile_scene_model_requests(requests));
@@ -416,15 +414,10 @@ bool Canvas3D::Impl::set_scene_track_visibility(const std::vector<Canvas3DTrackV
 
     release_scene_track_chunks();
     if (!build_scene_track_chunks(error)) {
-        if (!error.empty()) scene_last_error = error;
         release_scene_track_chunks();
         return false;
     }
-    if (!rebuild_scene_marker_visible_indices(error)) {
-        if (!error.empty()) scene_last_error = error;
-        return false;
-    }
-    return true;
+    return rebuild_scene_marker_visible_indices(error);
 }
 
 void Canvas3D::Impl::set_scene_window(double back_m, double forward_m) {
@@ -474,6 +467,15 @@ void Canvas3D::Impl::set_scene_performance_warning(bool enabled,
 
 Canvas3DSceneInteractionMode Canvas3D::Impl::scene_interaction_mode_value() const {
     return scene_interaction_mode;
+}
+
+bool Canvas3D::Impl::scene_is_loading() const {
+    return scene_active &&
+        (scene_worker_running.load() ||
+         std::any_of(scene_models.begin(), scene_models.end(), [](const auto& entry) {
+             const auto& model = entry.second;
+             return !model.preview_only && model.state == SceneModelGpu::State::Pending;
+         }));
 }
 
 Canvas3DSceneStats Canvas3D::Impl::scene_stats() const {
@@ -530,7 +532,7 @@ size_t Canvas3D::Impl::count_scene_instances() const {
 }
 
 std::map<std::string, SceneModelLoadRequest> Canvas3D::Impl::collect_scene_model_load_requests() const {
-    kme::timing::GuiTiming::Stage edit_timing("scene.model_requests");
+    kme::timing::GuiTiming::Stage edit_timing(kme::timing::GuiStage::SceneModelRequests);
     std::map<std::string, SceneModelLoadRequest> requests;
     auto note_regular_model = [&](const std::string& path) {
         if (path.empty() || requests.find(path) != requests.end()) return;
@@ -607,7 +609,6 @@ void Canvas3D::Impl::release_scene_resources() {
     scene_placement_locations.clear();
     scene_repeater_locations.clear();
     scene_structure_edit = SceneStructureEditState{};
-    scene_last_error.clear();
     scene_stats_value = {};
     scene_model_worker_count_value.store(0);
     scene_load_summary_pending = false;

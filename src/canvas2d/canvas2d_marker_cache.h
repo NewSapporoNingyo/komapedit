@@ -28,16 +28,17 @@ struct AlignmentPoseChange {
 };
 
 struct AlignmentReprojection {
+    std::shared_ptr<const Matrix> applied;
     std::shared_ptr<const Matrix> own;
     std::vector<AlignmentPoseChange> poses;
     std::vector<Matrix> other_tracks;
     std::vector<RepeaterOverlayRow> repeaters;
 
-    AlignmentPoseChange pose_at(const Matrix& applied, double distance) const;
+    AlignmentPoseChange pose_at(double distance) const;
 };
 
 AlignmentReprojection reproject_plan_geometry(
-    const Matrix& applied, std::shared_ptr<const Matrix> own,
+    std::shared_ptr<const Matrix> applied, std::shared_ptr<const Matrix> own,
     const std::vector<Matrix>& other_tracks, const std::vector<RepeaterOverlayRow>& repeaters);
 
 std::optional<TrackPoint> sample_matrix_track_point(

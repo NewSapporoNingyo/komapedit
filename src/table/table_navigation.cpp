@@ -12,8 +12,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 void App::invalidate_table_cache() {
-    GuiTiming::Stage edit_timing("table.invalidate");
+    GuiTiming::Stage edit_timing(kme::timing::GuiStage::TableInvalidate);
     table_cache_ = TableUiCache{};
     reset_structure_model_find_results();
     reset_signal_aspect_find_results();
@@ -126,7 +127,7 @@ void App::locate_repeater_row_in_list(size_t row_index) {
 }
 
 void App::locate_repeater_row_in_scene_preview(size_t row_index) {
-    if (!scene_preview_started_ || !scene_preview_canvas_ || !scene_preview_canvas_->has_scene()) return;
+    if (!can_locate_scene_preview_row()) return;
     if (!scene_preview_canvas_->jump_scene_camera_to_object(Canvas3DSceneObjectKind::Repeater, row_index)) return;
     show_scene_preview_window_ = true;
     focus_scene_preview_next_ = true;
@@ -159,47 +160,94 @@ void App::locate_signal_row_in_scene_preview(size_t row_index) {
     focus_scene_preview_next_ = true;
 }
 
-void App::locate_standard_marker_on_plan(
-    const std::vector<std::optional<PlanMarker>>& cache,
-    size_t row_index, bool& markers_visible) {
-    if (row_index >= cache.size() || !cache[row_index]) return;
-    markers_visible = true;
-    const PlanMarker& marker = *cache[row_index];
-    focus_plan_at_model_point(marker.x, marker.y, marker.d);
+struct App::StandardMarkerNavigation {
+    std::vector<std::optional<PlanMarker>> App::*cache;
+    bool App::*markers_visible;
+    bool App::*window_visible;
+    bool App::*focus;
+    int App::*scroll;
+    int App::*highlight;
+
+    const PlanMarker* marker_at(const App& app, size_t row_index) const {
+        const auto& rows = app.*cache;
+        return row_index < rows.size() && rows[row_index] ? &*rows[row_index] : nullptr;
+    }
+};
+
+const App::StandardMarkerNavigation* App::standard_marker_navigation(Canvas3DSceneMarkerListKind kind) {
+    using Kind = Canvas3DSceneMarkerListKind;
+    static constexpr std::pair<Kind, StandardMarkerNavigation> markers[] = {
+        {Kind::Section, {&App::section_marker_cache_, &App::show_section_markers_,
+            &App::show_sections_window_, &App::focus_sections_next_, &App::section_list_scroll_row_, &App::section_list_highlight_row_}},
+        {Kind::Beacon, {&App::beacon_marker_cache_, &App::show_beacon_markers_,
+            &App::show_beacons_window_, &App::focus_beacons_next_, &App::beacon_list_scroll_row_, &App::beacon_list_highlight_row_}},
+        {Kind::Irregularity, {&App::irregularity_marker_cache_, &App::show_irregularity_markers_,
+            &App::show_irregularities_window_, &App::focus_irregularities_next_, &App::irregularity_list_scroll_row_, &App::irregularity_list_highlight_row_}},
+        {Kind::MapSound, {&App::map_sound_marker_cache_, &App::show_map_sound_markers_,
+            &App::show_map_sounds_window_, &App::focus_map_sounds_next_, &App::map_sound_list_scroll_row_, &App::map_sound_list_highlight_row_}},
+        {Kind::MapSound3D, {&App::map_sound_3d_marker_cache_, &App::show_map_sound_3d_markers_,
+            &App::show_map_sound_3d_window_, &App::focus_map_sound_3d_next_, &App::map_sound_3d_list_scroll_row_, &App::map_sound_3d_list_highlight_row_}},
+        {Kind::RollingNoise, {&App::rolling_noise_marker_cache_, &App::show_rolling_noise_markers_,
+            &App::show_rolling_noises_window_, &App::focus_rolling_noises_next_, &App::rolling_noise_list_scroll_row_, &App::rolling_noise_list_highlight_row_}},
+        {Kind::FlangeNoise, {&App::flange_noise_marker_cache_, &App::show_flange_noise_markers_,
+            &App::show_flange_noises_window_, &App::focus_flange_noises_next_, &App::flange_noise_list_scroll_row_, &App::flange_noise_list_highlight_row_}},
+        {Kind::JointNoise, {&App::joint_noise_marker_cache_, &App::show_joint_noise_markers_,
+            &App::show_joint_noises_window_, &App::focus_joint_noises_next_, &App::joint_noise_list_scroll_row_, &App::joint_noise_list_highlight_row_}},
+        {Kind::Background, {&App::background_marker_cache_, &App::show_background_markers_,
+            &App::show_backgrounds_window_, &App::focus_backgrounds_next_, &App::background_list_scroll_row_, &App::background_list_highlight_row_}},
+        {Kind::Adhesion, {&App::adhesion_marker_cache_, &App::show_adhesion_markers_,
+            &App::show_adhesions_window_, &App::focus_adhesions_next_, &App::adhesion_list_scroll_row_, &App::adhesion_list_highlight_row_}},
+        {Kind::CabIlluminance, {&App::cab_illuminance_marker_cache_, &App::show_cab_illuminance_markers_,
+            &App::show_cab_illuminance_window_, &App::focus_cab_illuminance_next_, &App::cab_illuminance_list_scroll_row_, &App::cab_illuminance_list_highlight_row_}},
+        {Kind::Fog, {&App::fog_marker_cache_, &App::show_fog_markers_,
+            &App::show_fogs_window_, &App::focus_fogs_next_, &App::fog_list_scroll_row_, &App::fog_list_highlight_row_}},
+        {Kind::LegacyFog, {&App::legacy_fog_marker_cache_, &App::show_fog_markers_,
+            &App::show_legacy_fogs_window_, &App::focus_legacy_fogs_next_, &App::legacy_fog_list_scroll_row_, &App::legacy_fog_list_highlight_row_}},
+        {Kind::DrawDistance, {&App::draw_distance_marker_cache_, &App::show_draw_distance_markers_,
+            &App::show_draw_distances_window_, &App::focus_draw_distances_next_, &App::draw_distance_list_scroll_row_, &App::draw_distance_list_highlight_row_}},
+        {Kind::SpeedLimit, {&App::speed_limit_marker_cache_, &App::show_speedlimits_,
+            &App::show_speed_limits_window_, &App::focus_speed_limits_next_, &App::speed_limit_list_scroll_row_, &App::speed_limit_list_highlight_row_}},
+    };
+    constexpr auto limit = static_cast<size_t>(Kind::Count);
+    static_assert(static_cast<size_t>(Kind::None) == 0 && std::size(markers) == limit - 1);
+    static_assert([] {
+        for (size_t i = 0; i < std::size(markers); ++i) {
+            if (static_cast<size_t>(markers[i].first) != i + 1) return false;
+        }
+        return true;
+    }());
+    const auto index = static_cast<size_t>(kind);
+    return index > 0 && index < limit ? &markers[index - 1].second : nullptr;
 }
 
-void App::locate_standard_marker_in_list(
-    const std::vector<std::optional<PlanMarker>>& cache,
-    size_t row_index, bool& window_visible, bool& focus_window,
-    int& scroll_row, int& highlight_row) {
-    if (row_index >= cache.size() || !cache[row_index]) return;
-    window_visible = true;
-    focus_window = true;
-    scroll_row = static_cast<int>(row_index);
-    highlight_row = static_cast<int>(row_index);
+void App::locate_marker_row_on_plan(Canvas3DSceneMarkerListKind kind, size_t row_index) {
+    const auto* navigation = standard_marker_navigation(kind);
+    if (!navigation) return;
+    const auto* marker = navigation->marker_at(*this, row_index);
+    if (!marker) return;
+    this->*navigation->markers_visible = true;
+    focus_plan_at_model_point(marker->x, marker->y, marker->d);
 }
 
-void App::locate_beacon_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(beacon_marker_cache_, row_index, show_beacon_markers_);
+void App::locate_marker_row_in_list(Canvas3DSceneMarkerListKind kind, size_t row_index) {
+    const auto* navigation = standard_marker_navigation(kind);
+    if (!navigation || !navigation->marker_at(*this, row_index)) return;
+    this->*navigation->window_visible = true;
+    this->*navigation->focus = true;
+    this->*navigation->scroll = static_cast<int>(row_index);
+    this->*navigation->highlight = static_cast<int>(row_index);
 }
 
-void App::locate_section_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(
-        section_marker_cache_, row_index, show_section_markers_);
+void App::locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind kind, size_t row_index) {
+    const auto* navigation = standard_marker_navigation(kind);
+    if (!navigation || !can_locate_scene_preview_row()) return;
+    this->*navigation->markers_visible = true;
+    sync_scene_preview_marker_visibility();
+    if (!scene_preview_canvas_->jump_scene_camera_to_marker(kind, row_index)) return;
+    show_scene_preview_window_ = true;
+    focus_scene_preview_next_ = true;
 }
 
-void App::locate_section_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(
-        section_marker_cache_, row_index, show_sections_window_,
-        focus_sections_next_, section_list_scroll_row_,
-        section_list_highlight_row_);
-}
-
-void App::locate_beacon_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(beacon_marker_cache_, row_index,
-                                   show_beacons_window_, focus_beacons_next_,
-                                   beacon_list_scroll_row_, beacon_list_highlight_row_);
-}
 void App::locate_other_train_stop_row_on_plan(size_t row_index) {
     sync_marker_visibility_sizes();
     if (row_index >= other_train_stop_marker_cache_.size() || !other_train_stop_marker_cache_[row_index]) return;
@@ -217,263 +265,6 @@ void App::locate_other_train_stop_row_in_list(size_t row_index) {
     focus_other_trains_next_ = true;
     other_train_stop_list_scroll_row_ = static_cast<int>(row_index);
     other_train_stop_list_highlight_row_ = static_cast<int>(row_index);
-}
-
-void App::locate_irregularity_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(
-        irregularity_marker_cache_, row_index, show_irregularity_markers_);
-}
-
-void App::locate_irregularity_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(irregularity_marker_cache_, row_index,
-                                   show_irregularities_window_, focus_irregularities_next_,
-                                   irregularity_list_scroll_row_, irregularity_list_highlight_row_);
-}
-
-void App::locate_map_sound_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(map_sound_marker_cache_, row_index, show_map_sound_markers_);
-}
-
-void App::locate_map_sound_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(map_sound_marker_cache_, row_index,
-                                   show_map_sounds_window_, focus_map_sounds_next_,
-                                   map_sound_list_scroll_row_, map_sound_list_highlight_row_);
-}
-
-void App::locate_map_sound_3d_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(
-        map_sound_3d_marker_cache_, row_index, show_map_sound_3d_markers_);
-}
-
-void App::locate_map_sound_3d_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(map_sound_3d_marker_cache_, row_index,
-                                   show_map_sound_3d_window_, focus_map_sound_3d_next_,
-                                   map_sound_3d_list_scroll_row_, map_sound_3d_list_highlight_row_);
-}
-
-void App::locate_rolling_noise_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(
-        rolling_noise_marker_cache_, row_index, show_rolling_noise_markers_);
-}
-
-void App::locate_rolling_noise_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(rolling_noise_marker_cache_, row_index,
-                                   show_rolling_noises_window_, focus_rolling_noises_next_,
-                                   rolling_noise_list_scroll_row_, rolling_noise_list_highlight_row_);
-}
-
-void App::locate_flange_noise_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(
-        flange_noise_marker_cache_, row_index, show_flange_noise_markers_);
-}
-
-void App::locate_flange_noise_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(flange_noise_marker_cache_, row_index,
-                                   show_flange_noises_window_, focus_flange_noises_next_,
-                                   flange_noise_list_scroll_row_, flange_noise_list_highlight_row_);
-}
-
-void App::locate_joint_noise_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(
-        joint_noise_marker_cache_, row_index, show_joint_noise_markers_);
-}
-
-void App::locate_joint_noise_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(joint_noise_marker_cache_, row_index,
-                                   show_joint_noises_window_, focus_joint_noises_next_,
-                                   joint_noise_list_scroll_row_, joint_noise_list_highlight_row_);
-}
-
-void App::locate_background_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(
-        background_marker_cache_, row_index, show_background_markers_);
-}
-
-void App::locate_background_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(background_marker_cache_, row_index,
-                                   show_backgrounds_window_, focus_backgrounds_next_,
-                                   background_list_scroll_row_, background_list_highlight_row_);
-}
-
-void App::locate_adhesion_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(adhesion_marker_cache_, row_index, show_adhesion_markers_);
-}
-
-void App::locate_adhesion_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(adhesion_marker_cache_, row_index,
-                                   show_adhesions_window_, focus_adhesions_next_,
-                                   adhesion_list_scroll_row_, adhesion_list_highlight_row_);
-}
-
-void App::locate_cab_illuminance_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(
-        cab_illuminance_marker_cache_, row_index, show_cab_illuminance_markers_);
-}
-
-void App::locate_cab_illuminance_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(cab_illuminance_marker_cache_, row_index,
-                                   show_cab_illuminance_window_, focus_cab_illuminance_next_,
-                                   cab_illuminance_list_scroll_row_,
-                                   cab_illuminance_list_highlight_row_);
-}
-
-void App::locate_fog_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(fog_marker_cache_, row_index, show_fog_markers_);
-}
-
-void App::locate_fog_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(fog_marker_cache_, row_index,
-                                   show_fogs_window_, focus_fogs_next_,
-                                   fog_list_scroll_row_, fog_list_highlight_row_);
-}
-
-void App::locate_legacy_fog_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(legacy_fog_marker_cache_, row_index, show_fog_markers_);
-}
-
-void App::locate_legacy_fog_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(legacy_fog_marker_cache_, row_index,
-                                   show_legacy_fogs_window_, focus_legacy_fogs_next_,
-                                   legacy_fog_list_scroll_row_, legacy_fog_list_highlight_row_);
-}
-
-void App::locate_draw_distance_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(
-        draw_distance_marker_cache_, row_index, show_draw_distance_markers_);
-}
-
-void App::locate_draw_distance_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(draw_distance_marker_cache_, row_index,
-                                   show_draw_distances_window_, focus_draw_distances_next_,
-                                   draw_distance_list_scroll_row_,
-                                   draw_distance_list_highlight_row_);
-}
-
-void App::locate_speed_limit_row_on_plan(size_t row_index) {
-    locate_standard_marker_on_plan(
-        speed_limit_marker_cache_, row_index, show_speedlimits_);
-}
-
-void App::locate_speed_limit_row_in_list(size_t row_index) {
-    locate_standard_marker_in_list(speed_limit_marker_cache_, row_index,
-                                   show_speed_limits_window_, focus_speed_limits_next_,
-                                   speed_limit_list_scroll_row_,
-                                   speed_limit_list_highlight_row_);
-}
-
-void App::locate_scene_marker_row_in_list(
-    Canvas3DSceneMarkerListKind list_kind, size_t row_index) {
-    switch (list_kind) {
-    case Canvas3DSceneMarkerListKind::Section:
-        locate_section_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::Beacon:
-        locate_beacon_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::Irregularity:
-        locate_irregularity_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::MapSound:
-        locate_map_sound_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::MapSound3D:
-        locate_map_sound_3d_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::RollingNoise:
-        locate_rolling_noise_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::FlangeNoise:
-        locate_flange_noise_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::JointNoise:
-        locate_joint_noise_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::Background:
-        locate_background_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::Adhesion:
-        locate_adhesion_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::CabIlluminance:
-        locate_cab_illuminance_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::Fog:
-        locate_fog_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::LegacyFog:
-        locate_legacy_fog_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::DrawDistance:
-        locate_draw_distance_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::SpeedLimit:
-        locate_speed_limit_row_in_list(row_index);
-        return;
-    case Canvas3DSceneMarkerListKind::None:
-    case Canvas3DSceneMarkerListKind::Count:
-        return;
-    }
-}
-
-void App::locate_scene_marker_row_in_scene_preview(
-    Canvas3DSceneMarkerListKind list_kind, size_t row_index) {
-    if (!can_locate_scene_preview_row()) return;
-
-    switch (list_kind) {
-    case Canvas3DSceneMarkerListKind::Section:
-        show_section_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::Beacon:
-        show_beacon_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::Irregularity:
-        show_irregularity_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::MapSound:
-        show_map_sound_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::MapSound3D:
-        show_map_sound_3d_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::RollingNoise:
-        show_rolling_noise_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::FlangeNoise:
-        show_flange_noise_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::JointNoise:
-        show_joint_noise_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::Background:
-        show_background_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::Adhesion:
-        show_adhesion_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::CabIlluminance:
-        show_cab_illuminance_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::Fog:
-        show_fog_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::LegacyFog:
-        show_fog_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::DrawDistance:
-        show_draw_distance_markers_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::SpeedLimit:
-        show_speedlimits_ = true;
-        break;
-    case Canvas3DSceneMarkerListKind::None:
-    case Canvas3DSceneMarkerListKind::Count:
-        return;
-    }
-
-    sync_scene_preview_marker_visibility();
-    if (!scene_preview_canvas_->jump_scene_camera_to_marker(list_kind, row_index)) return;
-    show_scene_preview_window_ = true;
-    focus_scene_preview_next_ = true;
 }
 
 bool App::can_locate_scene_preview_row() const {

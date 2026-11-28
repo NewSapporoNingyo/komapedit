@@ -9,6 +9,7 @@
 
 #include "multilanguage.h"
 #include "operation_timing.h"
+#include "repeater_linkage.h"
 #include "toolbar_icons.h"
 #include "../canvas2d/canvas2d_background.h"
 
@@ -50,11 +51,8 @@ struct KvMapSnapshot;
 namespace canvas2d {
 class AlignmentEditor;
 struct AlignmentReprojection;
+struct PlanScreenTransform;
 }
-namespace repeater_linkage {
-struct Event;
-}
-
 template <typename T>
 inline void release_com(T*& pointer) {
     if (pointer) {
@@ -539,8 +537,11 @@ struct CreatorMessageTableLayout {
 
 struct TableUiCache {
     bool valid = false;
+    const ImFont* font = nullptr;
     float font_size = 0.0f;
     float cell_padding_x = 0.0f;
+    float dpi_scale = 0.0f;
+    Language language = Language::En;
     std::vector<CachedTableRow> station_position_rows;
     std::vector<CachedTableRow> station_definition_rows;
     std::vector<CachedTableRow> structure_rows;
@@ -631,7 +632,7 @@ struct TableUiCache {
 const std::string& table_cell(const TableRow& row, const std::string& key);
 std::vector<TableRow> hydrate_creator_message_rows(const KvMapSnapshot& snapshot);
 double table_cell_number(const TableRow& row, const std::string& key);
-std::vector<repeater_linkage::Event> table_repeater_events(
+repeater_linkage::Linkage link_repeater_rows(
     const std::vector<TableRow>& rows);
 std::vector<std::string> section_row_values(const TableRow& row);
 std::string join_table_values(const std::vector<std::string>& values,
@@ -673,6 +674,7 @@ struct MapModel {
     std::vector<TableRow> sound_3d_list;
     std::vector<TableRow> structures_between;
     std::vector<TableRow> repeaters;
+    repeater_linkage::Linkage repeater_links;
     std::vector<TableRow> signal_aspects;
     std::vector<TableRow> signals;
     std::vector<TableRow> section_begins;
@@ -963,6 +965,7 @@ struct OtherTrainPathOverlay {
 
 struct PlanData {
     std::vector<TrackPoint> own;
+    size_t visible_repeater_count = 0;
     std::vector<PlanStation> stations;
     std::vector<PlanSpeed> speedlimits;
     std::vector<PlanStructureMarker> structure_markers;
@@ -1088,42 +1091,7 @@ struct WindowVisibilitySettings {
     bool show_model_preview_window = true;
     bool show_scene_preview_window = true;
 
-    bool operator==(const WindowVisibilitySettings& other) const {
-        return show_othertracks_window == other.show_othertracks_window &&
-            show_station_list_window == other.show_station_list_window &&
-            show_structures_window == other.show_structures_window &&
-            show_structures_between_window == other.show_structures_between_window &&
-            show_structure_models_window == other.show_structure_models_window &&
-            show_other_trains_window == other.show_other_trains_window &&
-            show_sound_list_window == other.show_sound_list_window &&
-            show_sound_3d_list_window == other.show_sound_3d_list_window &&
-            show_repeaters_window == other.show_repeaters_window &&
-            show_signal_aspects_window == other.show_signal_aspects_window &&
-            show_signals_window == other.show_signals_window &&
-            show_sections_window == other.show_sections_window &&
-            show_variables_window == other.show_variables_window &&
-            show_creator_messages_window == other.show_creator_messages_window &&
-            show_beacons_window == other.show_beacons_window &&
-            show_irregularities_window == other.show_irregularities_window &&
-            show_map_sounds_window == other.show_map_sounds_window &&
-            show_map_sound_3d_window == other.show_map_sound_3d_window &&
-            show_rolling_noises_window == other.show_rolling_noises_window &&
-            show_flange_noises_window == other.show_flange_noises_window &&
-            show_joint_noises_window == other.show_joint_noises_window &&
-            show_backgrounds_window == other.show_backgrounds_window &&
-            show_adhesions_window == other.show_adhesions_window &&
-            show_cab_illuminance_window == other.show_cab_illuminance_window &&
-            show_fogs_window == other.show_fogs_window &&
-            show_legacy_fogs_window == other.show_legacy_fogs_window &&
-            show_lighting_window == other.show_lighting_window &&
-            show_draw_distances_window == other.show_draw_distances_window &&
-            show_speed_limits_window == other.show_speed_limits_window &&
-            show_file_structure_window == other.show_file_structure_window &&
-            show_console_window == other.show_console_window &&
-            show_plots_window == other.show_plots_window &&
-            show_model_preview_window == other.show_model_preview_window &&
-            show_scene_preview_window == other.show_scene_preview_window;
-    }
+    bool operator==(const WindowVisibilitySettings& other) const;
 
     bool operator!=(const WindowVisibilitySettings& other) const {
         return !(*this == other);
@@ -1165,38 +1133,7 @@ struct View2DSettings {
     int mode = 0;
     int grid_mode = 0;
 
-    bool operator==(const View2DSettings& other) const {
-        return show_stations == other.show_stations &&
-            show_station_names == other.show_station_names &&
-            show_station_mileage == other.show_station_mileage &&
-            show_gradient_pos == other.show_gradient_pos &&
-            show_gradient_values == other.show_gradient_values &&
-            show_curve_values == other.show_curve_values &&
-            show_curve_gauge_markers == other.show_curve_gauge_markers &&
-            show_curve_center_markers == other.show_curve_center_markers &&
-            show_curve_function_markers == other.show_curve_function_markers &&
-            show_profile_other == other.show_profile_other &&
-            show_speedlimits == other.show_speedlimits &&
-            show_section_markers == other.show_section_markers &&
-            show_irregularity_markers == other.show_irregularity_markers &&
-            show_beacon_markers == other.show_beacon_markers &&
-            show_pretrain_markers == other.show_pretrain_markers &&
-            show_map_sound_markers == other.show_map_sound_markers &&
-            show_map_sound_3d_markers == other.show_map_sound_3d_markers &&
-            show_rolling_noise_markers == other.show_rolling_noise_markers &&
-            show_flange_noise_markers == other.show_flange_noise_markers &&
-            show_joint_noise_markers == other.show_joint_noise_markers &&
-            show_background_markers == other.show_background_markers &&
-            show_adhesion_markers == other.show_adhesion_markers &&
-            show_cab_illuminance_markers == other.show_cab_illuminance_markers &&
-            show_fog_markers == other.show_fog_markers &&
-            show_draw_distance_markers == other.show_draw_distance_markers &&
-            show_profile_graph == other.show_profile_graph &&
-            show_radius_graph == other.show_radius_graph &&
-            show_background_image == other.show_background_image &&
-            mode == other.mode &&
-            grid_mode == other.grid_mode;
-    }
+    bool operator==(const View2DSettings& other) const;
 
     bool operator!=(const View2DSettings& other) const {
         return !(*this == other);
@@ -1217,20 +1154,7 @@ struct View3DSettings {
     int scene_instance_critical_warning_threshold =
         k_default_scene_instance_critical_warning_threshold;
 
-    bool operator==(const View3DSettings& other) const {
-        return show_scene_owntrack_markers == other.show_scene_owntrack_markers &&
-            show_scene_current_position_on_plan == other.show_scene_current_position_on_plan &&
-            scene_fog_enabled == other.scene_fog_enabled &&
-            scene_map_draw_distance_enabled == other.scene_map_draw_distance_enabled &&
-            scene_auto_load_on_map_open == other.scene_auto_load_on_map_open &&
-            scene_draw_distance_m == other.scene_draw_distance_m &&
-            scene_edit_component_size_percent == other.scene_edit_component_size_percent &&
-            scene_camera_speed_percent == other.scene_camera_speed_percent &&
-            scene_performance_warning_enabled == other.scene_performance_warning_enabled &&
-            scene_instance_warning_threshold == other.scene_instance_warning_threshold &&
-            scene_instance_critical_warning_threshold ==
-                other.scene_instance_critical_warning_threshold;
-    }
+    bool operator==(const View3DSettings& other) const;
 
     bool operator!=(const View3DSettings& other) const {
         return !(*this == other);
@@ -1266,6 +1190,7 @@ struct TableFindState {
     bool exact = false;
     bool panel_expanded = true;
     bool unused_has_run = false;
+    std::uint64_t draft_revision = 0;
 };
 
 enum class MapElementNumericConstraint {
@@ -1801,6 +1726,7 @@ struct EditableListEditState {
     bool edit_buffer_fresh = false;
     bool rows_initialized = false;
     std::uint64_t next_local_draft_id = 1;
+    std::uint64_t revision = 0;
     std::vector<EditableListDraftRow> rows;
     std::vector<EditableListDisplayRow> display_rows;
     size_t structure_key_columns = 0;
@@ -2016,7 +1942,7 @@ public:
     static bool debug_plan_alignment_contract(double unit_distance, std::ostream& out);
     static bool debug_csv_write_failure_contract();
     static bool debug_background_texture_contract(
-        ID3D11Device* device, const std::string& image_path, std::ostream& out);
+        ID3D11Device* device, const std::string& image_path, std::ostream& out, bool test_pointer_drag);
     static bool debug_repeater_overview_indices();
     ImVec2 debug_other_track_change_marker_screen_position(
         const OtherTrackChangeMarker& marker, double model_angle,
@@ -2039,17 +1965,19 @@ private:
         GuiTiming::Activation activation_;
     };
     GuiTiming::Trace* begin_edit_timing(const char* operation) noexcept;
+    GuiTiming::Trace* active_edit_timing() noexcept { return edit_timing_ ? &*edit_timing_ : nullptr; }
     void end_edit_timing() noexcept;
     void finish_edit_timing() noexcept;
-    std::unique_ptr<GuiTiming::Trace> edit_timing_;
+    std::optional<GuiTiming::Trace> edit_timing_;
     GuiTiming::Trace last_edit_timing_;
     double last_edit_seconds_ = 0.0;
     unsigned edit_timing_depth_ = 0;
     bool edit_timing_wait_scene_frame_ = false;
+    bool edit_timing_started_with_scene_ = false;
     size_t edit_timing_change_count_ = 0;
     std::uint64_t edit_timing_sequence_ = 0;
-    std::string edit_timing_operation_;
-    std::string edit_timing_outcome_;
+    std::string_view edit_timing_operation_;
+    std::string_view edit_timing_outcome_;
     const char* edit_timing_status_key_ = "status.ready";
     ID3D11Device* device_ = nullptr;
     toolbar_icons::Cache toolbar_icons_;
@@ -2784,6 +2712,10 @@ private:
     void restore_scene_rotation_draft();
     void clear_scene_placement_edit_target();
     bool save_pending_edits(bool refresh_inspector = true);
+    bool check_save_drafts();
+    std::optional<std::string> validated_edit_form_value(
+        MapElementEditFieldState& field, std::string_view row_kind, bool canonicalize_all);
+    bool commit_pending_map_edits(bool refresh_inspector);
     bool save_pending_document_changes(bool refresh_inspector = true);
     bool has_scenario_unsaved_changes() const;
     bool scenario_edit_actions_available() const;
@@ -2831,7 +2763,8 @@ private:
     std::optional<double> nearest_plan_measure_distance(
         ImVec2 origin, ImVec2 size, ImVec2 mouse);
     std::vector<PlanContextMenuEntry> collect_plan_context_entries(
-        const PlanData& data, ImVec2 mouse, ImVec2 origin, ImVec2 size,
+        const PlanData& data, const std::vector<PlanCurveInterpolateMarker>* interpolate_markers,
+        const canvas2d::PlanScreenTransform& hit_transform, ImVec2 mouse, ImVec2 origin, ImVec2 size,
         float marker_canvas_margin, double marker_hover_radius_squared,
         bool enabled) const;
     void render_profile_plot(const ProfileData& data, ImVec2 size);
@@ -2844,6 +2777,7 @@ private:
         const PlanContextMenuEntry& entry) const;
     void render_othertracks_window();
     void render_station_list_window();
+    bool render_resource_list_header(ResourceListKind kind, NewFileKind new_file_kind);
     void render_editable_list_table(const char* table_id,
                                     const TableColumnDef* columns,
                                     int column_count,
@@ -2941,6 +2875,9 @@ private:
     void confirm_scenario_route_selection();
     void setup_initial_dockspace(ImGuiID dockspace_id);
     WindowVisibilitySettings current_window_visibility() const;
+    static const auto& window_visibility_bindings();
+    static const auto& view_2d_bindings();
+    static const auto& view_3d_bindings();
     void apply_window_visibility_settings(const WindowVisibilitySettings& visibility);
     View2DSettings current_view_2d_settings() const;
     void apply_view_2d_settings(const View2DSettings& settings);
@@ -2959,6 +2896,8 @@ private:
     void restore_scene_settings_preview();
     void save_runtime_settings_if_changed();
     bool persist_user_settings();
+    void capture_runtime_settings();
+    bool write_runtime_settings();
     void invalidate_table_cache();
     void ensure_table_cache();
     void refresh_speed_limit_table_cache();
@@ -2993,54 +2932,19 @@ private:
     void locate_signal_row_on_plan(size_t row_index);
     void locate_signal_row_in_list(size_t row_index);
     void locate_signal_row_in_scene_preview(size_t row_index);
-    void locate_section_row_on_plan(size_t row_index);
-    void locate_section_row_in_list(size_t row_index);
-    void locate_standard_marker_on_plan(
-        const std::vector<std::optional<PlanMarker>>& cache,
-        size_t row_index, bool& markers_visible);
-    void locate_standard_marker_in_list(
-        const std::vector<std::optional<PlanMarker>>& cache,
-        size_t row_index, bool& window_visible, bool& focus_window,
-        int& scroll_row, int& highlight_row);
-    void locate_beacon_row_on_plan(size_t row_index);
-    void locate_beacon_row_in_list(size_t row_index);
+    struct StandardMarkerNavigation;
+    static const StandardMarkerNavigation* standard_marker_navigation(Canvas3DSceneMarkerListKind kind);
+    void locate_marker_row_on_plan(Canvas3DSceneMarkerListKind kind, size_t row_index);
+    void locate_marker_row_in_list(Canvas3DSceneMarkerListKind kind, size_t row_index);
+    void locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind kind, size_t row_index);
     void locate_other_train_stop_row_on_plan(size_t row_index);
     void locate_other_train_stop_row_in_list(size_t row_index);
-    void locate_irregularity_row_on_plan(size_t row_index);
-    void locate_irregularity_row_in_list(size_t row_index);
-    void locate_map_sound_row_on_plan(size_t row_index);
-    void locate_map_sound_row_in_list(size_t row_index);
-    void locate_map_sound_3d_row_on_plan(size_t row_index);
-    void locate_map_sound_3d_row_in_list(size_t row_index);
-    void locate_rolling_noise_row_on_plan(size_t row_index);
-    void locate_rolling_noise_row_in_list(size_t row_index);
-    void locate_flange_noise_row_on_plan(size_t row_index);
-    void locate_flange_noise_row_in_list(size_t row_index);
-    void locate_joint_noise_row_on_plan(size_t row_index);
-    void locate_joint_noise_row_in_list(size_t row_index);
-    void locate_background_row_on_plan(size_t row_index);
-    void locate_background_row_in_list(size_t row_index);
-    void locate_adhesion_row_on_plan(size_t row_index);
-    void locate_adhesion_row_in_list(size_t row_index);
-    void locate_cab_illuminance_row_on_plan(size_t row_index);
-    void locate_cab_illuminance_row_in_list(size_t row_index);
-    void locate_fog_row_on_plan(size_t row_index);
-    void locate_fog_row_in_list(size_t row_index);
-    void locate_legacy_fog_row_on_plan(size_t row_index);
-    void locate_legacy_fog_row_in_list(size_t row_index);
-    void locate_draw_distance_row_on_plan(size_t row_index);
-    void locate_draw_distance_row_in_list(size_t row_index);
-    void locate_speed_limit_row_on_plan(size_t row_index);
-    void locate_speed_limit_row_in_list(size_t row_index);
-    void locate_scene_marker_row_in_list(Canvas3DSceneMarkerListKind list_kind,
-                                         size_t row_index);
-    void locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind list_kind,
-                                                   size_t row_index);
     bool can_locate_scene_preview_row() const;
 
     double current_plan_origin_angle() const;
     const canvas2d::AlignmentReprojection* alignment_reprojection() const;
-    PlanData build_plan_data(bool include_other_tracks = true) const;
+    PlanData build_plan_data() const;
+    void fit_plan_view(const PlanData& data, ImVec2 size);
     const PlanData& current_plan_data();
     ProfileData build_profile_data() const;
     const ProfileData& current_profile_data();
@@ -3187,7 +3091,7 @@ struct RepeaterDeleteChain {
 };
 
 std::optional<RepeaterDeleteChain> repeater_delete_chain_for_edit_id(
-    const std::vector<TableRow>& rows, const std::string& edit_id);
+    const MapModel& model, const std::string& edit_id);
 std::string expected_source_hash_for_edit_target(
     const MapModel& model,
     const std::map<std::string, MapElementPendingChange>& pending_changes,

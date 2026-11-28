@@ -592,6 +592,14 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     for (const auto& rows : k_edit_metadata_table_rows) {
         merge_table_row_edit_metadata(current.*rows.member, edit_model.*rows.member);
     }
+    for (auto member : {&MapModel::sound_list, &MapModel::sound_3d_list}) {
+        auto& current_rows = current.*member;
+        auto& editable_rows = edit_model.*member;
+        for (size_t i = 0; i < current_rows.size(); ++i) {
+            current_rows[i].cells.at("bufferCount") =
+                std::move(editable_rows[i].cells.at("bufferCount"));
+        }
+    }
     annotate_own_track_transition_links(current);
     bind_station_position_edit_ids(current);
 }

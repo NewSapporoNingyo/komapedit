@@ -38,12 +38,37 @@
 #include "datatable_internal.h"
 
 ImU32 App::editable_row_bg_color(const std::string& edit_id, ImU32 highlight) const {
-    if (row_is_pending_delete(edit_id)) return datatable_internal::k_pending_delete_row_color;
-    if (row_has_pending_edit(edit_id)) return datatable_internal::k_pending_edit_row_color;
-    return highlight;
+    return datatable_internal::pending_row_bg_color(pending_edit_changes_, edit_id, highlight);
+}
+
+ImU32 datatable_internal::pending_row_bg_color(
+    const std::map<std::string, MapElementPendingChange>& pending_edits,
+    const std::string& edit_id, ImU32 highlight) {
+    const auto edit = pending_edits.find(edit_id);
+    if (edit == pending_edits.end()) return highlight;
+    return edit->second.operation == "delete" ? k_pending_delete_row_color : k_pending_edit_row_color;
 }
 
 namespace datatable_internal {
+
+ScopedTableWindow::ScopedTableWindow(const std::string& title, bool& visible,
+                                     ImGuiID dock, bool* focus)
+    : focus_(focus) {
+    if (dock) ImGui::SetNextWindowDockID(dock, ImGuiCond_FirstUseEver);
+    if (focus_ && *focus_) ImGui::SetNextWindowFocus();
+    drawing_ = ImGui::Begin(title.c_str(), &visible);
+}
+
+ScopedTableWindow::~ScopedTableWindow() {
+    if (focus_) *focus_ = false;
+    ImGui::End();
+}
+
+bool ScopedTableWindow::show_map_rows(bool has_model) const {
+    if (!drawing_) return false;
+    if (!has_model) ImGui::TextDisabled("-");
+    return has_model;
+}
 
 const std::vector<std::string>& signal_aspect_column_headers() {
     static const auto headers = [] {
@@ -247,19 +272,6 @@ TextCellContextAction render_text_cell_with_context_actions(const std::string& d
     return action;
 }
 
-TextCellContextAction render_marker_text_cell_with_context(
-    const std::string& display_text,
-    const std::string& locate_on_plan_label, bool locate_on_plan_enabled,
-    const std::string& locate_in_scene_label, bool locate_in_scene_enabled,
-    const std::string& properties_label, bool properties_enabled,
-    const std::string& delete_label, bool delete_enabled) {
-    return render_text_cell_with_context_actions(
-        display_text,
-        locate_on_plan_label, locate_on_plan_enabled,
-        locate_in_scene_label, locate_in_scene_enabled,
-        properties_label, properties_enabled,
-        delete_label, delete_enabled);
-}
 RepeaterTextCellContextAction render_repeater_text_cell_with_context_actions(
     const std::string& display_text,
     const std::string& locate_on_plan_label, bool locate_on_plan_enabled,
@@ -353,42 +365,6 @@ std::string render_text_cell_with_submenu(const std::string& display_text, const
 }
 
 
-bool contains_ascii_case_insensitive(const std::string& text, const std::string& query) {
-    if (query.empty() || query.size() > text.size()) return false;
-    const size_t last_start = text.size() - query.size();
-    for (size_t start = 0; start <= last_start; ++start) {
-        bool match = true;
-        for (size_t i = 0; i < query.size(); ++i) {
-            if (ascii_lower(static_cast<unsigned char>(text[start + i])) !=
-                    ascii_lower(static_cast<unsigned char>(query[i]))) {
-                match = false;
-                break;
-            }
-        }
-        if (match) return true;
-    }
-    return false;
-}
-
-bool equals_ascii_case_insensitive(const std::string& text, const std::string& query) {
-    if (query.empty() || text.size() != query.size()) return false;
-    for (size_t i = 0; i < text.size(); ++i) {
-        if (ascii_lower(static_cast<unsigned char>(text[i])) !=
-                ascii_lower(static_cast<unsigned char>(query[i]))) return false;
-    }
-    return true;
-}
-
-std::string ascii_case_key(const std::string& text) {
-    return ascii_lower(text);
-}
-
-bool matches_find_query(const std::string& text, const std::string& query, bool exact_match) {
-    return exact_match
-        ? equals_ascii_case_insensitive(text, query)
-        : contains_ascii_case_insensitive(text, query);
-}
-
 void replace_all(std::string& text, const std::string& from, const std::string& to) {
     if (from.empty()) return;
     size_t pos = 0;
@@ -404,49 +380,55 @@ std::string format_find_match_status(std::string format, size_t current, size_t 
     return format;
 }
 
-TableFindRowsView editable_table_find_rows(
-    const std::vector<CachedTableRow>& rows,
-    const EditableListEditState& edit,
-    const EditableListSpec& spec) {
-    return {&rows, &edit, &spec};
-}
-
-void reset_table_find_results(TableFindState& state) {
+void reset_ordinary_table_find_results(TableFindState& state) {
     state.committed.clear();
     state.matches.clear();
     state.row_matches.clear();
-    state.unused_row_matches.clear();
-    state.unused_count = 0;
-    state.unused_total = 0;
     state.current = -1;
     state.scroll_row = -1;
     state.has_run = false;
+}
+
+std::string format_truncated_table_status(std::string format, size_t shown, size_t total) {
+    replace_all(format, "{shown}", std::to_string(shown));
+    replace_all(format, "{total}", std::to_string(total));
+    return format;
+}
+
+void reset_table_find_results(TableFindState& state) {
+    reset_ordinary_table_find_results(state);
+    state.unused_row_matches.clear();
+    state.unused_count = 0;
+    state.unused_total = 0;
     state.unused_has_run = false;
 }
 
 void run_table_find(TableFindState& state,
                     const TableFindRowsView& rows,
                     std::initializer_list<size_t> search_columns) {
+    reset_table_find_results(state);
+    state.draft_revision = rows.revision();
     state.committed = state.query;
-    state.matches.clear();
     state.row_matches.assign(rows.size(), 0);
-    state.unused_row_matches.clear();
-    state.unused_count = 0;
-    state.unused_total = 0;
-    state.current = -1;
-    state.scroll_row = -1;
     state.has_run = true;
-    state.unused_has_run = false;
 
     if (blank_ascii(state.committed)) return;
 
+    const std::string query = ascii_lower(state.committed);
+    const auto same_character = [](unsigned char text, unsigned char folded) {
+        return ascii_lower(text) == folded;
+    };
+    const auto matches_query = [&](const std::string& cell) {
+        return state.exact
+            ? std::equal(cell.begin(), cell.end(), query.begin(), query.end(), same_character)
+            : std::search(cell.begin(), cell.end(), query.begin(), query.end(), same_character) != cell.end();
+    };
     for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
         if (!rows.searchable(row_index)) continue;
         bool matched = false;
         for (size_t column : search_columns) {
             const std::string* cell = rows.cell(row_index, column);
-            if (cell &&
-                matches_find_query(*cell, state.committed, state.exact)) {
+            if (cell && matches_query(*cell)) {
                 matched = true;
                 break;
             }
@@ -816,7 +798,7 @@ void set_repeater_structure_keys(TableRow& row, const std::vector<std::string>& 
     row.cells["structureKeys"] = std::move(display);
 }
 
-std::vector<repeater_linkage::Event> table_repeater_events(
+repeater_linkage::Linkage link_repeater_rows(
     const std::vector<TableRow>& rows) {
     std::vector<repeater_linkage::Event> events;
     events.reserve(rows.size());
@@ -827,15 +809,10 @@ std::vector<repeater_linkage::Event> table_repeater_events(
         event.distance = table_cell_number(row, "distance");
         event.order = table_cell_number(row, "order");
         event.key = table_cell(row, "repeaterKey");
-        const std::string& method = table_cell(row, "method");
-        if (method == "Begin" || method == "Begin0") {
-            event.kind = repeater_linkage::EventKind::Begin;
-        } else if (method == "End") {
-            event.kind = repeater_linkage::EventKind::End;
-        }
+        event.kind = repeater_linkage::event_kind(table_cell(row, "method"));
         events.push_back(std::move(event));
     }
-    return events;
+    return repeater_linkage::pair_linkage(std::move(events));
 }
 
 std::vector<std::string> section_row_values(const TableRow& row) {
@@ -946,12 +923,8 @@ void annotate_scene_track_key_warnings(MapModel& model) {
         ++signal_display_row;
     }
 
-    size_t repeater_display_row = 1;
-    for (TableRow& row : model.repeaters) {
-        const std::string& method = table_cell(row, "method");
-        if (method == "Begin" || method == "Begin0") {
-            check_scene_track_key(model, row, other_track_keys, "Repeater", repeater_display_row, "trackKey");
-            ++repeater_display_row;
-        }
+    for (const auto& segment : model.repeater_links.segments) {
+        check_scene_track_key(model, model.repeaters[segment.begin_source_index], other_track_keys,
+                              "Repeater", segment.display_index, "trackKey");
     }
 }

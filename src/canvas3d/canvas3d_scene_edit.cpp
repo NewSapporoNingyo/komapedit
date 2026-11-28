@@ -398,9 +398,7 @@ bool Canvas3D::Impl::update_scene_sound3d_marker(const std::string& edit_id,
         scene_data.markers[marker_index] = std::move(replacement);
         sort_canvas3d_scene_markers(scene_data.markers);
         std::string error;
-        if (build_scene_marker_chunks(error)) return true;
-        if (!error.empty()) scene_last_error = error;
-        return false;
+        return build_scene_marker_chunks(error);
     }
 
     SceneMarkerChunkGpu& chunk = scene_marker_chunks[location.chunk_index];
@@ -757,20 +755,15 @@ bool Canvas3D::Impl::set_scene_placement_edit_target(const Canvas3DPlacementEdit
         if (same_placement_edit_target(scene_structure_edit.current, target)) {
             return true;
         }
+        Canvas3DPlacementEditTarget next = target;
         if (same_placement_edit_target(scene_structure_edit.completed, target)) {
-            std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
-            const std::uint64_t sequence =
-                ++scene_put_between_preview_next_sequence;
-            scene_put_between_preview_latest_sequence = sequence;
-            scene_put_between_preview_pending.reset();
-            scene_put_between_preview_completed.reset();
-            scene_structure_edit.current = target;
-            scene_structure_edit.preview_sequence = sequence;
+            discard_scene_put_between_preview_request();
+            scene_structure_edit.current = std::move(next);
             return true;
         }
-        const std::uint64_t sequence = queue_scene_put_between_preview(target);
+        const std::uint64_t sequence = queue_scene_put_between_preview(next);
         if (sequence == 0) return false;
-        scene_structure_edit.current = target;
+        scene_structure_edit.current = std::move(next);
         scene_structure_edit.preview_sequence = sequence;
         if (!show_gizmo) {
             cancel_scene_gizmo_interaction(SceneGizmoTarget::Placement);
@@ -884,6 +877,7 @@ bool Canvas3D::Impl::update_scene_placement_instance(const Canvas3DPlacementEdit
         scene_structure_edit.baseline_instance =
             scene_data.instances[location_it->second.source_index];
         scene_structure_edit.current = target;
+        discard_scene_put_between_preview_request();
         return true;
     }
     const Canvas3DModelInstance& base = scene_structure_edit.active &&

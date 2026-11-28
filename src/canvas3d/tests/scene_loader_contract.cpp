@@ -173,6 +173,128 @@ bool repeater_hydration_contract(const std::string& model_path) {
 }
 } // namespace
 
+bool Canvas3D::Impl::debug_check_put_between_preview_worker(const std::string& valid_model_path) {
+    using Failure = ScenePutBetweenPreviewResult::Failure;
+    stop_scene_put_between_preview_worker();
+    Canvas3DTrackPath left_track;
+    left_track.points.emplace_back();
+    Canvas3DTrackPath right_track = left_track;
+    right_track.points.front().x = 1.0;
+
+    const auto submit_and_wait = [&]() -> std::optional<ScenePutBetweenPreviewResult> {
+        const std::uint64_t sequence = submit_scene_put_between_preview_job({
+            0, scene_geometry_generation, {"put-between-worker-contract", valid_model_path,
+                {true, 0.0, 0, {}, &left_track, &left_track, &right_track}}});
+        for (int attempt = 0; attempt < 5000; ++attempt) {
+            if (auto result = take_scene_put_between_preview_result()) {
+                if (result->sequence == sequence && result->geometry_generation == scene_geometry_generation) {
+                    return result;
+                }
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return std::nullopt;
+    };
+
+    g_debug_put_between_derive_throw_countdown.store(1);
+    const auto failed = submit_and_wait();
+    bool exception_reported = false;
+    if (failed && failed->failure == Failure::Exception) {
+        try {
+            std::rethrow_exception(failed->exception);
+        } catch (const std::runtime_error& error) {
+            exception_reported = std::string_view(error.what()) ==
+                "debug injected PutBetween derivation failure";
+        }
+    }
+
+    debug_faults.put_between_allocation_failure.store(true);
+    const auto allocation_failure = submit_and_wait();
+    const auto after_allocation_failure = submit_and_wait();
+    const bool task_recovered = allocation_failure && allocation_failure->failure == Failure::Allocation &&
+        after_allocation_failure && after_allocation_failure->derived.ok;
+    stop_scene_put_between_preview_worker();
+
+    debug_faults.put_between_start_failure = true;
+    const auto exited = submit_and_wait();
+    const bool worker_joined = exited && exited->failure == Failure::WorkerExited &&
+        !scene_put_between_preview_worker.joinable();
+    const auto retried = submit_and_wait();
+    stop_scene_put_between_preview_worker();
+    g_debug_put_between_derive_throw_countdown.store(0);
+    debug_faults.put_between_allocation_failure.store(false);
+    return exception_reported && task_recovered && worker_joined && retried && retried->derived.ok &&
+        !scene_put_between_preview_worker.joinable();
+}
+
+bool Canvas3D::Impl::debug_check_put_between_preview_refresh(const std::string& path) {
+    std::mutex hold_first_job;
+    std::atomic<bool> started{false};
+    Impl replay(device, {});
+    Canvas3DScene scene;
+    scene.max_distance = 25.0;
+    scene.tracks = {
+        {"0", {{0.0, 0.0, 0.0, 0.0}, {25.0, 0.0, 25.0, 0.0}}},
+        {"right", {{0.0, 2.0, 0.0, 0.0}, {25.0, 4.0, 25.0, 0.0}}},
+    };
+    auto& object = scene.objects.emplace_back();
+    object.kind = Canvas3DSceneObjectKind::Structure;
+    object.structure_put_between = true;
+    object.edit_id = "between-refresh";
+    auto& instance = scene.instances.emplace_back();
+    instance.model_path = path;
+    instance.object_index = 0;
+    instance.put_between = true;
+    instance.distance = 5.0;
+    instance.put_between_track_key1 = "0";
+    instance.put_between_track_key2 = "right";
+    const auto baseline = put_between_target_from_instance(object.edit_id, instance);
+    auto draft = baseline;
+    draft.distance = 12.0;
+    std::string error;
+    if (!replay.load_scene(std::move(scene), error, false, false)) return false;
+    if (replay.scene_worker.joinable()) replay.scene_worker.join();
+    replay.upload_pending_scene_models();
+    const auto wait_until = [](const auto& ready) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        do {
+            if (ready()) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while (std::chrono::steady_clock::now() < deadline);
+        return false;
+    };
+    std::unique_lock<std::mutex> pause(hold_first_job);
+    replay.debug_faults.put_between_job_started = [&] {
+        started.store(true);
+        std::lock_guard<std::mutex> lock(hold_first_job);
+    };
+    if (!replay.set_scene_placement_edit_target(draft, true) ||
+        !wait_until([&] { return started.load(); })) return false;
+    const auto first_sequence = replay.scene_structure_edit.preview_sequence;
+    if (!replay.update_scene_placement_instance(baseline) ||
+        replay.scene_structure_edit.preview_sequence != 0 ||
+        replay.scene_put_between_preview_latest_sequence == first_sequence) return false;
+    pause.unlock();
+
+    const auto result_waiting = [&] {
+        std::lock_guard<std::mutex> lock(replay.scene_put_between_preview_mutex);
+        return replay.scene_put_between_preview_completed.has_value();
+    };
+    if (!replay.set_scene_placement_edit_target(draft, true) ||
+        !wait_until(result_waiting) || !replay.update_scene_placement_instance(baseline)) return false;
+    replay.apply_scene_put_between_preview_result();
+    if (replay.scene_structure_edit.preview_sequence != 0 ||
+        !replay.scene_structure_edit.preview_model_key.empty() ||
+        replay.scene_data.instances.front().distance != baseline.distance) return false;
+
+    if (!replay.set_scene_placement_edit_target(draft, true) || !wait_until(result_waiting)) return false;
+    replay.apply_scene_put_between_preview_result();
+    return replay.scene_structure_edit.completed.distance == draft.distance &&
+        !replay.scene_structure_edit.preview_model_key.empty() &&
+        replay.scene_data.instances.front().distance == draft.distance;
+}
+
 Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contract(
     const std::string& valid_model_path,
     const std::string& valid_texture_path) {
@@ -192,11 +314,11 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
         scene_cancel.store(false);
         scene_worker_running.store(false);
         scene_model_worker_limit = 1;
-        debug_copy_cpu_model_throw_countdown.store(0);
-        debug_scene_log_failure.store(false);
-        debug_helper_start_failure_at.store(0);
-        debug_texture_allocation_throw_countdown.store(0);
-        debug_scene_index_buffer_failure_countdown.store(0);
+        debug_faults.copy_cpu_model_throw_countdown.store(0);
+        debug_faults.log_failure.store(false);
+        debug_faults.helper_start_failure_at.store(0);
+        debug_faults.texture_allocation_throw_countdown.store(0);
+        debug_faults.index_buffer_failure_countdown.store(0);
         g_debug_put_between_derive_throw_countdown.store(0);
         g_debug_put_between_prepare_count.store(0);
         release_scene_texture_cache();
@@ -212,7 +334,7 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
 
     try {
         std::string shader_error;
-        debug_scene_marker_compile_failure = true;
+        debug_faults.marker_compile_failure = true;
         const bool failed_as_expected = !ensure_scene_pipeline(shader_error) &&
             !shader_error.empty() && !scene_marker_vertex_shader && !scene_marker_pixel_shader &&
             !scene_marker_pick_pixel_shader && !scene_marker_mask_pixel_shader &&
@@ -315,13 +437,13 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
 
         std::string texture_error;
         ID3D11ShaderResourceView* allocation_texture = nullptr;
-        debug_texture_allocation_throw_countdown.store(1);
+        debug_faults.texture_allocation_throw_countdown.store(1);
         const bool allocation_texture_loaded = load_texture(
             valid_texture_path, &allocation_texture, texture_error);
         result.texture_allocation_cleanup = !allocation_texture_loaded &&
             !allocation_texture && !texture_error.empty();
         release_com(allocation_texture);
-        debug_texture_allocation_throw_countdown.store(0);
+        debug_faults.texture_allocation_throw_countdown.store(0);
 
         release_scene_texture_cache();
         scene_stats_value.texture_cache_hit_count = 0;
@@ -354,7 +476,7 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
             upload_failure.scene_key = "upload-failure";
             upload_failure.shared_model_key.clear();
             scene_models.try_emplace(upload_failure.scene_key);
-            debug_scene_index_buffer_failure_countdown.store(1);
+            debug_faults.index_buffer_failure_countdown.store(1);
             std::string upload_error;
             const bool upload_succeeded =
                 upload_scene_model(upload_failure, upload_error);
@@ -368,7 +490,7 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
                 failed_model->second.parts.empty() &&
                 failed_model->second.materials.empty() &&
                 !failed_model->second.error.empty() && !upload_error.empty();
-            debug_scene_index_buffer_failure_countdown.store(0);
+            debug_faults.index_buffer_failure_countdown.store(0);
         }
 
         Canvas3DTrackPath left_track;
@@ -434,8 +556,8 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
 
         reset_scene_worker_state();
         ModelLoaderClient::debug_reset_counts();
-        debug_copy_cpu_model_throw_countdown.store(1);
-        debug_scene_log_failure.store(true);
+        debug_faults.copy_cpu_model_throw_countdown.store(1);
+        debug_faults.log_failure.store(true);
         SceneModelLoadRequest copy_failure;
         copy_failure.key = "copy-failure";
         copy_failure.source_path = valid_model_path;
@@ -447,7 +569,7 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
         start_scene_model_worker({copy_failure, derived_failure});
         if (scene_worker.joinable()) scene_worker.join();
         upload_pending_scene_models();
-        result.copy_exception = !scene_worker_running.load() && !debug_scene_log_failure.load();
+        result.copy_exception = !scene_worker_running.load() && !debug_faults.log_failure.load();
         for (const auto* request : {&copy_failure, &derived_failure}) {
             const auto& model = scene_models.at(request->key);
             result.copy_exception = result.copy_exception &&
@@ -459,8 +581,8 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
         reset_scene_worker_state();
         ModelLoaderClient::debug_reset_counts();
         scene_model_worker_limit = 3;
-        debug_helper_start_failure_at.store(2);
-        debug_scene_log_failure.store(true);
+        debug_faults.helper_start_failure_at.store(2);
+        debug_faults.log_failure.store(true);
         std::vector<SceneModelLoadRequest> helper_requests;
         for (size_t index = 0; index < 3; ++index) {
             SceneModelLoadRequest request;
@@ -473,49 +595,15 @@ Canvas3DSceneLoaderContractResult Canvas3D::Impl::debug_run_scene_loader_contrac
         if (scene_worker.joinable()) scene_worker.join();
         upload_pending_scene_models();
         result.copy_exception = result.copy_exception && !scene_worker_running.load() &&
-            !debug_scene_log_failure.load() && scene_model_worker_count_value.load() == 2 &&
+            !debug_faults.log_failure.load() && scene_model_worker_count_value.load() == 2 &&
             std::all_of(scene_models.begin(), scene_models.end(), [](const auto& entry) {
                 return entry.second.state == SceneModelGpu::State::Failed && !entry.second.error.empty();
             });
         record_release_counts();
 
         reset_scene_worker_state();
-        stop_scene_put_between_preview_worker();
         ModelLoaderClient::debug_reset_counts();
-        g_debug_put_between_derive_throw_countdown.store(1);
-        start_scene_put_between_preview_worker();
-        if (scene_put_between_preview_worker.joinable()) {
-            ScenePutBetweenPreviewJob job;
-            job.sequence = 1;
-            job.geometry_generation = 1;
-            job.request.key = "put-between-failure";
-            job.request.source_path = valid_model_path;
-            job.request.put_between.enabled = true;
-            {
-                std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
-                scene_put_between_preview_latest_sequence = job.sequence;
-                scene_put_between_preview_pending = std::move(job);
-                scene_put_between_preview_completed.reset();
-            }
-            scene_put_between_preview_cv.notify_one();
-            for (int attempt = 0; attempt < 5000; ++attempt) {
-                {
-                    std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
-                    if (scene_put_between_preview_completed) {
-                        const ScenePutBetweenPreviewResult& completed =
-                            *scene_put_between_preview_completed;
-                        result.put_between_exception = completed.source &&
-                            !completed.source->ok && !completed.derived.ok &&
-                            completed.derived.error.find(
-                                "debug injected PutBetween derivation failure") !=
-                                std::string::npos;
-                        break;
-                    }
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-        }
-        stop_scene_put_between_preview_worker();
+        result.put_between_exception = debug_check_put_between_preview_worker(valid_model_path);
         record_release_counts();
 
         auto start_artificial_worker = [&]() {

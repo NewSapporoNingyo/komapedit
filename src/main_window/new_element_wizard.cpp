@@ -1370,7 +1370,7 @@ void App::rebuild_new_element_wizard_form() {
 
 bool App::apply_new_element_insert() {
     EditTimingScope operation(*this, "apply");
-    GuiTiming::Stage timing("insert.prepare_apply");
+    GuiTiming::Stage timing(kme::timing::GuiStage::InsertPrepareApply);
     if (!edit_actions_available()) return false;
     const std::vector<NewElementTemplate>& templates = new_element_templates();
     NewElementWizardState& wizard = new_element_wizard_;
@@ -1428,20 +1428,7 @@ bool App::apply_new_element_insert() {
             ++section_value_count;
             continue;
         }
-        const std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
-        if (field.required && value.empty()) {
-            set_program_status("status.edit.required_field");
-            return false;
-        }
-        if (!validate_and_canonicalize_edit_field(field, true)) {
-            if (tpl.row_kind == "station.put" &&
-                (field.key == "margin1" || field.key == "margin2")) {
-                set_program_status("status.edit.station_margin_invalid");
-            } else {
-                set_program_status("status.edit.invalid_number");
-            }
-            return false;
-        }
+        if (!validated_edit_form_value(field, tpl.row_kind, true)) return false;
         if (is_repeater_structure_key_field(field)) {
             ++repeater_structure_key_count;
         }
@@ -1546,8 +1533,7 @@ bool App::apply_new_element_insert() {
             return false;
         }
 
-        const repeater_linkage::Linkage linkage =
-            repeater_linkage::pair_linkage(table_repeater_events(model_.repeaters));
+        const auto& linkage = model_.repeater_links;
         if (wizard.repeater_add_end && repeater_linkage::chain_at_distance(
                 linkage, repeater_key, repeater_end_distance, true)) {
             wizard.repeater_extra_end_prompt_requested = true;
@@ -1731,7 +1717,7 @@ bool App::apply_new_element_insert() {
         created_element_request
         ? created_element_request
         : wizard.return_inspector_request;
-    timing.next("insert.apply");
+    timing.next(kme::timing::GuiStage::InsertApply);
     if (!apply_edit_ledger_to_preview(candidate, reload_request, false)) {
         if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
             !distance_resolution_workflow_.retry_requested &&
@@ -1824,9 +1810,6 @@ void App::render_new_element_wizard() {
                               wizard.selected_template == template_index)) {
             if (wizard.selected_template != template_index) wizard.target_candidates_built = false;
             wizard.selected_template = template_index;
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s\n\n%s", tpl.syntax, usage.c_str());
         }
         ImGui::PushStyleColor(ImGuiCol_Text, dim_text);
         render_new_element_usage_text(usage);

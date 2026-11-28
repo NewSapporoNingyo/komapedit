@@ -2304,6 +2304,109 @@ struct UpdateBatch {
     }
 };
 
+void review_format_contract() {
+    TempFixture fixture;
+    const auto sound = fixture.directory / "review-sound.csv";
+    const auto sound3d = fixture.directory / "review-sound3d.csv";
+    const std::string original =
+        "BveTs Sound List 2.00\r\n"
+        "omit,omit.wav\r\n"
+        "blank,blank.wav,\r\n"
+        "valid,valid.wav,3\r\n"
+        "bad,bad.wav,abc # keep this comment\r\n"
+        "zero,zero.wav,0\r\n"
+        "negative,negative.wav,-1\r\n"
+        "overflow,overflow.wav,999999999999999999999\r\n";
+    std::ofstream(sound, std::ios::binary) << original;
+    std::ofstream(sound3d, std::ios::binary) << original;
+    std::ofstream map(fixture.map_path, std::ios::binary);
+    map
+        << "BveTs Map 2.02\n"
+           "0; Sound.Load('review-sound.csv'); Sound3D.Load('review-sound3d.csv');\n"
+           "5; Curve.Begin(300,0);\n"
+           "15; Curve.Interpolate(# note\n);\n"
+           "25; Curve.End(// note\n);\n"
+           "$unit = rand(); $scaled = rand(5);\n"
+           "$valid = $unit + $scaled + pow(2,3);\n"
+           "$extra = abs(1,2);\n"
+           "$few = pow(1);\n"
+           "$negative = rand(-1);\n"
+           "$zero = rand(0);\n"
+           "$nan = rand(sqrt(-1));\n"
+           "$extra_rand = rand(1,2);\n"
+           "$tiny_limit = 1e-200 * 5e-124;\n";
+    for (int i = 0; i < 8; ++i) map << "$tiny = rand($tiny_limit);\n";
+    map << "100;\n";
+    map.close();
+    {
+        std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+        diagnostic_logs.clear();
+    }
+    kv_set_log_callback(diagnostic_log_callback);
+    MapHandle handle(kv_load_map_ex(fixture.map_path.u8string().c_str(), 25, 0));
+    kv_set_log_callback(nullptr);
+    check(handle.value != nullptr, "review format fixture loads");
+    KvMapSnapshot snapshot{};
+    if (!handle.value || !kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                               &snapshot, sizeof(snapshot))) {
+        check(false, "review format snapshot is available");
+        return;
+    }
+    check(snapshot.curve_count == 3 && snapshot.curves[1].argument_count == 0 &&
+          snapshot.curves[2].argument_count == 0, "comments preserve zero-argument curve forms");
+    bool unit_in_range = false;
+    bool scaled_in_range = false;
+    size_t tiny_in_range = 0;
+    for (size_t i = 0; i < snapshot.variable_assignment_count; ++i) {
+        const auto& row = snapshot.variable_assignments[i];
+        if (row.value.kind != KV_VALUE_NUMBER) continue;
+        const auto name = map_string(snapshot, row.normalized_name);
+        const double value = row.value.number_value;
+        if (name == "unit") unit_in_range = value >= 0.0 && value < 1.0;
+        if (name == "scaled") scaled_in_range = value >= 0.0 && value < 5.0;
+        if (name == "tiny" && value == 0.0) ++tiny_in_range;
+    }
+    check(unit_in_range && scaled_in_range, "rand preserves the half-open intervals");
+    check(tiny_in_range == 8, "rand excludes the upper bound of the smallest positive interval");
+    const auto saw = [](std::string_view needle, std::string_view file) {
+        return std::any_of(diagnostic_logs.begin(), diagnostic_logs.end(), [&](const auto& log) {
+            return log.find(needle) != std::string::npos && log.find(file) != std::string::npos;
+        });
+    };
+    check(saw("abs expects one argument", "map.txt") &&
+          saw("pow expects two arguments", "map.txt") &&
+          saw("rand expects zero or one argument", "map.txt") &&
+          saw("rand upper bound must be positive and finite", "map.txt"),
+          "invalid math calls produce diagnostics");
+    check(saw("bufferCount must be a positive integer", "review-sound.csv") &&
+          saw("bufferCount must be a positive integer", "review-sound3d.csv"),
+          "both sound lists report explicit invalid counts");
+    const std::array<int, 7> expected{1, 1, 3, 1, 1, 1, 1};
+    check(snapshot.sound_list_count == 2 * expected.size(), "all sound source rows remain editable");
+    if (snapshot.sound_list_count != 2 * expected.size()) return;
+    for (size_t i = 0; i < snapshot.sound_list_count; ++i) {
+        check(snapshot.sound_list[i].buffer_count == expected[i % expected.size()],
+              "sound buffers use typed defaults and values");
+    }
+    const auto& target = snapshot.sound_list[3];
+    const auto& source = snapshot.source_files[target.metadata.source_file_index];
+    UpdateBatch update(map_string(snapshot, target.metadata.edit_id),
+                       map_string(snapshot, source.source_hash), "1", "bufferCount");
+    const auto bytes = [](const auto& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), {});
+    };
+    KvEditReportSnapshot report{};
+    check(kv_edit_apply_to_memory_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+          report.ok && bytes(sound) == original, "sound repair Apply leaves disk untouched");
+    check(kv_edit_commit_typed(handle.value, &report, sizeof(report)) && report.ok,
+          "sound repair Save succeeds");
+    auto corrected = original;
+    corrected.replace(corrected.find("abc"), 3, "1");
+    check(bytes(sound) == corrected && bytes(sound3d) == original,
+          "sound repair writes the explicit field and preserves comments and untouched lists");
+}
+
 struct MultiFieldUpdateBatch {
     std::string change_id;
     std::string edit_id;
@@ -11703,9 +11806,20 @@ int edit_contract() {
             map_string(baseline, other.metadata.edit_id);
         const KvSourceFileRow& other_source =
             baseline.source_files[other.metadata.source_file_index];
+        const std::string other_source_hash = map_string(baseline, other_source.source_hash);
+        const auto check_parameter = [&](const char* field, const char* value,
+                                         bool expected, const char* description) {
+            UpdateBatch candidate(other_edit_id, other_source_hash, value, field);
+            KvEditReportSnapshot report{};
+            check(kv_edit_dry_run_typed(handle.value, &candidate.batch, &report, sizeof(report)) &&
+                  (report.ok != 0) == expected, description);
+        };
+        check_parameter("parameter01", "0", false, "leading-zero same-value update is rejected");
+        check_parameter("parameter01", "4.25", false, "leading-zero changed value is rejected");
+        check_parameter("parameter999999999999999999999999", "4.25", false,
+                        "unrepresentable other-track parameter index is rejected");
         UpdateBatch other_update(
-            other_edit_id, map_string(baseline, other_source.source_hash),
-            "4.25", "parameter0");
+            other_edit_id, other_source_hash, "4.25", "parameter0");
         KvEditReportSnapshot other_report{};
         {
             std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
@@ -13513,7 +13627,10 @@ int main(int argc, char** argv) {
         return failures == 0 ? 0 : 1;
     }
     if (mode == "geometry") return geometry_projection_contract() == 0 ? 0 : 1;
-    if (mode == "edit") return edit_contract() == 0 ? 0 : 1;
+    if (mode == "edit") {
+        review_format_contract();
+        return edit_contract() == 0 && failures == 0 ? 0 : 1;
+    }
     if (mode == "slop") {
         untouched_object_key_contract();
         section_sparse_bounds_contract();

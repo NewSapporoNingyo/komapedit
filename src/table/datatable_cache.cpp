@@ -68,6 +68,7 @@ void append_change_point_rows(const std::vector<TableRow>& source_rows,
                               float& distance_width,
                               float& file_path_width) {
     distance_width = 0.0f;
+    file_path_width = 200.0f;
     expand_width_for_text(distance_width, columns[distance_column].header);
     cached_rows.reserve(source_rows.size());
     for (size_t row_index = 0; row_index < source_rows.size(); ++row_index) {
@@ -145,9 +146,11 @@ std::string format_repeater_file_path_tooltip(const std::string& begin_path, con
 } // namespace
 
 void App::ensure_table_cache() {
+    const ImFont* font = ImGui::GetFont();
     const float font_size = ImGui::GetFontSize();
     const float cell_padding_x = ImGui::GetStyle().CellPadding.x;
-    if (table_cache_.valid &&
+    if (table_cache_.valid && table_cache_.font == font &&
+        table_cache_.language == lang_ && table_cache_.dpi_scale == dpi_scale_ &&
         std::abs(table_cache_.font_size - font_size) < 0.01f &&
         std::abs(table_cache_.cell_padding_x - cell_padding_x) < 0.01f) {
         return;
@@ -155,8 +158,11 @@ void App::ensure_table_cache() {
 
     TableUiCache cache;
     cache.valid = true;
+    cache.font = font;
     cache.font_size = font_size;
     cache.cell_padding_x = cell_padding_x;
+    cache.dpi_scale = dpi_scale_;
+    cache.language = lang_;
 
     cache.creator_message_rows.reserve(model_.creator_messages.size());
     for (const TableRow& row : model_.creator_messages) {
@@ -413,8 +419,7 @@ void App::ensure_table_cache() {
 
     cache.repeater_interval_width = 0.0f;
     expand_width_for_text(cache.repeater_interval_width, k_repeater_columns[k_repeater_interval_column].header);
-    const repeater_linkage::Linkage repeater_links =
-        repeater_linkage::pair_linkage(table_repeater_events(model_.repeaters));
+    const auto& repeater_links = model_.repeater_links;
     cache.repeater_rows.reserve(repeater_links.segments.size());
     for (const auto& segment : repeater_links.segments) {
         const TableRow& row = model_.repeaters[segment.begin_source_index];
@@ -622,8 +627,6 @@ void App::ensure_table_cache() {
 void App::refresh_speed_limit_table_cache() {
     if (!table_cache_.valid) return;
     table_cache_.speed_limit_rows.clear();
-    table_cache_.speed_limit_distance_width = 110.0f;
-    table_cache_.speed_limit_file_path_width = 200.0f;
     append_change_point_rows(model_.speed_limit_rows, k_speed_limit_columns,
                              k_speed_limit_distance_column,
                              k_speed_limit_file_path_column,

@@ -333,21 +333,31 @@ static std::string canvas3d_scene_table_marker_label(
 }
 
 void sort_canvas3d_scene_markers(std::vector<Canvas3DSceneMarker>& markers) {
-    std::stable_sort(markers.begin(), markers.end(),
-                     [](const Canvas3DSceneMarker& a,
-                        const Canvas3DSceneMarker& b) {
-                         if (a.track_point.distance != b.track_point.distance) {
-                             return a.track_point.distance < b.track_point.distance;
-                         }
-                         return normalize_track_lookup_key(a.track_key) <
-                             normalize_track_lookup_key(b.track_key);
-                     });
+    struct OrderedMarker {
+        double distance;
+        std::string track_key;
+        size_t index;
+    };
+    std::vector<OrderedMarker> order;
+    order.reserve(markers.size());
+    for (size_t i = 0; i < markers.size(); ++i) {
+        order.push_back({markers[i].track_point.distance,
+                         normalize_track_lookup_key(markers[i].track_key), i});
+    }
+    std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) {
+        if (a.distance != b.distance) return a.distance < b.distance;
+        return a.track_key < b.track_key;
+    });
+    std::vector<Canvas3DSceneMarker> sorted;
+    sorted.reserve(markers.size());
+    for (const auto& marker : order) sorted.push_back(std::move(markers[marker.index]));
+    markers.swap(sorted);
 }
 
 void populate_canvas3d_scene_markers(
     Canvas3DScene& scene, const MapModel& model,
     const scene_track_sampling::PlacementTrackLookup& placement_tracks) {
-    kme::timing::GuiTiming::Stage edit_timing("scene.marker_recipes");
+    kme::timing::GuiTiming::Stage edit_timing(kme::timing::GuiStage::SceneMarkerRecipes);
     scene.markers.clear();
     const Canvas3DTrackPath* own_track = scene_own_track_path(scene);
     if (!own_track || own_track->points.empty()) return;
@@ -741,24 +751,30 @@ void populate_canvas3d_scene_draw_distances(Canvas3DScene& scene, const MapModel
     scene.draw_distance_changes.clear();
     if (model.draw_distances.empty()) return;
 
-    std::vector<const TableRow*> rows;
+    struct DrawDistanceRow {
+        double distance;
+        double order;
+        double value;
+    };
+    std::vector<DrawDistanceRow> rows;
     rows.reserve(model.draw_distances.size());
     for (const TableRow& row : model.draw_distances) {
         const double distance = table_cell_number(row, "distance");
-        if (std::isfinite(distance)) rows.push_back(&row);
+        if (std::isfinite(distance)) {
+            rows.push_back({distance, table_cell_number(row, "order"),
+                            table_cell_number(row, "value")});
+        }
     }
-    std::stable_sort(rows.begin(), rows.end(), [](const TableRow* a, const TableRow* b) {
-        const double a_distance = table_cell_number(*a, "distance");
-        const double b_distance = table_cell_number(*b, "distance");
-        if (a_distance != b_distance) return a_distance < b_distance;
-        return table_cell_number(*a, "order") < table_cell_number(*b, "order");
+    std::stable_sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+        if (a.distance != b.distance) return a.distance < b.distance;
+        return a.order < b.order;
     });
 
     scene.draw_distance_changes.reserve(rows.size());
-    for (const TableRow* row : rows) {
+    for (const auto& row : rows) {
         Canvas3DSceneDrawDistanceChange change;
-        change.distance = table_cell_number(*row, "distance");
-        const double raw_value = table_cell_number(*row, "value");
+        change.distance = row.distance;
+        const double raw_value = row.value;
         change.value = !std::isfinite(raw_value) || raw_value < 0.0
             ? 0.0
             : std::round(raw_value / static_cast<double>(k_scene_draw_distance_step_m)) *
@@ -923,8 +939,7 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         append_signal_instance(model.signals[row_index], row_index);
     }
 
-    const repeater_linkage::Linkage linkage =
-        repeater_linkage::pair_linkage(table_repeater_events(model.repeaters));
+    const auto& linkage = model.repeater_links;
     scene.repeaters.reserve(linkage.segments.size());
     for (const repeater_linkage::Segment& linked : linkage.segments) {
         if (linked.begin_source_index >= model.repeaters.size()) continue;

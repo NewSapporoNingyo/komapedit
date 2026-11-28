@@ -148,7 +148,14 @@ void assign_bounds(MlMeshData& out) {
     out.radius = std::max(static_cast<float>(radius), 0.001f);
 }
 
-MlMeshData load_with_assimp(const std::string& path_utf8) {
+struct ImportedModel {
+    MlMeshData mesh;
+    MlModelLoadStatus status;
+};
+
+ImportedModel copy_assimp_scene(const aiScene& scene, const std::filesystem::path& model_dir);
+
+ImportedModel load_with_assimp(const std::string& path_utf8) {
     const std::filesystem::path input_path = path_from_utf8(path_utf8);
     const std::string bytes = read_binary_file(input_path);
     if (bytes.empty()) throw std::runtime_error("file is empty: " + path_utf8);
@@ -173,13 +180,20 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
         if (error.empty()) error = "Assimp did not return any mesh";
         throw std::runtime_error(error);
     }
+    return copy_assimp_scene(*scene, model_dir);
+}
 
+ImportedModel copy_assimp_scene(const aiScene& scene, const std::filesystem::path& model_dir) {
+    const bool white_material = scene.mNumMaterials == 0;
+    if (!white_material && !scene.mMaterials) {
+        throw std::runtime_error("Assimp returned no material array");
+    }
     size_t vertex_count = 0;
     size_t index_count = 0;
     size_t part_count = 0;
-    for (unsigned int mesh_index = 0; mesh_index < scene->mNumMeshes; ++mesh_index) {
-        const aiMesh* mesh = scene->mMeshes[mesh_index];
-        if (!mesh) continue;
+    for (unsigned int mesh_index = 0; mesh_index < scene.mNumMeshes; ++mesh_index) {
+        const aiMesh* mesh = scene.mMeshes[mesh_index];
+        if (!mesh) throw std::runtime_error("Assimp returned an empty mesh slot");
         vertex_count += mesh->mNumVertices;
         size_t mesh_index_count = 0;
         for (unsigned int face_index = 0; face_index < mesh->mNumFaces; ++face_index) {
@@ -203,7 +217,7 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
     out.vertices = static_cast<MlVertex*>(std::malloc(sizeof(MlVertex) * vertex_count));
     out.indices = static_cast<unsigned int*>(std::malloc(sizeof(unsigned int) * index_count));
     out.parts = static_cast<MlMeshPart*>(std::malloc(sizeof(MlMeshPart) * part_count));
-    const size_t material_count = std::max<size_t>(scene->mNumMaterials, 1);
+    const size_t material_count = white_material ? 1 : scene.mNumMaterials;
     out.materials = static_cast<MlMaterial*>(std::calloc(material_count, sizeof(MlMaterial)));
     if (!out.vertices || !out.indices || !out.parts || !out.materials) {
         throw std::runtime_error("memory allocation failed");
@@ -212,42 +226,40 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
     out.index_count = index_count;
     out.part_count = part_count;
     out.material_count = material_count;
+    if (white_material) out.materials[0] = {nullptr, {1.0f, 1.0f, 1.0f, 1.0f}};
+    for (unsigned int material_index = 0; material_index < scene.mNumMaterials; ++material_index) {
+        const aiMaterial* material = scene.mMaterials[material_index];
+        if (!material) throw std::runtime_error("Assimp returned an empty material slot");
 
-    for (size_t i = 0; i < out.material_count; ++i) {
-        out.materials[i].diffuse[0] = 1.0f;
-        out.materials[i].diffuse[1] = 1.0f;
-        out.materials[i].diffuse[2] = 1.0f;
-        out.materials[i].diffuse[3] = 1.0f;
-    }
-    for (unsigned int material_index = 0; material_index < scene->mNumMaterials; ++material_index) {
-        const aiMaterial* material = scene->mMaterials[material_index];
-        if (!material) continue;
-
-        aiColor4D diffuse(1.0f, 1.0f, 1.0f, 1.0f);
-        if (material->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse) == AI_SUCCESS) {
-            out.materials[material_index].diffuse[0] = diffuse.r;
-            out.materials[material_index].diffuse[1] = diffuse.g;
-            out.materials[material_index].diffuse[2] = diffuse.b;
-            out.materials[material_index].diffuse[3] = diffuse.a;
+        aiColor4D color(1.0f, 1.0f, 1.0f, 1.0f);
+        aiColor4D imported;
+        if (material->Get(AI_MATKEY_COLOR_DIFFUSE, imported) == AI_SUCCESS) {
+            color = imported;
         }
         float opacity = 1.0f;
         if (material->Get(AI_MATKEY_OPACITY, opacity) == AI_SUCCESS) {
-            out.materials[material_index].diffuse[3] = std::clamp(opacity, 0.0f, 1.0f);
+            color.a = std::isnan(opacity) ? 0.0f : opacity;
+        } else if (!std::isfinite(color.a)) {
+            color.a = 0.0f;
         }
+        MlMaterial& output = out.materials[material_index];
+        output.diffuse[0] = color.r;
+        output.diffuse[1] = color.g;
+        output.diffuse[2] = color.b;
+        output.diffuse[3] = std::clamp(color.a, 0.0f, 1.0f);
 
         aiString texture_path;
         if (material->GetTexture(aiTextureType_DIFFUSE, 0, &texture_path) == AI_SUCCESS) {
             std::string resolved = resolved_texture_path(model_dir, texture_path);
-            if (!resolved.empty()) out.materials[material_index].texture_path = copy_c_string(resolved);
+            if (!resolved.empty()) output.texture_path = copy_c_string(resolved);
         }
     }
 
     size_t vertex_offset = 0;
     size_t index_offset = 0;
     size_t part_offset = 0;
-    for (unsigned int mesh_index = 0; mesh_index < scene->mNumMeshes; ++mesh_index) {
-        const aiMesh* mesh = scene->mMeshes[mesh_index];
-        if (!mesh) continue;
+    for (unsigned int mesh_index = 0; mesh_index < scene.mNumMeshes; ++mesh_index) {
+        const aiMesh* mesh = scene.mMeshes[mesh_index];
 
         for (unsigned int vertex_index = 0; vertex_index < mesh->mNumVertices; ++vertex_index) {
             const aiVector3D& p = mesh->mVertices[vertex_index];
@@ -262,14 +274,20 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
         for (unsigned int face_index = 0; face_index < mesh->mNumFaces; ++face_index) {
             const aiFace& face = mesh->mFaces[face_index];
             if (face.mNumIndices != 3) continue;
-            out.indices[index_offset++] = static_cast<unsigned int>(vertex_offset + face.mIndices[0]);
-            out.indices[index_offset++] = static_cast<unsigned int>(vertex_offset + face.mIndices[1]);
-            out.indices[index_offset++] = static_cast<unsigned int>(vertex_offset + face.mIndices[2]);
+            for (unsigned int i = 0; i < 3; ++i) {
+                const unsigned int vertex = face.mIndices[i];
+                if (vertex >= mesh->mNumVertices) {
+                    throw std::runtime_error("Assimp returned a triangle index outside its mesh");
+                }
+                out.indices[index_offset++] = static_cast<unsigned int>(vertex_offset + vertex);
+            }
         }
         size_t mesh_index_count = index_offset - part_start;
         if (mesh_index_count > 0) {
-            unsigned int material_index = mesh->mMaterialIndex;
-            if (material_index >= out.material_count) material_index = 0;
+            const unsigned int material_index = white_material ? 0 : mesh->mMaterialIndex;
+            if (material_index >= out.material_count) {
+                throw std::runtime_error("Assimp returned a mesh material index outside its scene");
+            }
             out.parts[part_offset++] = {
                 static_cast<unsigned int>(part_start),
                 static_cast<unsigned int>(mesh_index_count),
@@ -281,7 +299,7 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
 
     assign_bounds(out);
     cleanup.release();
-    return out;
+    return {out, white_material ? ML_LOAD_WHITE_MATERIAL : ML_LOAD_OK};
 }
 
 } // namespace
@@ -289,7 +307,7 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
 extern "C" {
 
 ML_API unsigned int ml_api_version(void) {
-    return 2;
+    return ML_API_VERSION;
 }
 
 ML_API int ml_load_model(const char* path, MlMeshData* out_model) {
@@ -300,9 +318,10 @@ ML_API int ml_load_model(const char* path, MlMeshData* out_model) {
     *out_model = {};
     try {
         if (!path || !*path) throw std::runtime_error("model path is empty");
-        *out_model = load_with_assimp(path);
+        const auto imported = load_with_assimp(path);
+        *out_model = imported.mesh;
         set_last_error({});
-        return 1;
+        return imported.status;
     } catch (const std::exception& e) {
         set_last_error(e.what());
         return 0;

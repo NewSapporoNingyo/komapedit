@@ -531,11 +531,14 @@ void Canvas3D::Impl::append_scene_marker_text(
     float center_y,
     float max_width) {
     if (text.empty() || font_size <= 0.0f || baked.Size <= 0.0f) return;
-    const char* text_begin = text.c_str();
-    const char* text_end = text_begin + text.size();
-    float max_line_width = 0.0f;
-    size_t line_count = 0;
-    for (const char* line_begin = text_begin;;) {
+    struct TextLine {
+        const char* begin;
+        const char* end;
+        const char* newline;
+        float width;
+    };
+    const char* text_end = text.data() + text.size();
+    const auto measure_line = [&](const char* line_begin) {
         const char* line_end = std::find(line_begin, text_end, '\n');
         const char* display_end = line_end;
         if (display_end > line_begin && *(display_end - 1) == '\r') {
@@ -544,10 +547,15 @@ void Canvas3D::Impl::append_scene_marker_text(
         const ImVec2 measured = font.CalcTextSizeA(
             font_size, std::numeric_limits<float>::max(), 0.0f,
             line_begin, display_end);
-        max_line_width = std::max(max_line_width, measured.x);
-        ++line_count;
-        if (line_end == text_end) break;
-        line_begin = line_end + 1;
+        return TextLine{line_begin, display_end, line_end, measured.x};
+    };
+    const TextLine first = measure_line(text.data());
+    float max_line_width = first.width;
+    std::vector<TextLine> remaining;
+    for (auto line = first; line.newline != text_end;) {
+        line = measure_line(line.newline + 1);
+        max_line_width = std::max(max_line_width, line.width);
+        remaining.push_back(line);
     }
     float scale = text_height / baked.Size;
     if (max_line_width > 0.0f) {
@@ -555,20 +563,12 @@ void Canvas3D::Impl::append_scene_marker_text(
     }
     const float line_height = font_size * scale;
     float top_y = center_y +
-        line_height * static_cast<float>(line_count) * 0.5f;
-    for (const char* line_begin = text_begin;;) {
-        const char* line_end = std::find(line_begin, text_end, '\n');
-        const char* display_end = line_end;
-        if (display_end > line_begin && *(display_end - 1) == '\r') {
-            --display_end;
-        }
-        const ImVec2 measured = font.CalcTextSizeA(
-            font_size, std::numeric_limits<float>::max(), 0.0f,
-            line_begin, display_end);
-        float cursor_x = measured.x * scale * -0.5f;
-        const char* cursor = line_begin;
-        while (cursor < display_end) {
-            const unsigned int codepoint = decode_scene_marker_utf8(cursor, display_end);
+        line_height * static_cast<float>(1 + remaining.size()) * 0.5f;
+    const auto append_line = [&](const TextLine& line) {
+        float cursor_x = line.width * scale * -0.5f;
+        const char* cursor = line.begin;
+        while (cursor < line.end) {
+            const unsigned int codepoint = decode_scene_marker_utf8(cursor, line.end);
             const ImFontGlyph* glyph = baked.FindGlyph(
                 static_cast<ImWchar>(codepoint));
             if (!glyph) continue;
@@ -581,10 +581,10 @@ void Canvas3D::Impl::append_scene_marker_text(
             }
             cursor_x += advance;
         }
-        if (line_end == text_end) break;
         top_y -= line_height;
-        line_begin = line_end + 1;
-    }
+    };
+    append_line(first);
+    for (const auto& line : remaining) append_line(line);
 }
 
 void Canvas3D::Impl::append_scene_marker_icon_glyph(
@@ -973,8 +973,8 @@ bool Canvas3D::Impl::rebuild_scene_marker_visible_indices(std::string& error) {
     error.clear();
     const auto map_index_buffer = [&](ID3D11Buffer* buffer, D3D11_MAPPED_SUBRESOURCE& mapped) {
 #ifndef NDEBUG
-        if (debug_scene_marker_map_failure_countdown > 0 &&
-            --debug_scene_marker_map_failure_countdown == 0) return E_FAIL;
+        if (debug_faults.marker_map_failure_countdown > 0 &&
+            --debug_faults.marker_map_failure_countdown == 0) return E_FAIL;
 #endif
         return context->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
     };
@@ -1057,7 +1057,7 @@ bool Canvas3D::Impl::rebuild_scene_marker_visible_indices(std::string& error) {
 }
 
 bool Canvas3D::Impl::build_scene_marker_chunks(std::string& error) {
-    kme::timing::GuiTiming::Stage edit_timing("scene.marker_gpu");
+    kme::timing::GuiTiming::Stage edit_timing(kme::timing::GuiStage::SceneMarkerGpu);
     error.clear();
     release_scene_marker_chunks();
     scene_marker_chunks.resize(scene_chunks.size());
@@ -1253,9 +1253,5 @@ bool Canvas3D::Impl::set_scene_marker_visibility(
     if (scene_marker_visibility == visibility && !scene_marker_indices_dirty) return true;
     scene_marker_visibility = visibility;
     if (!scene_active || scene_marker_chunks.empty()) return true;
-    if (!rebuild_scene_marker_visible_indices(error)) {
-        if (!error.empty()) scene_last_error = error;
-        return false;
-    }
-    return true;
+    return rebuild_scene_marker_visible_indices(error);
 }

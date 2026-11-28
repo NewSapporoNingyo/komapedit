@@ -12,6 +12,7 @@
 #include "own_track_transition_linkage.h"
 #include "repeater_linkage.h"
 
+#include <charconv>
 #include <tuple>
 
 namespace kme::maploader::detail {
@@ -28,7 +29,7 @@ using SemanticElement = SemanticElementSnapshot;
 using EditChangesView = std::vector<const MapEditChange*>;
 
 SemanticSnapshot semantic_snapshot_for_context(MapContext& ctx) {
-    MapTiming::Stage timing("semantic.snapshot");
+    MapTiming::Stage timing(kme::timing::MapStage::SemanticSnapshot);
     return build_semantic_map_snapshot(ctx);
 }
 
@@ -61,8 +62,6 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
 
 struct ResourceListEditSpec {
     ResourceListLoadKind kind;
-    const char* header;
-    double minimum_version;
     const char* error_key;
     const char* content_row_kind;
 };
@@ -70,19 +69,19 @@ struct ResourceListEditSpec {
 const ResourceListEditSpec* resource_list_edit_spec_for_kind(
     ResourceListLoadKind kind) {
     static constexpr ResourceListEditSpec k_station{
-        ResourceListLoadKind::Station, "BveTs Station List ", 0.04,
+        ResourceListLoadKind::Station,
         "station", "station.list"};
     static constexpr ResourceListEditSpec k_structure{
-        ResourceListLoadKind::Structure, "BveTs Structure List ", 1.0,
+        ResourceListLoadKind::Structure,
         "structure", "structure.model"};
     static constexpr ResourceListEditSpec k_signal{
-        ResourceListLoadKind::Signal, "BveTs Signal Aspects List ", 2.0,
+        ResourceListLoadKind::Signal,
         "signal", "signal.aspect"};
     static constexpr ResourceListEditSpec k_sound{
-        ResourceListLoadKind::Sound, "BveTs Sound List ", 2.0,
+        ResourceListLoadKind::Sound,
         "sound", "sound.list"};
     static constexpr ResourceListEditSpec k_sound_3d{
-        ResourceListLoadKind::Sound3D, "BveTs Sound List ", 2.0,
+        ResourceListLoadKind::Sound3D,
         "sound", "sound3D.list"};
     switch (kind) {
     case ResourceListLoadKind::Station: return &k_station;
@@ -259,7 +258,7 @@ std::string newline_text(const std::string& newline) {
 }
 
 SourcePatch load_source_patch(const MapContext& ctx, const SourceFileRecord& record) {
-    MapTiming::Stage timing("source.patch_read_decode_hash");
+    MapTiming::Stage timing(kme::timing::MapStage::SourcePatchReadDecodeHash);
     const std::string bytes = read_binary_file(path_from_utf8(record.file_path));
     const auto override_it = ctx.source_overrides.find(record.source_key);
     const auto& expected = override_it == ctx.source_overrides.end()
@@ -330,8 +329,9 @@ std::pair<size_t, size_t> source_range_in_text(const SourcePatch& patch,
 
 std::pair<size_t, size_t> safe_statement_removal_range(
     const SourcePatch& patch,
-    const std::pair<size_t, size_t>& statement_range) {
-    const size_t line_start = text_line_start_at(patch.text, statement_range.first);
+    const std::pair<size_t, size_t>& statement_range,
+    int statement_line) {
+    const size_t line_start = patch.line_starts[static_cast<size_t>(statement_line - 1)];
     const TextLineSpan source_line = text_line_span(patch.text, line_start);
     if (statement_range.second > source_line.content_end) return statement_range;
     size_t line_end = source_line.content_end;
@@ -358,9 +358,7 @@ std::string fallback_edit_number(double value) {
     if (!std::isfinite(value)) {
         throw std::runtime_error("invalid numeric edit fallback");
     }
-    std::ostringstream out;
-    out << std::setprecision(15) << value;
-    std::string text = out.str();
+    std::string text = format_stream_decimal(value, 15);
     if (text == "-0") return "0";
     return text;
 }
@@ -762,6 +760,7 @@ std::string csv_field(const std::string& text) {
 
 struct CsvSourceLine {
     std::vector<std::string_view> fields;
+    std::vector<std::string> values;
     std::string_view comment_suffix;
 };
 
@@ -771,43 +770,29 @@ bool editable_csv_list_values_equivalent(const char* field_name,
     if (std::string_view(field_name) != "bufferCount") {
         return edited == source;
     }
-    const int edited_value = edited.empty() ? 1 : std::stoi(edited);
-    return edited_value == parse_sound_buffer_count(source);
+    const auto source_value = parse_sound_buffer_count(source);
+    return source_value.kind != SoundBufferCountKind::Invalid &&
+        parse_sound_buffer_count(edited).value == source_value.value;
 }
 
 CsvSourceLine split_csv_source_line(std::string_view line) {
     CsvSourceLine result;
-    size_t field_start = 0;
-    bool quoted = false;
-    for (size_t i = 0; i < line.size(); ++i) {
-        const char ch = line[i];
-        if (ch == '"') {
-            if (quoted && i + 1 < line.size() && line[i + 1] == '"') {
-                ++i;
-            } else {
-                quoted = !quoted;
-            }
-            continue;
+    std::string value;
+    size_t stop = scan_csv_fields(line, true, [&](char ch) { value.push_back(ch); },
+        [&](std::string_view raw) {
+            result.fields.push_back(raw);
+            result.values.push_back(trim_field_copy(value));
+            value.clear();
+        });
+    if (stop != line.size()) {
+        if (result.values.size() == 1 && result.values.front().empty()) result.values.clear();
+        auto& last = result.fields.back();
+        while (!last.empty() && (last.back() == ' ' || last.back() == '\t')) {
+            last.remove_suffix(1);
+            --stop;
         }
-        if (quoted) continue;
-        if (ch == ',') {
-            result.fields.push_back(line.substr(field_start, i - field_start));
-            field_start = i + 1;
-            continue;
-        }
-        if (csv_comment_starts_at(line, i)) {
-            size_t comment_start = i;
-            while (comment_start > field_start &&
-                   (line[comment_start - 1] == ' ' || line[comment_start - 1] == '\t')) {
-                --comment_start;
-            }
-            result.fields.push_back(
-                line.substr(field_start, comment_start - field_start));
-            result.comment_suffix = line.substr(comment_start);
-            return result;
-        }
+        result.comment_suffix = line.substr(stop);
     }
-    result.fields.push_back(line.substr(field_start));
     return result;
 }
 
@@ -825,8 +810,7 @@ std::string build_editable_csv_list_statement(
         ? statement.raw_arguments
         : change.replacement_statement;
     const CsvSourceLine source = split_csv_source_line(source_text);
-    const std::vector<std::string> source_values =
-        parse_comma_separated_fields(source_text, true);
+    const auto& source_values = source.values;
     const size_t output_count =
         std::max(source.fields.size(), FieldCount);
 
@@ -1036,9 +1020,6 @@ std::string build_signal_aspect_statement(
     std::ostringstream out;
     size_t pos = 0;
     size_t structure_index = 0;
-    size_t main_structure_count = 0;
-    bool has_main_row = false;
-    bool has_secondary_row = false;
     while (pos <= source_text.size()) {
         const TextLineSpan source_line = text_line_span(source_text, pos);
         const size_t content_end = source_line.content_end;
@@ -1050,24 +1031,11 @@ std::string build_signal_aspect_statement(
             out << line;
         } else {
             const CsvSourceLine source = split_csv_source_line(line);
-            std::vector<std::string> semantic_fields =
-                parse_comma_separated_fields(std::string(line), true);
+            const auto& semantic_fields = source.values;
             if (semantic_fields.empty()) {
                 out << line;
             } else {
-                const bool main_row = !has_main_row;
-                if (main_row) {
-                    if (semantic_fields[0].empty()) {
-                        throw std::runtime_error(
-                            "Signal aspect source block has no main row");
-                    }
-                    has_main_row = true;
-                } else if (!semantic_fields[0].empty()) {
-                    throw std::runtime_error(
-                        "Signal aspect source block contains multiple main rows");
-                } else {
-                    has_secondary_row = true;
-                }
+                const bool main_row = !semantic_fields.front().empty();
 
                 if (delete_glare && !main_row) {
                     structure_index += semantic_fields.size() - 1;
@@ -1136,7 +1104,6 @@ std::string build_signal_aspect_statement(
                     }
                     out << source.comment_suffix;
                     structure_index += semantic_fields.size() - 1;
-                    if (main_row) main_structure_count = semantic_fields.size() - 1;
                 }
             }
         }
@@ -1149,21 +1116,16 @@ std::string build_signal_aspect_statement(
         pos = source_line.next_begin;
     }
 
-    const size_t source_structure_count = structure_index;
-    if (!has_main_row ||
-        source_structure_count != source_values.structure_keys.size()) {
-        throw std::runtime_error(
-            "Signal aspect source block field mapping is inconsistent");
-    }
+    const size_t source_structure_count = source_values.structure_keys.size();
     std::vector<std::string> added_glare_values;
     const size_t new_glare_count = shape && source_glare_count == 0
         ? shape->glare_count : add_glare_count.value_or(0);
     if (new_glare_count != 0) {
-        if (has_secondary_row) {
+        if (source_values.glare_row_count != 0) {
             throw std::runtime_error(
                 "Signal aspect already has a glare row");
         }
-        if (main_structure_count == 0 && !shape) {
+        if (source_values.main_structure_key_count == 0 && !shape) {
             throw std::runtime_error(
                 "Signal aspect main row requires at least one structure-key field");
         }
@@ -1746,6 +1708,23 @@ std::string build_gradient_statement(const MapEditChange& change,
         required_numeric_value_field(change, "gradient", row.gradient, &statement.raw_arguments));
 }
 
+size_t other_track_parameter_index(const std::string& field) {
+    const auto digits = other_track_parameter_digits(field);
+    if (digits.empty()) {
+        throw std::runtime_error("invalid other-track parameter field: " + field);
+    }
+    if (digits.size() > 1 && digits.front() == '0') {
+        throw std::runtime_error("other-track parameter index has a leading zero: " + field);
+    }
+    size_t index = 0;
+    const char* end = digits.data() + digits.size();
+    const auto parsed = std::from_chars(digits.data(), end, index);
+    if (parsed.ec != std::errc{} || parsed.ptr != end) {
+        throw std::runtime_error("other-track parameter index is too large: " + field);
+    }
+    return index;
+}
+
 std::string build_other_track_change_statement(
     const MapEditChange& change, const ParsedStatement& statement,
     const OtherTrackChange& row) {
@@ -1771,13 +1750,7 @@ std::string build_other_track_change_statement(
         if (field.first.compare(0, prefix.size(), prefix) != 0) {
             throw std::runtime_error("other-track method is read-only");
         }
-        const std::string suffix = field.first.substr(prefix.size());
-        if (suffix.empty() ||
-            suffix.find_first_not_of("0123456789") != std::string::npos) {
-            throw std::runtime_error("invalid other-track parameter field: " +
-                                     field.first);
-        }
-        const size_t index = static_cast<size_t>(std::stoull(suffix));
+        const size_t index = other_track_parameter_index(field.first);
         if (index >= args.size()) {
             throw std::runtime_error(
                 "other-track source statement has no " + field.first);
@@ -2775,6 +2748,18 @@ std::string build_resource_list_load_statement(const MapEditChange& change,
         "resource list");
 }
 
+void validate_resource_list_header_path(MapContext& ctx, const std::string& path,
+                                        const ResourceListEditSpec& spec) {
+    const auto& header = resource_list_header(spec.kind);
+    try {
+        (void)load_header_text(ctx, join_utf8_path(ctx.rootpath, path),
+                              header.prefix, header.minimum_version);
+    } catch (const std::exception& error) {
+        throw std::runtime_error(std::string("resource-list-header-mismatch:") +
+                                 spec.error_key + ": " + error.what());
+    }
+}
+
 void validate_resource_list_header(MapContext& ctx,
                                    const ParsedStatement& statement,
                                    const MapEditChange& change) {
@@ -2785,29 +2770,12 @@ void validate_resource_list_header(MapContext& ctx,
             "resource list edit has an unsupported source statement: " +
             statement.statement_kind);
     }
-    const std::string path = resource_list_path_from_change(change);
-    try {
-        (void)load_header_text(
-            ctx, join_path(ctx.rootpath, path), spec->header,
-            spec->minimum_version);
-    } catch (const std::exception& e) {
-        throw std::runtime_error(
-            std::string("resource-list-header-mismatch:") + spec->error_key +
-            ": " + e.what());
-    }
+    validate_resource_list_header_path(ctx, resource_list_path_from_change(change), *spec);
 }
 
 void validate_resource_list_insert_header(MapContext& ctx, const MapEditChange& change) {
     const ResourceListEditSpec* spec = resource_list_insert_spec_from_change(change);
-    const std::string path = resource_list_insert_path_from_change(change);
-    try {
-        (void)load_header_text(
-            ctx, join_path(ctx.rootpath, path), spec->header, spec->minimum_version);
-    } catch (const std::exception& e) {
-        throw std::runtime_error(
-            std::string("resource-list-header-mismatch:") + spec->error_key +
-            ": " + e.what());
-    }
+    validate_resource_list_header_path(ctx, resource_list_insert_path_from_change(change), *spec);
 }
 
 std::string insert_method_or_default(const MapEditChange& change, const char* fallback) {
@@ -2936,26 +2904,6 @@ void validate_insert_method(const MapEditChange& change,
     }
 }
 
-bool other_track_insert_parameter_index(std::string_view field_name, size_t& index) {
-    constexpr std::string_view prefix = "parameter";
-    if (field_name.rfind(prefix, 0) != 0 || field_name.size() == prefix.size()) {
-        return false;
-    }
-    const std::string_view suffix = field_name.substr(prefix.size());
-    if (suffix.size() > 1 && suffix.front() == '0') return false;
-    size_t value = 0;
-    for (const char ch : suffix) {
-        if (ch < '0' || ch > '9') return false;
-        const size_t digit = static_cast<size_t>(ch - '0');
-        if (value > (std::numeric_limits<size_t>::max() - digit) / 10) {
-            return false;
-        }
-        value = value * 10 + digit;
-    }
-    index = value;
-    return true;
-}
-
 size_t other_track_insert_parameter_count(const MapEditChange& change) {
     size_t count = 0;
     for (const auto& field : change.field_changes) {
@@ -2963,11 +2911,11 @@ size_t other_track_insert_parameter_count(const MapEditChange& change) {
             field.first == "trackKey") {
             continue;
         }
-        size_t index = 0;
-        if (!other_track_insert_parameter_index(field.first, index)) {
+        if (other_track_parameter_digits(field.first).empty()) {
             throw std::runtime_error(
                 "unsupported insert field " + field.first + " for " + change.row_kind);
         }
+        const size_t index = other_track_parameter_index(field.first);
         if (index == std::numeric_limits<size_t>::max()) {
             throw std::runtime_error("other-track insert parameter index is too large");
         }
@@ -3703,7 +3651,7 @@ struct DistancePlanningIndex {
     std::vector<std::vector<size_t>> anchors_by_file;
 
     explicit DistancePlanningIndex(const MapContext& ctx) : anchors_by_file(ctx.source_files.size()) {
-        MapTiming::Stage timing("plan.distance_index");
+        MapTiming::Stage timing(kme::timing::MapStage::PlanDistanceIndex);
         for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
             const ParsedStatement& statement = ctx.parsed_statements[i];
             std::string context_key = key_for_context(ctx, statement.source);
@@ -4170,89 +4118,35 @@ void collect_subtree_element_ids(
     MapContext& baseline,
     const std::vector<bool>& removed_statements,
     std::set<std::string>* deletions) {
-    if (!deletions || removed_statements.empty()) return;
-    bool any_removed = false;
-    for (size_t i = 0; i < removed_statements.size() && !any_removed; ++i) {
-        any_removed = removed_statements[i];
-    }
-    if (!any_removed) return;
-    auto exclude_rows = [&](const auto& rows, const char* kind) {
-        for (const auto& row : rows) {
-            const EditSourceRef& ref = row.edit_ref;
-            if (!ref.valid() || ref.statement_index >= removed_statements.size() ||
-                !removed_statements[ref.statement_index]) {
-                continue;
-            }
-            deletions->insert(element_edit_id(baseline, ref, kind));
-        }
+    if (!deletions || std::none_of(removed_statements.begin(), removed_statements.end(),
+                                  [](bool removed) { return removed; })) return;
+    const auto removed = [&](const EditSourceRef& ref) {
+        return ref.valid() && ref.statement_index < removed_statements.size() &&
+            removed_statements[ref.statement_index];
     };
-    exclude_rows(baseline.own_track, "own_track");
-    exclude_rows(baseline.curves, "curve");
-    exclude_rows(baseline.gradients, "gradient");
-    exclude_rows(baseline.other_track_changes, "otherTrack.change");
-    exclude_rows(baseline.station_puts, "station.put");
-    {
-        const auto entries = ordered_station_list_entries(baseline);
-        for (size_t i = 0; i < entries.size(); ++i) {
-            const StationListEntry& row = *entries[i];
-            const EditSourceRef& ref = row.edit_ref;
-            if (ref.valid() && ref.statement_index < removed_statements.size() &&
-                removed_statements[ref.statement_index]) {
-                deletions->insert(element_edit_id(baseline, ref, "station.list"));
+    const auto insert = [&](const char* kind, const EditSourceRef& ref) {
+        deletions->insert(element_edit_id(baseline, ref, kind));
+    };
+    visit_edit_row_families(baseline, ordered_station_list_entries(baseline),
+        [&](const char* kind, const auto& rows) {
+            for (const auto& row : rows) {
+                using Row = std::decay_t<decltype(row)>;
+                if constexpr (std::is_same_v<Row, const StationListEntry*>) {
+                    if (removed(row->edit_ref)) insert(kind, row->edit_ref);
+                } else if constexpr (std::is_same_v<Row, CreatorMessage>) {
+                    if (!row.include_refs.empty() &&
+                        std::all_of(row.include_refs.begin(), row.include_refs.end(), removed)) {
+                        insert(kind, row.edit_ref);
+                    }
+                } else if constexpr (std::is_same_v<Row, SoundListEntry>) {
+                    if (removed(row.edit_ref)) {
+                        insert(row.is_3d ? "sound3D.list" : kind, row.edit_ref);
+                    }
+                } else if (removed(row.edit_ref)) {
+                    insert(kind, row.edit_ref);
+                }
             }
-        }
-    }
-    exclude_rows(baseline.structure_loads, "structure.load");
-    exclude_rows(baseline.structure_puts, "structure.put");
-    exclude_rows(baseline.structure_betweens, "structure.between");
-    exclude_rows(baseline.structure_models, "structure.model");
-    exclude_rows(baseline.other_trains, "otherTrain.definition");
-    exclude_rows(baseline.other_train_structure_keys, "otherTrain.structureKey");
-    exclude_rows(baseline.other_train_sound_3d_keys, "otherTrain.sound3DKey");
-    exclude_rows(baseline.other_train_enables, "otherTrain.enable");
-    exclude_rows(baseline.other_train_stops, "otherTrain.stop");
-    exclude_rows(baseline.section_begins, "section.begin");
-    exclude_rows(baseline.section_speed_limits, "section.speedLimit");
-    exclude_rows(baseline.signal_aspects, "signal.aspect");
-    exclude_rows(baseline.signal_puts, "signal.put");
-    exclude_rows(baseline.beacons, "beacon.put");
-    exclude_rows(baseline.pretrains, "preTrain.pass");
-    {
-        for (const SoundListEntry& row : baseline.sound_list) {
-            const char* kind = row.is_3d ? "sound3D.list" : "sound.list";
-            const EditSourceRef& ref = row.edit_ref;
-            if (ref.valid() && ref.statement_index < removed_statements.size() &&
-                removed_statements[ref.statement_index]) {
-                deletions->insert(element_edit_id(baseline, ref, kind));
-            }
-        }
-    }
-    exclude_rows(baseline.map_sounds, "mapSound.play");
-    exclude_rows(baseline.map_sound_3d, "mapSound3D.put");
-    exclude_rows(baseline.rolling_noises, "rollingNoise.change");
-    exclude_rows(baseline.flange_noises, "flangeNoise.change");
-    exclude_rows(baseline.joint_noises, "jointNoise.play");
-    exclude_rows(baseline.repeaters, "repeater");
-    exclude_rows(baseline.irregularities, "irregularity.change");
-    exclude_rows(baseline.backgrounds, "background.change");
-    exclude_rows(baseline.adhesions, "adhesion.change");
-    exclude_rows(baseline.cab_illuminance, "cabIlluminance.change");
-    exclude_rows(baseline.fogs, "fog.change");
-    exclude_rows(baseline.light_ambient, "light.ambient");
-    for (const CreatorMessage& row : baseline.creator_messages) {
-        const bool all_removed = !row.include_refs.empty() && std::all_of(
-            row.include_refs.begin(), row.include_refs.end(), [&](const EditSourceRef& ref) {
-                return ref.valid() && ref.statement_index < removed_statements.size() &&
-                    removed_statements[ref.statement_index];
-            });
-        if (all_removed) deletions->insert(
-            element_edit_id(baseline, row.edit_ref, "creator.message"));
-    }
-    exclude_rows(baseline.light_diffuse, "light.diffuse");
-    exclude_rows(baseline.light_direction, "light.direction");
-    exclude_rows(baseline.legacy_fogs, "legacyFog.change");
-    exclude_rows(baseline.draw_distances, "drawDistance.change");
-    exclude_rows(baseline.speedlimits, "speedlimit");
+        });
 }
 
 void collect_include_subtree_removals(
@@ -4609,7 +4503,7 @@ void append_resolution_request(MapContext& ctx,
 
 const KvEditReportSnapshot& build_edit_report_snapshot(MapContext& ctx,
                                                        const MapEditReport& report) {
-    MapTiming::Stage timing("report.snapshot");
+    MapTiming::Stage timing(kme::timing::MapStage::ReportSnapshot);
     auto storage = std::make_unique<EditReportSnapshotStorage>();
     const size_t string_hint = report.changed_files.size() + report.warnings.size() +
         report.blocking_errors.size() + report.committed_files.size() * 2 +
@@ -4779,14 +4673,12 @@ void remove_transaction_artifact(const std::filesystem::path& path) noexcept {
 
 void write_new_binary_file_for_edit(const std::filesystem::path& path,
                                     const std::string& bytes) {
-#if defined(_WIN32)
-    HANDLE output = CreateFileW(path.wstring().c_str(), GENERIC_WRITE, 0, nullptr,
+    HANDLE output = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
                                 CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (output == INVALID_HANDLE_VALUE) {
         throw std::runtime_error(native_file_error(
             "temporary file creation", path, GetLastError()));
     }
-    bool closed = false;
     try {
         size_t offset = 0;
         while (offset < bytes.size()) {
@@ -4805,27 +4697,14 @@ void write_new_binary_file_for_edit(const std::filesystem::path& path,
             throw std::runtime_error(native_file_error(
                 "temporary file flush", path, GetLastError()));
         }
-        if (!CloseHandle(output)) {
-            throw std::runtime_error(native_file_error(
-                "temporary file close", path, GetLastError()));
-        }
-        closed = true;
     } catch (...) {
-        if (!closed) CloseHandle(output);
+        CloseHandle(output);
         throw;
     }
-#else
-    if (std::filesystem::exists(path)) {
-        throw std::runtime_error("temporary file already exists: " + path_to_utf8(path));
+    if (!CloseHandle(output)) {
+        throw std::runtime_error(native_file_error(
+            "temporary file close", path, GetLastError()));
     }
-    std::ofstream output(path, std::ios::binary | std::ios::out | std::ios::trunc);
-    if (!output) throw std::runtime_error("File open error: " + path_to_utf8(path));
-    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-    output.flush();
-    if (!output) throw std::runtime_error("File write error: " + path_to_utf8(path));
-    output.close();
-    if (output.fail()) throw std::runtime_error("File close error: " + path_to_utf8(path));
-#endif
 }
 
 std::filesystem::path transaction_artifact_path(
@@ -4848,10 +4727,8 @@ struct TransactionalWriteEntry {
 };
 
 bool replace_staged_file(TransactionalWriteEntry& entry, std::string& error) {
-#if defined(_WIN32)
-    if (!ReplaceFileW(entry.request.path.wstring().c_str(),
-                      entry.temporary.wstring().c_str(),
-                      entry.backup.wstring().c_str(), 0, nullptr, nullptr)) {
+    if (!ReplaceFileW(entry.request.path.c_str(), entry.temporary.c_str(),
+                      entry.backup.c_str(), 0, nullptr, nullptr)) {
         const DWORD replace_error = GetLastError();
         error = native_file_error("source file replacement", entry.request.path,
                                   replace_error);
@@ -4873,8 +4750,7 @@ bool replace_staged_file(TransactionalWriteEntry& entry, std::string& error) {
                     return false;
                 }
             } else if (backup_exists) {
-                if (MoveFileExW(entry.backup.wstring().c_str(),
-                                entry.request.path.wstring().c_str(),
+                if (MoveFileExW(entry.backup.c_str(), entry.request.path.c_str(),
                                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
                     if (entry.request.expected_hash.empty() ||
                         source_file_hash(entry.request.path) == entry.request.expected_hash) {
@@ -4895,70 +4771,18 @@ bool replace_staged_file(TransactionalWriteEntry& entry, std::string& error) {
             ", staged=" + path_to_utf8(entry.temporary);
         return false;
     }
-#else
-    std::error_code filesystem_error;
-    const auto permissions = std::filesystem::status(entry.request.path, filesystem_error).permissions();
-    if (filesystem_error) {
-        error = "source file status failed for " + path_to_utf8(entry.request.path) +
-            ": " + filesystem_error.message();
-        return false;
-    }
-    std::filesystem::permissions(entry.temporary, permissions, filesystem_error);
-    if (filesystem_error) {
-        error = "temporary file permission update failed for " +
-            path_to_utf8(entry.temporary) + ": " + filesystem_error.message();
-        return false;
-    }
-    std::filesystem::rename(entry.request.path, entry.backup, filesystem_error);
-    if (filesystem_error) {
-        error = "source file backup failed for " + path_to_utf8(entry.request.path) +
-            ": " + filesystem_error.message();
-        return false;
-    }
-    std::filesystem::rename(entry.temporary, entry.request.path, filesystem_error);
-    if (filesystem_error) {
-        std::error_code restore_error;
-        std::filesystem::rename(entry.backup, entry.request.path, restore_error);
-        error = "source file replacement failed for " + path_to_utf8(entry.request.path) +
-            ": " + filesystem_error.message();
-        if (restore_error) {
-            entry.replacement_failure_uncertain = true;
-            error += "; immediate restore failed: " + restore_error.message() +
-                "; recovery artifacts: backup=" + path_to_utf8(entry.backup) +
-                ", staged=" + path_to_utf8(entry.temporary);
-        }
-        return false;
-    }
-#endif
     entry.replaced = true;
     return true;
 }
 
 bool rollback_staged_file(TransactionalWriteEntry& entry, std::string& error) {
     if (!entry.replaced) return true;
-#if defined(_WIN32)
-    if (!ReplaceFileW(entry.request.path.wstring().c_str(),
-                      entry.backup.wstring().c_str(),
-                      entry.rollback_discard.wstring().c_str(), 0, nullptr, nullptr)) {
+    if (!ReplaceFileW(entry.request.path.c_str(), entry.backup.c_str(),
+                      entry.rollback_discard.c_str(), 0, nullptr, nullptr)) {
         error = native_file_error("source file rollback", entry.request.path,
                                   GetLastError());
         return false;
     }
-#else
-    std::error_code filesystem_error;
-    std::filesystem::rename(entry.request.path, entry.rollback_discard, filesystem_error);
-    if (filesystem_error) {
-        error = "source file rollback staging failed for " +
-            path_to_utf8(entry.request.path) + ": " + filesystem_error.message();
-        return false;
-    }
-    std::filesystem::rename(entry.backup, entry.request.path, filesystem_error);
-    if (filesystem_error) {
-        error = "source file rollback failed for " + path_to_utf8(entry.request.path) +
-            ": " + filesystem_error.message();
-        return false;
-    }
-#endif
     entry.replaced = false;
     try {
         if (!entry.request.expected_hash.empty() &&
@@ -4976,7 +4800,7 @@ bool rollback_staged_file(TransactionalWriteEntry& entry, std::string& error) {
 
 TransactionalWriteOutcome replace_files_transactionally(
     std::vector<TransactionalWriteRequest> requests) {
-    MapTiming::Stage timing("transaction.total");
+    MapTiming::Stage timing(kme::timing::MapStage::TransactionTotal);
     TransactionalWriteOutcome outcome;
     if (requests.empty()) return outcome;
 
@@ -4994,11 +4818,7 @@ TransactionalWriteOutcome replace_files_transactionally(
 
     const std::string token = hex64(stable_hash64(
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "\n" +
-#if defined(_WIN32)
         std::to_string(GetCurrentProcessId()) + "\n" +
-#else
-        std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + "\n" +
-#endif
         path_to_utf8(requests.front().path)));
     std::vector<TransactionalWriteEntry> entries;
     entries.reserve(requests.size());
@@ -5020,7 +4840,7 @@ TransactionalWriteOutcome replace_files_transactionally(
 
     try {
         for (TransactionalWriteEntry& entry : entries) {
-            MapTiming::Stage stage("transaction.stage_verify");
+            MapTiming::Stage stage(kme::timing::MapStage::TransactionStageVerify);
             write_new_binary_file_for_edit(entry.temporary, entry.request.bytes);
             if (source_file_hash(entry.temporary) != entry.request.new_hash) {
                 throw std::runtime_error("staged source hash mismatch for: " +
@@ -5028,7 +4848,7 @@ TransactionalWriteOutcome replace_files_transactionally(
             }
         }
         for (const TransactionalWriteEntry& entry : entries) {
-            MapTiming::Stage stage("transaction.concurrency_check");
+            MapTiming::Stage stage(kme::timing::MapStage::TransactionConcurrencyCheck);
             if (!entry.request.expected_hash.empty() &&
                 source_file_hash(entry.request.path) != entry.request.expected_hash) {
                 throw std::runtime_error("source file changed externally: " +
@@ -5037,7 +4857,7 @@ TransactionalWriteOutcome replace_files_transactionally(
         }
 
         for (TransactionalWriteEntry& entry : entries) {
-            MapTiming::Stage stage("transaction.replace_verify");
+            MapTiming::Stage stage(kme::timing::MapStage::TransactionReplaceVerify);
             if (!entry.request.expected_hash.empty() &&
                 source_file_hash(entry.request.path) != entry.request.expected_hash) {
                 throw std::runtime_error("source file changed during save: " +
@@ -5058,7 +4878,7 @@ TransactionalWriteOutcome replace_files_transactionally(
         }
     } catch (const std::exception& e) {
         const std::string cause = e.what();
-        timing.next("transaction.rollback");
+        timing.next(kme::timing::MapStage::TransactionRollback);
         bool rollback_ok = std::none_of(
             entries.begin(), entries.end(), [](const TransactionalWriteEntry& entry) {
                 return entry.replacement_failure_uncertain;
@@ -5182,7 +5002,7 @@ bool validate_non_target_derived_state(MapContext& baseline,
 
 std::unique_ptr<MapContext> parse_report_candidate(MapContext& ctx,
                                                    const MapEditReport& report) {
-    MapTiming::Stage timing("candidate.reparse");
+    MapTiming::Stage timing(kme::timing::MapStage::CandidateReparse);
     SourceTextOverrides overrides = ctx.source_overrides;
     apply_patched_files_to_overrides(overrides, report);
     std::string entry_file_path = ctx.entry_file_path;
@@ -5262,12 +5082,7 @@ repeater_linkage::Linkage repeater_linkage_state(
         event.distance = row.distance;
         event.order = static_cast<double>(row.order);
         event.key = value_to_edit_text(row.repeater_key);
-        const std::string method = ascii_lower(row.method);
-        if (method == "begin" || method == "begin0") {
-            event.kind = repeater_linkage::EventKind::Begin;
-        } else if (method == "end") {
-            event.kind = repeater_linkage::EventKind::End;
-        }
+        event.kind = repeater_linkage::event_kind(row.method);
         events.push_back(std::move(event));
         if (edit_ids) {
             (*edit_ids)[index] = element_edit_id(ctx, row.edit_ref, "repeater");
@@ -5289,7 +5104,7 @@ bool validate_repeater_boundaries_after_edit(
         const MapEditChange& change = *item;
         if (change.row_kind != "repeater") continue;
         has_repeater_edit = true;
-        if (ascii_lower(change.operation) == "insert" &&
+        if (change.operation == "insert" &&
             (change.confirm_repeater_change_point ||
              ascii_lower(insert_method_or_default(change, "Begin")) == "end")) {
             inserted_boundaries.insert(change.edit_id);
@@ -5426,8 +5241,7 @@ void validate_other_track_key_renames(
         const auto key_change = change->field_changes.find("trackKey");
         if (key_change == change->field_changes.end()) continue;
 
-        const std::string operation =
-            ascii_lower(change->operation.empty() ? "update" : change->operation);
+        const auto& operation = change->operation;
         if (operation != "update") {
             report.blocking_errors.push_back(
                 "Other-track key rename only supports update operations: " +
@@ -5490,9 +5304,7 @@ void validate_other_track_key_renames(
                     "track: " + edit_id);
                 return;
             }
-            const std::string operation = ascii_lower(
-                changed->second->operation.empty()
-                    ? "update" : changed->second->operation);
+            const auto& operation = changed->second->operation;
             if (operation == "delete") continue;
             if (operation != "update") {
                 report.blocking_errors.push_back(
@@ -5532,8 +5344,7 @@ void validate_other_track_key_renames(
         for (size_t source_index : group.second) {
             const auto changed = changes_by_edit_id.find(edit_ids[source_index]);
             if (changed == changes_by_edit_id.end() ||
-                ascii_lower(changed->second->operation.empty()
-                                ? "update" : changed->second->operation) != "delete") {
+                changed->second->operation != "delete") {
                 has_surviving_row = true;
                 break;
             }
@@ -5599,8 +5410,7 @@ void validate_repeater_key_renames(
                 "Repeater key rename contains an empty repeaterKey");
             return;
         }
-        const std::string operation =
-            ascii_lower(change->operation.empty() ? "update" : change->operation);
+        const auto& operation = change->operation;
         if (operation != "update") {
             report.blocking_errors.push_back(
                 "Repeater key rename only supports update operations: " +
@@ -5685,12 +5495,10 @@ void validate_repeater_key_renames(
     projected_events.reserve(ctx.repeaters.size());
     for (size_t index = 0; index < ctx.repeaters.size(); ++index) {
         const RepeaterEvent& row = ctx.repeaters[index];
-        const std::string method = ascii_lower(row.method);
         projected_events.push_back({index, row.distance, static_cast<double>(row.order),
             chain_by_source_index[index] ? final_keys[*chain_by_source_index[index]]
                                         : value_to_edit_text(row.repeater_key),
-            method == "end" ? repeater_linkage::EventKind::End
-                            : repeater_linkage::EventKind::Begin});
+            repeater_linkage::event_kind(row.method)});
     }
     const auto projected = repeater_linkage::pair_linkage(std::move(projected_events));
     for (size_t index = 0; index < linkage.segments.size(); ++index) {
@@ -5720,8 +5528,7 @@ void validate_repeater_insert_key_overlaps(
     inserted_events.reserve(changes.size());
     std::map<std::string, std::vector<size_t>> pair_members;
     for (const MapEditChange* change : changes) {
-        const std::string operation =
-            ascii_lower(change->operation.empty() ? "update" : change->operation);
+        const auto& operation = change->operation;
         if (change->confirm_repeater_change_point &&
             (operation != "insert" || change->row_kind != "repeater")) {
             report.blocking_errors.push_back(
@@ -5869,131 +5676,75 @@ void validate_repeater_insert_key_overlaps(
     }
 }
 
-bool final_environment_matches_include_deletions(
-    MapContext& baseline,
-    const MapContext& candidate,
-    const std::vector<bool>& removed_statements,
-    std::string& error) {
-    std::map<std::string, size_t> total_variable_writes;
-    std::map<std::string, size_t> removed_variable_writes;
-    for (size_t i = 0; i < baseline.parsed_statements.size(); ++i) {
-        const std::string name =
-            assigned_variable_name(baseline.parsed_statements[i]);
-        if (name.empty()) continue;
-        ++total_variable_writes[name];
-        if (i < removed_statements.size() && removed_statements[i]) {
-            ++removed_variable_writes[name];
-        }
-    }
-    auto removal_owns_variable = [&](const std::string& name) {
-        const auto total = total_variable_writes.find(name);
-        return total != total_variable_writes.end() &&
-            removed_variable_writes[name] == total->second;
-    };
+struct VariableWriteCount {
+    size_t total = 0;
+    size_t in_subtree = 0;
+};
+using VariableWriteIndex = std::map<std::string, VariableWriteCount>;
 
-    for (const auto& entry : baseline.variables) {
-        const auto found = candidate.variables.find(entry.first);
-        if (found != candidate.variables.end() &&
-            value_equal(entry.second, found->second)) {
-            continue;
-        }
-        if (!removal_owns_variable(entry.first)) {
-            error = "full reparse changed a variable outside the deleted "
-                    "Include subtree: " + entry.first;
+VariableWriteIndex index_variable_writes(const MapContext& context,
+                                          const std::vector<bool>& subtree) {
+    VariableWriteIndex result;
+    for (size_t i = 0; i < context.parsed_statements.size(); ++i) {
+        std::string name = assigned_variable_name(context.parsed_statements[i]);
+        if (name.empty()) continue;
+        auto& count = result[std::move(name)];
+        ++count.total;
+        if (i < subtree.size() && subtree[i]) ++count.in_subtree;
+    }
+    return result;
+}
+
+bool subtree_owns_variable(const VariableWriteIndex& writes,
+                            const std::string& variable, bool allow_absent) {
+    const auto found = writes.find(variable);
+    return found == writes.end() ? allow_absent
+        : found->second.total == found->second.in_subtree;
+}
+
+template<class Allowed>
+bool compare_final_variables(const MapContext& baseline, const MapContext& candidate,
+                             Allowed&& allowed, const char* diagnostic, std::string& error) {
+    for (const auto& [name, value] : baseline.variables) {
+        const auto found = candidate.variables.find(name);
+        if (found != candidate.variables.end() && value_equal(value, found->second)) continue;
+        if (!allowed(name)) {
+            error = diagnostic + name;
             return false;
         }
     }
     for (const auto& entry : candidate.variables) {
-        const auto found = baseline.variables.find(entry.first);
-        if (found != baseline.variables.end() &&
-            value_equal(entry.second, found->second)) {
-            continue;
-        }
-        if (!removal_owns_variable(entry.first)) {
-            error = "full reparse changed a variable outside the deleted "
-                    "Include subtree: " + entry.first;
+        if (baseline.variables.find(entry.first) != baseline.variables.end()) continue;
+        if (!allowed(entry.first)) {
+            error = diagnostic + entry.first;
             return false;
         }
     }
-
-    // The final current distance may change for every edit operation. Variable
-    // bindings remain protected above unless the deleted subtree owns them.
     return true;
 }
 
+bool final_environment_matches_include_deletions(
+    const MapContext& baseline, const MapContext& candidate,
+    const std::vector<bool>& removed_statements, std::string& error) {
+    const auto removed = index_variable_writes(baseline, removed_statements);
+    return compare_final_variables(baseline, candidate, [&](const std::string& name) {
+        return subtree_owns_variable(removed, name, false);
+    }, "full reparse changed a variable outside the deleted Include subtree: ", error);
+}
+
 bool final_environment_matches_include_edits(
-    MapContext& baseline,
-    const MapContext& candidate,
-    const std::vector<bool>& removed_statements,
-    const std::vector<bool>& added_statements,
+    const MapContext& baseline, const MapContext& candidate,
+    const std::vector<bool>& removed_statements, const std::vector<bool>& added_statements,
     std::string& error) {
-    // An include path swap legitimately replaces the variables and distance
-    // statements contributed by the old subtree with the ones contributed by
-    // the new file. Any difference must be attributable to exactly those
-    // statement masks; everything else is an unexpected environment change.
-    std::map<std::string, size_t> total_baseline_writes;
-    std::map<std::string, size_t> removed_variable_writes;
-    for (size_t i = 0; i < baseline.parsed_statements.size(); ++i) {
-        const std::string name =
-            assigned_variable_name(baseline.parsed_statements[i]);
-        if (name.empty()) continue;
-        ++total_baseline_writes[name];
-        if (i < removed_statements.size() && removed_statements[i]) {
-            ++removed_variable_writes[name];
-        }
-    }
-    auto removal_owns_variable = [&](const std::string& name) {
-        const auto total = total_baseline_writes.find(name);
-        if (total == total_baseline_writes.end()) return true;
-        return removed_variable_writes[name] == total->second;
-    };
-
     const bool has_added_mask = !added_statements.empty();
-    std::map<std::string, size_t> total_candidate_writes;
-    std::map<std::string, size_t> added_variable_writes;
-    if (has_added_mask) {
-        for (size_t i = 0; i < candidate.parsed_statements.size(); ++i) {
-            const std::string name =
-                assigned_variable_name(candidate.parsed_statements[i]);
-            if (name.empty()) continue;
-            ++total_candidate_writes[name];
-            if (i < added_statements.size() && added_statements[i]) {
-                ++added_variable_writes[name];
-            }
-        }
-    }
-    auto addition_owns_variable = [&](const std::string& name) {
-        if (!has_added_mask) return true;
-        const auto total = total_candidate_writes.find(name);
-        if (total == total_candidate_writes.end()) return true;
-        return added_variable_writes[name] == total->second;
-    };
-
-    for (const auto& entry : baseline.variables) {
-        const auto found = candidate.variables.find(entry.first);
-        if (found != candidate.variables.end() &&
-            value_equal(entry.second, found->second)) {
-            continue;
-        }
-        if (!removal_owns_variable(entry.first) ||
-            !addition_owns_variable(entry.first)) {
-            error = "full reparse changed a variable outside the swapped "
-                    "Include subtree: " + entry.first;
-            return false;
-        }
-    }
-    for (const auto& entry : candidate.variables) {
-        const auto found = baseline.variables.find(entry.first);
-        if (found != baseline.variables.end() &&
-            value_equal(entry.second, found->second)) {
-            continue;
-        }
-        if (!removal_owns_variable(entry.first) ||
-            !addition_owns_variable(entry.first)) {
-            error = "full reparse changed a variable outside the swapped "
-                    "Include subtree: " + entry.first;
-            return false;
-        }
+    const auto removed = index_variable_writes(baseline, removed_statements);
+    const auto added = has_added_mask ? index_variable_writes(candidate, added_statements)
+                                      : VariableWriteIndex{};
+    if (!compare_final_variables(baseline, candidate, [&](const std::string& name) {
+            return subtree_owns_variable(removed, name, true) &&
+                subtree_owns_variable(added, name, true);
+        }, "full reparse changed a variable outside the swapped Include subtree: ", error)) {
+        return false;
     }
 
     // Distance statements outside both masks must survive unchanged as a
@@ -6026,22 +5777,22 @@ bool final_environment_matches_include_edits(
 void validate_edit_report(MapContext& baseline,
                           const EditChangesView& changes,
                           MapEditReport& report) {
-    MapTiming::Stage timing("validation.reparse");
+    MapTiming::Stage timing(kme::timing::MapStage::ValidationReparse);
     std::unique_ptr<MapContext> candidate;
     SemanticSnapshot before_snapshot;
     SemanticSnapshot after_snapshot;
     try {
         candidate = parse_report_candidate(baseline, report);
-        timing.next("validation.before_snapshot");
+        timing.next(kme::timing::MapStage::ValidationBeforeSnapshot);
         before_snapshot = semantic_snapshot_for_context(baseline);
-        timing.next("validation.after_snapshot");
+        timing.next(kme::timing::MapStage::ValidationAfterSnapshot);
         after_snapshot = semantic_snapshot_for_context(*candidate);
     } catch (const std::exception& e) {
         report.blocking_errors.push_back(std::string("full edited-map reparse failed: ") + e.what());
         return;
     }
 
-    timing.next("validation.targets");
+    timing.next(kme::timing::MapStage::ValidationTargets);
     const std::vector<SemanticElement>& before_elements = before_snapshot.elements;
     const std::vector<SemanticElement>& after_elements = after_snapshot.elements;
     std::map<std::string, const SemanticElement*> before_by_id;
@@ -6082,8 +5833,7 @@ void validate_edit_report(MapContext& baseline,
     std::vector<ResourceListReplacement> resource_list_replacements;
     for (const MapEditChange* item : changes) {
         const MapEditChange& change = *item;
-        const std::string operation =
-            ascii_lower(change.operation.empty() ? "update" : change.operation);
+        const auto& operation = change.operation;
         if (operation == "delete") {
             EditableTarget delete_target =
                 find_editable_target(baseline, change.edit_id);
@@ -6671,7 +6421,7 @@ void validate_edit_report(MapContext& baseline,
         }
     }
 
-    timing.next("validation.non_targets");
+    timing.next(kme::timing::MapStage::ValidationNonTargets);
     // The swapped-in file's subtree is new content on the candidate side of
     // the reparse comparison. Collect its statement mask and element ids so
     // the non-target and environment checks only police untouched regions.
@@ -6779,7 +6529,7 @@ void validate_edit_report(MapContext& baseline,
     // disk-baseline IDs while a batch is pending so it can reset and replay the
     // complete ledger. Preserve those validated identities in the working-copy
     // context instead of forcing the GUI to guess an old-to-new row mapping.
-    timing.next("validation.identities_links");
+    timing.next(kme::timing::MapStage::ValidationIdentitiesLinks);
     candidate->native_element_edit_id_to_stable.clear();
     candidate->native_element_edit_id_to_stable.reserve(
         candidate_to_stable_edit_ids.size());
@@ -6794,8 +6544,7 @@ void validate_edit_report(MapContext& baseline,
     std::set<std::string> inserted_ids;
     for (const MapEditChange* item : changes) {
         const MapEditChange& change = *item;
-        const std::string operation =
-            ascii_lower(change.operation.empty() ? "update" : change.operation);
+        const auto& operation = change.operation;
         if (operation == "delete") {
             deleted_ids.insert(change.edit_id);
         } else if (operation == "insert") {
@@ -6892,7 +6641,7 @@ void validate_edit_report(MapContext& baseline,
         }
     }
 
-    timing.next("validation.derived_variables");
+    timing.next(kme::timing::MapStage::ValidationDerivedVariables);
     std::string derived_error;
     if (!validate_repeater_boundaries_after_edit(
             baseline, *candidate, excluded_before, changes, derived_error)) {
@@ -7331,7 +7080,7 @@ bool physical_include_instances_are_compatible(
 }
 
 void replace_context_and_advance_revisions(MapContext& current, MapContext&& replacement) {
-    MapTiming::Stage timing("context.replace_destroy");
+    MapTiming::Stage timing(kme::timing::MapStage::ContextReplaceDestroy);
     const std::uint64_t next_content_revision = current.content_revision + 1;
     const std::uint64_t next_geometry_revision = current.geometry_revision + 1;
     const std::uint64_t next_scene_revision = current.scene_revision + 1;
@@ -7346,7 +7095,7 @@ void replace_context_and_advance_revisions(MapContext& current, MapContext&& rep
 }
 
 static MapEditReport build_edit_report(MapContext& ctx, EditChangesView effective_changes) {
-    MapTiming::Stage timing("plan.prepare");
+    MapTiming::Stage timing(kme::timing::MapStage::PlanPrepare);
     MapEditReport report;
     std::map<size_t, SourcePatch> patches;
     const auto prepare_source = [&](size_t file_index, const MapEditChange& change) -> SourcePatch* {
@@ -7382,7 +7131,7 @@ static MapEditReport build_edit_report(MapContext& ctx, EditChangesView effectiv
 
     std::set<std::string> delete_ids;
     for (const MapEditChange* change : effective_changes) {
-        if (ascii_lower(change->operation.empty() ? "update" : change->operation) == "delete") {
+        if (change->operation == "delete") {
             delete_ids.insert(change->edit_id);
         }
     }
@@ -7443,7 +7192,7 @@ static MapEditReport build_edit_report(MapContext& ctx, EditChangesView effectiv
     prepared.reserve(effective_changes.size());
     for (size_t input_ordinal = 0; input_ordinal < effective_changes.size(); ++input_ordinal) {
         const MapEditChange& change = *effective_changes[input_ordinal];
-        std::string operation = ascii_lower(change.operation.empty() ? "update" : change.operation);
+        const auto& operation = change.operation;
         EditableTarget target;
         const ParsedStatement* statement = nullptr;
         SourcePatch* patch = nullptr;
@@ -7813,7 +7562,7 @@ static MapEditReport build_edit_report(MapContext& ctx, EditChangesView effectiv
             edit.target = target;
             edit.source_file_index = statement->source.source_file_index;
             edit.source_range = range;
-            edit.removal_range = safe_statement_removal_range(*patch, range);
+            edit.removal_range = safe_statement_removal_range(*patch, range, statement->source.line);
             const size_t source_line_start = offset_from_line_column(
                 patch->text, patch->line_starts, statement->source.line, 1);
             if (source_line_start != std::string::npos &&
@@ -8473,7 +8222,7 @@ static MapEditReport build_edit_report(MapContext& ctx, EditChangesView effectiv
     }
 
 
-    timing.next("plan.patch_sources");
+    timing.next(kme::timing::MapStage::PlanPatchSources);
     for (auto& patch_entry : patches) {
         SourcePatch& patch = patch_entry.second;
         if (!patch.record || patch.replacements.empty()) continue;
@@ -8584,7 +8333,7 @@ static MapEditReport build_edit_report(MapContext& ctx, EditChangesView effectiv
     }
 
     if (!report.ok()) return report;
-    timing.next("plan.validate");
+    timing.next(kme::timing::MapStage::PlanValidate);
     validate_edit_report(ctx, effective_changes, report);
     return report;
 }
@@ -8713,57 +8462,41 @@ MapEditReport plan_staged_edit_batch(MapContext& ctx,
     MapContext& candidate_base = *staged.validated_context;
     MapEditReport final = build_edit_report(candidate_base, std::move(remaining));
 
-    MapEditReport merged;
-    merged.warnings = staged.warnings;
-    merged.warnings.insert(merged.warnings.end(),
-                           final.warnings.begin(), final.warnings.end());
-    merged.blocking_errors = std::move(final.blocking_errors);
-    merged.resolution_requests = std::move(final.resolution_requests);
-    merged.update_count = final.update_count;
-    merged.delete_count = final.delete_count;
-    merged.insert_count = staged.insert_count + final.insert_count;
-    merged.created_distance_block_count = final.created_distance_block_count;
-    merged.reused_distance_block_count = final.reused_distance_block_count;
-    merged.distance_group_count = final.distance_group_count;
-    merged.target_distance_match_count = final.target_distance_match_count;
-    merged.non_target_changed_count = final.non_target_changed_count;
-    merged.changed_files = std::move(staged.changed_files);
-    for (const std::string& file_path : final.changed_files) {
-        if (std::find(merged.changed_files.begin(), merged.changed_files.end(),
-                      file_path) == merged.changed_files.end()) {
-            merged.changed_files.push_back(file_path);
+    const auto prepend_stage = [](auto& earlier, auto& later) {
+        earlier.insert(earlier.end(), std::make_move_iterator(later.begin()),
+                       std::make_move_iterator(later.end()));
+        later = std::move(earlier);
+    };
+    prepend_stage(staged.warnings, final.warnings);
+    prepend_stage(staged.previews, final.previews);
+    prepend_stage(staged.identity_origins, final.identity_origins);
+    final.insert_count += staged.insert_count;
+
+    for (std::string& file_path : final.changed_files) {
+        if (std::find(staged.changed_files.begin(), staged.changed_files.end(), file_path) ==
+            staged.changed_files.end()) {
+            staged.changed_files.push_back(std::move(file_path));
         }
     }
-    merged.previews = std::move(staged.previews);
-    merged.previews.insert(merged.previews.end(),
-                           std::make_move_iterator(final.previews.begin()),
-                           std::make_move_iterator(final.previews.end()));
-    merged.patched_files = std::move(staged.patched_files);
-    for (const MapEditPatchedFile& file : final.patched_files) {
+    final.changed_files = std::move(staged.changed_files);
+
+    for (MapEditPatchedFile& file : final.patched_files) {
+        const std::string path_key = normalized_source_key(file.file_path);
         const bool conflicts = std::any_of(
-            merged.patched_files.begin(), merged.patched_files.end(),
+            staged.patched_files.begin(), staged.patched_files.end(),
             [&](const MapEditPatchedFile& existing) {
                 return existing.source_key == file.source_key ||
-                    normalized_source_key(existing.file_path) ==
-                        normalized_source_key(file.file_path);
+                    normalized_source_key(existing.file_path) == path_key;
             });
         if (conflicts) {
-            merged.blocking_errors.push_back(
-                "two planning stages produced conflicting patches for: " +
-                file.file_path);
-            continue;
+            final.blocking_errors.push_back(
+                "two planning stages produced conflicting patches for: " + file.file_path);
+        } else {
+            staged.patched_files.push_back(std::move(file));
         }
-        merged.patched_files.push_back(file);
     }
-    merged.identity_origins = std::move(staged.identity_origins);
-    merged.identity_origins.insert(
-        merged.identity_origins.end(),
-        std::make_move_iterator(final.identity_origins.begin()),
-        std::make_move_iterator(final.identity_origins.end()));
-    merged.validation_fingerprint = final.validation_fingerprint;
-    merged.validated_context = std::move(final.validated_context);
-    merged.full_reparse_ok = final.full_reparse_ok;
-    return merged;
+    final.patched_files = std::move(staged.patched_files);
+    return final;
 }
 
 void apply_patched_files_to_overrides(SourceTextOverrides& overrides,
@@ -8788,7 +8521,7 @@ void reparse_context_with_overrides(MapContext& ctx,
                                     SourceTextOverrides overrides,
                                     bool has_arbitrary_distribution,
                                     const std::array<double, 3>& arbitrary_distribution) {
-    MapTiming::Stage timing("reset.reparse");
+    MapTiming::Stage timing(kme::timing::MapStage::ResetReparse);
     const auto disk_identities = ctx.disk_native_element_edit_id_to_stable;
     const auto disk_source_hashes = ctx.disk_source_hashes_for_stable_ids;
     std::string entry_file_path = ctx.entry_file_path;
@@ -8802,7 +8535,7 @@ void reparse_context_with_overrides(MapContext& ctx,
     options.collect_edit_metadata = true;
     auto next = parse_map_context(path_from_utf8(entry_file_path), unit_distance, std::move(overrides),
                                   has_arbitrary_distribution, arbitrary_distribution, options);
-    timing.next("reset.disk_identity_check");
+    timing.next(kme::timing::MapStage::ResetDiskIdentityCheck);
     if (!disk_identities.empty() && !disk_source_hashes.empty()) {
         bool disk_baseline_matches = next->source_files.size() == disk_source_hashes.size();
         for (const SourceFileRecord& file : next->source_files) {
@@ -8945,7 +8678,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
 }
 
 MapEditReport commit_memory_edits(MapContext& ctx) {
-    MapTiming::Stage timing("save.prevalidate");
+    MapTiming::Stage timing(kme::timing::MapStage::SavePrevalidate);
     MapEditReport report;
     struct PendingWrite {
         std::string source_key;
@@ -8982,7 +8715,7 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
                     "working-copy semantics changed after the last validated Apply");
                 return report;
             }
-            timing.next("save.candidate_destroy");
+            timing.next(kme::timing::MapStage::SaveCandidateDestroy);
         } catch (const std::exception& e) {
             report.blocking_errors.push_back(
                 std::string("pre-save full edited-map reparse failed: ") + e.what());
@@ -8990,7 +8723,7 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
         }
     }
 
-    timing.next("save.read_hash_encode");
+    timing.next(kme::timing::MapStage::SaveReadHashEncode);
     for (const auto& entry : ctx.source_overrides) {
         const SourceTextOverride& source = entry.second;
         if (!source.dirty) continue;
@@ -9022,7 +8755,7 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
 
     if (!report.ok()) return report;
 
-    timing.next("save.transaction_prepare");
+    timing.next(kme::timing::MapStage::SaveTransactionPrepare);
     std::vector<TransactionalWriteRequest> transaction_writes;
     transaction_writes.reserve(writes.size());
     for (PendingWrite& write : writes) {
@@ -9030,7 +8763,7 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
                                       write.expected_hash, write.hash});
     }
     try {
-        timing.next("save.transaction");
+        timing.next(kme::timing::MapStage::SaveTransaction);
         TransactionalWriteOutcome outcome =
             replace_files_transactionally(std::move(transaction_writes));
         report.warnings.insert(report.warnings.end(),
@@ -9046,7 +8779,7 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
         report.blocking_errors.push_back(e.what());
         return report;
     }
-    timing.next("save.committed_metadata");
+    timing.next(kme::timing::MapStage::SaveCommittedMetadata);
     for (const PendingWrite& write : writes) {
         auto source_index = ctx.source_file_indices.find(write.source_key);
         if (source_index != ctx.source_file_indices.end() &&

@@ -286,32 +286,21 @@ float Canvas3D::Impl::point_segment_distance_sq(ImVec2 point, ImVec2 a, ImVec2 b
     return dx * dx + dy * dy;
 }
 
-Mat4 Canvas3D::Impl::scene_gizmo_view_projection(int width, int height) const {
-    const Mat4 view = look_to_bve({0.0f, 0.0f, 0.0f}, scene_forward(), {0.0f, 1.0f, 0.0f});
-    const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    const Mat4 projection = perspective_fov_lh_reverse_z(
-        k_scene_camera_fov_y, aspect, k_scene_near_z,
-        scene_far_z(effective_scene_window_forward_m()));
-    return multiply(view, projection);
-}
-
 bool Canvas3D::Impl::update_scene_gizmo_projection(SceneGizmoHandle& gizmo,
                                    bool visible,
-                                   int width,
-                                   int height) {
+                                   const SceneViewProjection& view) {
     for (SceneGizmoAxisProjection& projection : gizmo.projection) {
         projection = SceneGizmoAxisProjection{};
     }
-    if (!visible || width <= 0 || height <= 0) {
-        return false;
-    }
-
-    const DVec3 relative_origin = gizmo.origin - scene_camera_pos;
-    const DVec3 camera_forward = dvec3_from_vec3(scene_forward());
+    if (!visible) return false;
+    const int width = view.width;
+    const int height = view.height;
+    const DVec3 relative_origin = gizmo.origin - view.camera_origin;
+    const DVec3 camera_forward = dvec3_from_vec3(view.forward);
     const double depth = dot(relative_origin, camera_forward);
     if (!std::isfinite(depth) || depth <= static_cast<double>(k_scene_near_z)) return false;
 
-    const Mat4 view_proj = scene_gizmo_view_projection(width, height);
+    const Mat4& view_proj = view.view_projection;
     ImVec2 origin_screen;
     if (!project_scene_point(relative_origin, view_proj, width, height, origin_screen) ||
         origin_screen.x < 0.0f || origin_screen.y < 0.0f ||
@@ -396,20 +385,20 @@ bool Canvas3D::Impl::set_scene_placement_gizmo_mode(Canvas3DPlacementGizmoMode m
     return true;
 }
 
-bool Canvas3D::Impl::update_scene_rotation_projection(int width, int height) {
+bool Canvas3D::Impl::update_scene_rotation_projection(const SceneViewProjection& view) {
     SceneRotationGizmo& gizmo = scene_structure_edit.rotation_gizmo;
     for (SceneRotationRing& ring : gizmo.rings) {
         ring.point_count = 0;
         ring.closed = false;
     }
-    if (width <= 0 || height <= 0) return false;
-
-    const DVec3 relative_origin = gizmo.origin - scene_camera_pos;
-    const DVec3 camera_forward = dvec3_from_vec3(scene_forward());
+    const int width = view.width;
+    const int height = view.height;
+    const DVec3 relative_origin = gizmo.origin - view.camera_origin;
+    const DVec3 camera_forward = dvec3_from_vec3(view.forward);
     const double depth = dot(relative_origin, camera_forward);
     if (depth <= k_scene_near_z) return false;
 
-    const Mat4 view_proj = scene_gizmo_view_projection(width, height);
+    const Mat4& view_proj = view.view_projection;
     ImVec2 center;
     if (!project_scene_point(relative_origin, view_proj, width, height, center) ||
         center.x < 0.0f || center.y < 0.0f ||
@@ -534,7 +523,7 @@ std::optional<Canvas3D::Impl::SceneRotationHit> Canvas3D::Impl::pick_scene_rotat
                             candidates[winner].tangent};
 }
 
-bool Canvas3D::Impl::update_scene_structure_gizmo_projections(int width, int height) {
+bool Canvas3D::Impl::update_scene_structure_gizmo_projections(const SceneViewProjection& view) {
     const bool placement_visible =
         scene_structure_edit.active && scene_structure_edit.show_gizmo;
     const bool rotation_visible = scene_structure_edit.rotation_mode &&
@@ -545,11 +534,11 @@ bool Canvas3D::Impl::update_scene_structure_gizmo_projections(int width, int hei
         scene_structure_edit.current.has_repeater_end_distance;
     const bool placement = update_scene_gizmo_projection(
         scene_structure_edit.placement_gizmo,
-        placement_visible && !rotation_visible, width, height);
+        placement_visible && !rotation_visible, view);
     const bool repeater_end = update_scene_gizmo_projection(
         scene_structure_edit.repeater_end_gizmo,
-        repeater_end_visible, width, height);
-    const bool rotation = rotation_visible && update_scene_rotation_projection(width, height);
+        repeater_end_visible, view);
+    const bool rotation = rotation_visible && update_scene_rotation_projection(view);
     return placement || repeater_end || rotation;
 }
 
@@ -690,7 +679,8 @@ std::optional<Canvas3DPlacementDragUpdate> Canvas3D::Impl::handle_scene_structur
         if (scene_structure_edit.rotation_waiting_for_release) return std::nullopt;
     }
     if (!scene_placement_rotation_available()) scene_structure_edit.rotation_mode = false;
-    if (!update_scene_structure_gizmo_projections(width, height)) {
+    if (!scene_structure_edit.active ||
+        !update_scene_structure_gizmo_projections(scene_view_projection(width, height))) {
         scene_structure_edit.hovered_gizmo = SceneGizmoTarget::None;
         scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -1015,11 +1005,11 @@ void Canvas3D::Impl::draw_scene_rotation_gizmo(ImDrawList* draw, ImVec2 canvas_o
 }
 
 void Canvas3D::Impl::draw_scene_structure_gizmo(ImDrawList* draw, ImVec2 canvas_origin,
-                                int width, int height) {
-    if (!draw || !update_scene_structure_gizmo_projections(width, height)) return;
+                                const SceneViewProjection& view) {
+    if (!update_scene_structure_gizmo_projections(view)) return;
     if (scene_structure_edit.rotation_mode && scene_placement_rotation_available()) {
-        draw->PushClipRect(canvas_origin, {canvas_origin.x + static_cast<float>(width),
-                                         canvas_origin.y + static_cast<float>(height)}, true);
+        draw->PushClipRect(canvas_origin, {canvas_origin.x + static_cast<float>(view.width),
+                                         canvas_origin.y + static_cast<float>(view.height)}, true);
         draw_scene_rotation_gizmo(draw, canvas_origin);
         draw->PopClipRect();
     } else {

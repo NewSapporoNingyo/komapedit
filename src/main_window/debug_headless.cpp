@@ -57,6 +57,33 @@
 #include <utility>
 #include <vector>
 #ifndef NDEBUG
+std::ostream* open_headless_output(std::ofstream& file, const std::string& path,
+                                   HeadlessOutputMode mode) {
+    if (path.empty()) return &std::cout;
+    const auto flags = std::ios::out | std::ios::trunc;
+    file.open(std::filesystem::path(utf8_to_wide(path)),
+              mode == HeadlessOutputMode::TextWithBom ? flags : flags | std::ios::binary);
+    if (!file) {
+        if (mode != HeadlessOutputMode::QuietBinary) {
+            std::cerr << "failed to open headless output: " << path << "\n";
+        }
+        return nullptr;
+    }
+    if (mode == HeadlessOutputMode::TextWithBom || mode == HeadlessOutputMode::BinaryWithBom) {
+        file.write("\xEF\xBB\xBF", 3);
+    }
+    return &file;
+}
+
+std::string read_headless_file_bytes(const std::filesystem::path& path,
+                                     const char* missing_file_prefix) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file && missing_file_prefix) {
+        throw std::runtime_error(missing_file_prefix + wide_to_utf8(path.wstring()));
+    }
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+
 ScopedComApartment::ScopedComApartment()
     : result_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {}
 
@@ -146,6 +173,13 @@ bool parse_double_option(const std::vector<std::string>& args, size_t& index,
     }
     destination = parsed;
     return true;
+}
+
+bool parse_unit_distance_option(const std::vector<std::string>& args, size_t& index,
+                                double& destination, std::string& error) {
+    return parse_double_option(args, index, "--unit-distance", "a number",
+                               "--unit-distance must be a positive number", destination, error,
+                               [](double value) { return value > 0.0 && std::isfinite(value); });
 }
 
 struct FrameTimingStats {
@@ -614,11 +648,15 @@ HeadlessSignalAspectColumnsOptions parse_headless_signal_aspect_columns_options(
         });
 }
 
+bool is_headless_load_map_command(std::string_view arg) {
+    return arg == "--headless-load-map" || arg == "--headless-load";
+}
+
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
     HeadlessLoadOptions options;
     for (size_t i = 1; i < args.size(); ++i) {
         const std::string& arg = args[i];
-        if (arg == "--headless-load-map" || arg == "--headless-load") {
+        if (is_headless_load_map_command(arg)) {
             options.requested = true;
             const std::string* value = take_option_value(args, i, arg, "a map path", options.error);
             if (!value) return options;
@@ -628,12 +666,7 @@ HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& 
                                       "--repeat must be between 1 and 10000",
                                       options.repeat, options.error)) return options;
         } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a number",
-                                     "--unit-distance must be a positive number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
+            if (!parse_unit_distance_option(args, i, options.unit_distance, options.error)) return options;
         } else if (arg == "--load-profile") {
             const std::string* value = take_option_value(
                 args, i, arg, "preview or edit", options.error);
@@ -675,12 +708,7 @@ HeadlessLoadScenarioOptions parse_headless_load_scenario_options(
                 return options;
             }
         } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a number",
-                                     "--unit-distance must be a positive number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
+            if (!parse_unit_distance_option(args, i, options.unit_distance, options.error)) return options;
         } else if (arg == "--load-profile") {
             const std::string* value = take_option_value(
                 args, i, arg, "preview or edit", options.error);
@@ -723,12 +751,7 @@ HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::ve
                                       "--frames must be between 1 and 100000",
                                       options.frames, options.error)) return options;
         } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a number",
-                                     "--unit-distance must be a positive number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
+            if (!parse_unit_distance_option(args, i, options.unit_distance, options.error)) return options;
         } else if (arg == "--pan-pixels") {
             if (!parse_double_option(args, i, arg, "a number",
                                      "--pan-pixels must be a finite number",
@@ -784,12 +807,7 @@ HeadlessOpenBenchmarkOptions parse_headless_open_benchmark_options(
                                       "--repeat must be between 1 and 10000",
                                       options.repeat, options.error)) return options;
         } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a number",
-                                     "--unit-distance must be a positive number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
+            if (!parse_unit_distance_option(args, i, options.unit_distance, options.error)) return options;
         } else if (arg == "--headless-output") {
             const std::string* value = take_option_value(args, i, arg, "a path", options.error);
             if (!value) return options;
@@ -857,12 +875,7 @@ HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const s
                                       "--frames must be between 1 and 100000",
                                       options.frames, options.error)) return options;
         } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a number",
-                                     "--unit-distance must be a positive number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
+            if (!parse_unit_distance_option(args, i, options.unit_distance, options.error)) return options;
         } else if (arg == "--max-frame-ms") {
             if (!parse_double_option(args, i, arg, "a number",
                                      "--max-frame-ms must be a positive number",
@@ -922,12 +935,7 @@ HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(
             if (!value) return options;
             options.path = *value;
         } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a number",
-                                     "--unit-distance must be a positive number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
+            if (!parse_unit_distance_option(args, i, options.unit_distance, options.error)) return options;
         } else if (arg == "--camera-distance") {
             double parsed = 0.0;
             if (!parse_double_option(args, i, arg, "a number",
@@ -960,12 +968,7 @@ HeadlessSourceAnchorOptions parse_headless_source_anchor_options(const std::vect
             if (!value) return options;
             options.path = *value;
         } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a number",
-                                     "--unit-distance must be a positive number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
+            if (!parse_unit_distance_option(args, i, options.unit_distance, options.error)) return options;
         } else if (arg == "--headless-output") {
             const std::string* value = take_option_value(args, i, arg, "a path", options.error);
             if (!value) return options;
@@ -1283,16 +1286,8 @@ public:
 
 int run_headless_load_map(const HeadlessLoadOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit headless-load-map path=\"" << options.path
          << "\" repeat=" << options.repeat
@@ -1394,16 +1389,8 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
 
 int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit headless-load-scenario path=\"" << options.path
          << "\" scenario_index=" << options.scenario_index
@@ -2208,16 +2195,8 @@ bool App::debug_section_inspector_lifecycle(std::ostream& out) {
 
 int App::run_debug_headless_table_find(const std::string& output_path) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit debug-headless-table-find\n";
     out->flush();
@@ -2418,6 +2397,7 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
                 {"distance", "0"}, {"trackKey", "0"}, {"interval", "25"}});
             set_repeater_structure_keys(repeater, {"comma,key", "with space", "plain"});
             usage.model_.repeaters.push_back(std::move(repeater));
+            usage.model_.repeater_links = link_repeater_rows(usage.model_.repeaters);
             auto structure_usage_matches = [&](std::initializer_list<size_t> used) {
                 usage.run_unused_structure_model_search();
                 const auto& matches = usage.structure_model_find_.unused_row_matches;
@@ -2436,6 +2416,7 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
                           std::vector<std::string>{"comma,key", "with space", "plain"},
                   "repeater_navigation_uses_exact_ordered_keys");
             usage.model_.repeaters.clear();
+            usage.model_.repeater_links = {};
             usage.invalidate_table_cache();
 
             EditableListDraftRow aspect;
@@ -2652,16 +2633,8 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
 
 int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit debug-headless-touch-input\n";
     int exit_code = 0;
@@ -2737,40 +2710,26 @@ int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options) {
     return exit_code;
 }
 
-int run_debug_headless_scene_loader_contract(
-    const HeadlessSceneLoaderContractOptions& options) {
-    std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
-
-    *out << "komapedit debug-headless-scene-loader-contract\n"
-         << "stage=fixture-start\n";
+static int check_headless_scene_resources(std::ostream* out, bool test_pointer_drag) {
+    *out << "stage=fixture-start\n";
     struct TempDirectory {
         std::filesystem::path path;
         ~TempDirectory() {
             std::error_code error;
-            std::filesystem::remove_all(path, error);
+            if (!path.empty()) std::filesystem::remove_all(path, error);
         }
     } temp;
-    temp.path = std::filesystem::temp_directory_path() /
+    auto directory = std::filesystem::temp_directory_path() /
         ("komapedit-scene-loader-contract-" + std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count()));
     std::error_code directory_error;
-    std::filesystem::create_directories(temp.path, directory_error);
-    if (directory_error) {
+    if (!std::filesystem::create_directory(directory, directory_error)) {
         *out << "error=failed to create scene loader contract fixture: "
-             << directory_error.message() << "\nresult=FAIL\n";
+             << (directory_error ? directory_error.message() : "directory already exists")
+             << "\nresult=FAIL\n";
         return 2;
     }
+    temp.path = std::move(directory);
     const std::filesystem::path model_path = temp.path / "triangle.x";
     {
         std::ofstream model(model_path, std::ios::binary | std::ios::trunc);
@@ -2836,9 +2795,13 @@ int run_debug_headless_scene_loader_contract(
         run_debug_resource_safety_contract(
             image_path.u8string(), (temp.path / "missing.bmp").u8string());
     const bool background_texture = App::debug_background_texture_contract(
-        device, image_path.u8string(), *out);
+        device, image_path.u8string(), *out, test_pointer_drag);
     release_com(context);
     release_com(device);
+    std::error_code cleanup_error;
+    const bool fixture_cleaned = std::filesystem::remove_all(temp.path, cleanup_error) > 0 &&
+        !cleanup_error;
+    if (fixture_cleaned) temp.path.clear();
     const bool passed = contract.error.empty() && contract.repeater_cache && contract.model_bounds && contract.normal_worker &&
         contract.copy_exception && contract.put_between_exception &&
         contract.subset_requeue && contract.active_worker_queue && contract.removal_only_cancel &&
@@ -2848,7 +2811,8 @@ int run_debug_headless_scene_loader_contract(
         contract.geometry_model_reuse && contract.full_model_reload && contract.put_between_model_reload &&
         contract.shader_pipeline_retry && contract.model_preview_reference_grid &&
         resource_safety.image_layout &&
-        resource_safety.image_decode && resource_safety.numeric_conversion && background_texture;
+        resource_safety.image_decode && resource_safety.numeric_conversion &&
+        background_texture && fixture_cleaned;
     *out << "stage=worker-contract-complete\n"
          << "repeater_cache=" << (contract.repeater_cache ? "PASS" : "FAIL") << "\n"
          << "model_bounds=" << (contract.model_bounds ? "PASS" : "FAIL") << "\n"
@@ -2885,28 +2849,28 @@ int run_debug_headless_scene_loader_contract(
          << "image_layout=" << (resource_safety.image_layout ? "PASS" : "FAIL") << "\n"
          << "image_decode=" << (resource_safety.image_decode ? "PASS" : "FAIL") << "\n"
          << "numeric_conversion="
-         << (resource_safety.numeric_conversion ? "PASS" : "FAIL") << "\n";
+         << (resource_safety.numeric_conversion ? "PASS" : "FAIL") << "\n"
+         << "scene_resource_fixture_cleaned=" << (fixture_cleaned ? "PASS" : "FAIL") << "\n";
     if (!contract.error.empty()) *out << "error=" << contract.error << "\n";
     *out << "result=" << (passed ? "PASS" : "FAIL") << "\n";
     out->flush();
     return passed ? 0 : 3;
 }
 
+int run_debug_headless_scene_loader_contract(
+    const HeadlessSceneLoaderContractOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
+    *out << "komapedit debug-headless-scene-loader-contract\n";
+    return check_headless_scene_resources(out, true);
+}
+
 int run_debug_headless_settings_persistence(
     const HeadlessSettingsPersistenceOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(
-            std::filesystem::path(utf8_to_wide(options.output_path)),
-            std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit debug-headless-settings-persistence\n";
     int exit_code = 0;
@@ -3282,16 +3246,8 @@ int run_debug_headless_settings_persistence(
 int App::run_debug_headless_source_anchors(const std::string& path, double unit_distance,
                                            const std::string& output_path) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit debug-headless-source-anchors path=\"" << path
          << "\" unit_distance=" << format_double(unit_distance, 3) << "\n";
@@ -3695,17 +3651,8 @@ int App::run_debug_headless_other_track_edit(
     using typed_edit_headless::Report;
 
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "command=debug-headless-other-track-edit\n"
          << "map_path=\"" << options.path << "\"\n"
@@ -4168,7 +4115,9 @@ bool App::debug_curve_interpolate_contract(double unit_distance, std::ostream& o
             app.plan_view_.rotation = 0.0;
             const ImVec2 origin(0, 0), size(800, 600);
             const auto entries = app.collect_plan_context_entries(
-                merged_plan, app.plan_view_.world_to_screen(marker.x, marker.y, origin, size),
+                merged_plan, &merged_plan.curve_interpolate_markers,
+                canvas2d::make_plan_transform(app.plan_view_, -merged_plan.origin_angle, origin, size),
+                app.plan_view_.world_to_screen(marker.x, marker.y, origin, size),
                 origin, size, 12.0f, 144.0, true);
             for (const auto& entry : entries) {
                 if (entry.kind == PlanMarkerKind::Curve && !entry.own_track_marker &&
@@ -4284,7 +4233,7 @@ bool App::debug_curve_interpolate_contract(double unit_distance, std::ostream& o
         radius_event(30, 0, "");
         app.dmin_ = 5;
         app.dmax_ = 25;
-        const auto sections = app.build_plan_data(false);
+        const auto sections = app.build_plan_data();
         const bool radius_sections = sections.curve_sections.size() == 2 &&
             sections.curve_sections[0].start == 5 && sections.curve_sections[0].end == 20 &&
             sections.curve_sections[0].value == 300 && sections.curve_sections[1].start == 20 &&
@@ -4328,17 +4277,8 @@ int App::run_debug_headless_own_track_edit(
     using typed_edit_headless::Report;
 
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "command=debug-headless-own-track-edit\n"
          << "map_path=\"" << options.path << "\"\n"
@@ -4864,16 +4804,8 @@ void App::debug_check_pending_edit_counts(const std::filesystem::path& map_path,
 int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_distance,
                                            const std::string& output_path) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     using typed_edit_headless::Change;
     using typed_edit_headless::Field;
@@ -6020,10 +5952,7 @@ void write_fixture_file(const std::filesystem::path& path, const std::string& te
 }
 
 std::string read_fixture_file(const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::in | std::ios::binary);
-    if (!file) throw std::runtime_error("failed to read fixture: " + wide_to_utf8(path.wstring()));
-    return std::string(std::istreambuf_iterator<char>(file),
-                       std::istreambuf_iterator<char>());
+    return read_headless_file_bytes(path, "failed to read fixture: ");
 }
 
 MapHandle load_edit_map(const std::filesystem::path& path, double unit_distance) {
@@ -6663,16 +6592,8 @@ int run_debug_headless_include_delete(const HeadlessIncludeDeleteOptions& option
     using typed_edit_headless::Change;
 
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
 
     int failed_cases = 0;
     auto check = [&](const char* label, bool value) {
@@ -6928,16 +6849,8 @@ int run_debug_headless_include_replace(const HeadlessIncludeReplaceOptions& opti
     using typed_edit_headless::Change;
 
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
 
     int failed_cases = 0;
     auto check = [&](const char* label, bool value) {
@@ -7248,16 +7161,8 @@ int run_debug_headless_include_import_create(
     using typed_edit_headless::Change;
 
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
 
     int failed_cases = 0;
     auto check = [&](const char* label, bool value) {
@@ -7551,16 +7456,8 @@ int run_debug_headless_include_import_create(
 int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOptions& options) {
     using namespace distance_batch_headless;
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
 
     BatchRunFacts facts;
     facts.path = options.path;
@@ -8299,17 +8196,8 @@ int run_debug_headless_station_list_edit(
     const HeadlessStationListEditOptions& options) {
     using namespace station_list_edit_headless;
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: "
-                      << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
 
     Facts facts;
     facts.map_path = options.path;
@@ -8898,16 +8786,8 @@ void write_batch_result(std::ostream& out, const BatchRunFacts& facts) {
 int run_debug_headless_repeater_edit_batch(const HeadlessRepeaterEditBatchOptions& options) {
     using namespace repeater_batch_headless;
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
 
     BatchRunFacts facts;
     facts.path = options.path;
@@ -9300,16 +9180,8 @@ void write_result(std::ostream& out, const RunFacts& facts) {
 int run_debug_headless_repeater_key_edit(const HeadlessRepeaterKeyEditOptions& options) {
     using namespace repeater_key_edit_headless;
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
 
     RunFacts facts;
     facts.path = options.path;
@@ -9738,17 +9610,8 @@ int App::run_debug_headless_other_track_key_edit(
     const HeadlessOtherTrackKeyEditOptions& options) {
     using namespace other_track_key_edit_headless;
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: "
-                      << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
 
     Facts facts;
     facts.path = options.path;
@@ -10235,17 +10098,8 @@ void write_batch_result(std::ostream& out, const BatchRunFacts& facts) {
 int run_debug_headless_section_edit_batch(const HeadlessSectionEditBatchOptions& options) {
     using namespace section_edit_batch_headless;
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: "
-                      << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
 
     BatchRunFacts facts;
     facts.path = options.path;
@@ -10477,16 +10331,8 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
     using typed_edit_headless::Boundary;
 
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-insert-edit\n"
          << "path=" << options.path << "\n"
          << "commit=" << (options.commit ? 1 : 0) << "\n"
@@ -11326,17 +11172,8 @@ MetricSummary summarize_samples(const std::vector<OpenBenchSample>& samples,
 
 int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit debug-headless-open-bench path=\"" << options.path
          << "\" repeat=" << options.repeat
@@ -11863,6 +11700,7 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
                               {"repeaterKey", "fallback"}, {"order", "1"}};
         alias_fallback_model.repeaters.push_back(std::move(repeater_begin));
         alias_fallback_model.repeaters.push_back(std::move(repeater_end));
+        alias_fallback_model.repeater_links = link_repeater_rows(alias_fallback_model.repeaters);
         app.model_ = std::move(alias_fallback_model);
         app.has_model_ = true;
         app.rebuild_marker_overlay_cache();
@@ -11929,17 +11767,8 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
 int App::run_debug_headless_diagnostics_popup_benchmark(
     const HeadlessDiagnosticsPopupBenchOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit debug-headless-diagnostics-popup-bench log_lines=100000\n"
          << "stage=setup-start\n";
@@ -12141,16 +11970,8 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
                                            bool profile_stages,
                                            const std::string& interaction) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit debug-headless-plan-bench path=\"" << path
          << "\" frames=" << frames
@@ -12336,8 +12157,61 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         out->flush();
 
         const PlanData& cached_initial = app.current_plan_data();
-        const PlanData uncached_initial = app.build_plan_data(false);
+        const PlanData uncached_initial = app.build_plan_data();
         const bool uncached_match = plan_data_summary_matches(cached_initial, uncached_initial);
+        const bool fit_bounds_match = [&] {
+            auto saved_tracks = std::move(app.model_.other_tracks);
+            auto saved_repeaters = app.repeater_marker_cache_;
+            auto saved_visible = std::move(app.repeater_row_visible_);
+            const auto saved_view = app.plan_view_;
+            const double saved_min = app.dmin_, saved_max = app.dmax_;
+            app.dmin_ = 0.0;
+            app.dmax_ = 100.0;
+            auto& track = app.model_.other_tracks.emplace_back();
+            track.range_max = 100.0;
+            track.points = {{0.0, -40.0, 5.0, 100.0, 10.0, 5.0}, 2, 3};
+            auto repeaters = std::make_shared<std::vector<RepeaterOverlayRow>>(1);
+            auto& segment = repeaters->front().segment;
+            segment.bounds_valid = true;
+            auto& chunk = segment.chunks.emplace_back();
+            chunk.d_max = 100.0;
+            chunk.x_min = 5.0;
+            chunk.x_max = 35.0;
+            chunk.y_min = -15.0;
+            chunk.y_max = 90.0;
+            chunk.bounds_valid = true;
+            app.repeater_marker_cache_ = std::move(repeaters);
+            app.repeater_row_visible_ = {0};
+            PlanData fit_data;
+            fit_data.own.emplace_back();
+            fit_data.xmin = fit_data.ymin = 0.0;
+            fit_data.xmax = 20.0;
+            fit_data.ymax = 10.0;
+            const ImVec2 size(720.0f, 360.0f);
+            const auto verify = [&](double xmin, double ymin, double xmax, double ymax) {
+                auto expected = saved_view;
+                const double pad = std::max(xmax - xmin, ymax - ymin) * 0.05;
+                expected.fit(xmin - pad, ymin - pad, xmax + pad, ymax + pad, size);
+                app.fit_plan_view(fit_data, size);
+                return app.plan_view_.cx == expected.cx && app.plan_view_.cy == expected.cy &&
+                    app.plan_view_.scale == expected.scale;
+            };
+            const bool own_only = verify(0.0, 0.0, 20.0, 10.0);
+            track.visible = true;
+            const bool other_expands = verify(-40.0, 0.0, 20.0, 10.0);
+            app.repeater_row_visible_.front() = 1;
+            const bool both_expand = verify(-40.0, -15.0, 35.0, 90.0);
+            track.visible = false;
+            const bool other_hidden = verify(0.0, -15.0, 35.0, 90.0);
+            app.model_.other_tracks = std::move(saved_tracks);
+            app.repeater_marker_cache_ = std::move(saved_repeaters);
+            app.repeater_row_visible_ = std::move(saved_visible);
+            app.plan_view_ = saved_view;
+            app.dmin_ = saved_min;
+            app.dmax_ = saved_max;
+            return own_only && other_expands && both_expand && other_hidden;
+        }();
+        *out << "plan_fit_bounds=" << (fit_bounds_match ? "PASS" : "FAIL") << '\n';
         const std::uint64_t hit_count_before = app.plan_data_cache_.rebuild_count;
         app.current_plan_data();
         const bool stable_hit = app.plan_data_cache_.rebuild_count == hit_count_before;
@@ -12368,7 +12242,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             toggle = true;
             const PlanData& enabled = app.current_plan_data();
             const size_t enabled_size = projection(enabled).size();
-            const PlanData enabled_uncached = app.build_plan_data(false);
+            const PlanData enabled_uncached = app.build_plan_data();
             bool passed = app.plan_data_cache_.rebuild_count == enabled_count_before + 1 &&
                 (app.plan_data_cache_.marker_visibility_mask & (std::uint32_t{1} << bit)) != 0 &&
                 enabled_size == projection(enabled_uncached).size() &&
@@ -12377,7 +12251,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             const std::uint64_t disabled_count_before = app.plan_data_cache_.rebuild_count;
             toggle = false;
             const PlanData& disabled = app.current_plan_data();
-            const PlanData disabled_uncached = app.build_plan_data(false);
+            const PlanData disabled_uncached = app.build_plan_data();
             passed = passed &&
                 app.plan_data_cache_.rebuild_count == disabled_count_before + 1 &&
                 (app.plan_data_cache_.marker_visibility_mask & (std::uint32_t{1} << bit)) == 0 &&
@@ -12438,7 +12312,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         const std::uint64_t curve_count_before = app.plan_data_cache_.rebuild_count;
         app.show_curve_values_ = true;
         const PlanData& visible_curves = app.current_plan_data();
-        const PlanData visible_curves_uncached = app.build_plan_data(false);
+        const PlanData visible_curves_uncached = app.build_plan_data();
         bool curve_toggle_pass = app.plan_data_cache_.rebuild_count == curve_count_before + 1 &&
             app.plan_data_cache_.show_curve_values &&
             visible_curves.curve_sections.size() == visible_curves_uncached.curve_sections.size() &&
@@ -12497,7 +12371,10 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
                 marker.x, marker.y, context_origin, context_size);
             const std::vector<PlanContextMenuEntry> entries =
                 app.collect_plan_context_entries(
-                    visible_curves, context_mouse, context_origin, context_size,
+                    visible_curves, &visible_curves.curve_interpolate_markers,
+                    canvas2d::make_plan_transform(app.plan_view_, -visible_curves.origin_angle,
+                                                  context_origin, context_size),
+                    context_mouse, context_origin, context_size,
                     12.0f, 144.0, true);
             const auto target = std::find_if(
                 entries.begin(), entries.end(),
@@ -12537,7 +12414,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
              << "\n";
         app.show_curve_values_ = false;
         const PlanData& hidden_curves = app.current_plan_data();
-        const PlanData hidden_curves_uncached = app.build_plan_data(false);
+        const PlanData hidden_curves_uncached = app.build_plan_data();
         curve_toggle_pass = curve_toggle_pass && !app.plan_data_cache_.show_curve_values &&
             hidden_curves.curve_sections.empty() && hidden_curves.transition_sections.empty() &&
             hidden_curves.curve_interpolate_markers.empty() &&
@@ -12561,13 +12438,13 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         app.show_gradient_pos_ = true;
         app.plan_data_cache_.valid = false;
         const PlanData& visible_edit_markers = app.current_plan_data();
-        const PlanData visible_edit_markers_uncached = app.build_plan_data(false);
+        const PlanData visible_edit_markers_uncached = app.build_plan_data();
         bool edit_marker_toggle_pass = visible_edit_markers.curve_edit_markers.size() == 1 &&
             visible_edit_markers.gradient_edit_markers.size() == 1 &&
             plan_data_summary_matches(visible_edit_markers, visible_edit_markers_uncached);
         app.show_curve_values_ = false;
         const PlanData& hidden_curve_edit_markers = app.current_plan_data();
-        const PlanData hidden_curve_edit_markers_uncached = app.build_plan_data(false);
+        const PlanData hidden_curve_edit_markers_uncached = app.build_plan_data();
         edit_marker_toggle_pass = edit_marker_toggle_pass &&
             hidden_curve_edit_markers.curve_edit_markers.empty() &&
             hidden_curve_edit_markers.gradient_edit_markers.size() == 1 &&
@@ -12575,7 +12452,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
                                       hidden_curve_edit_markers_uncached);
         app.show_gradient_pos_ = false;
         const PlanData& hidden_edit_markers = app.current_plan_data();
-        const PlanData hidden_edit_markers_uncached = app.build_plan_data(false);
+        const PlanData hidden_edit_markers_uncached = app.build_plan_data();
         edit_marker_toggle_pass = edit_marker_toggle_pass &&
             hidden_edit_markers.curve_edit_markers.empty() &&
             hidden_edit_markers.gradient_edit_markers.empty() &&
@@ -12593,7 +12470,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             const std::uint64_t count_before = app.plan_data_cache_.rebuild_count;
             visibility.front() = original == 0 ? 1 : 0;
             const PlanData& cached = app.current_plan_data();
-            const PlanData uncached = app.build_plan_data(false);
+            const PlanData uncached = app.build_plan_data();
             bool passed = app.plan_data_cache_.rebuild_count == count_before + 1 &&
                 cache_snapshot() == visibility && plan_data_summary_matches(cached, uncached);
             visibility.front() = original;
@@ -12618,7 +12495,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         const std::uint64_t mode_count_before = app.plan_data_cache_.rebuild_count;
         app.mode_ = original_mode == Mode::Pan ? Mode::Measure : Mode::Pan;
         const PlanData& changed_mode = app.current_plan_data();
-        const PlanData changed_mode_uncached = app.build_plan_data(false);
+        const PlanData changed_mode_uncached = app.build_plan_data();
         bool keyed_state_pass = app.plan_data_cache_.rebuild_count == mode_count_before + 1 &&
             plan_data_summary_matches(changed_mode, changed_mode_uncached);
         app.mode_ = original_mode;
@@ -12628,7 +12505,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         const std::uint64_t scale_count_before = app.plan_data_cache_.rebuild_count;
         app.plan_view_.scale = original_scale + 0.125;
         const PlanData& changed_scale = app.current_plan_data();
-        const PlanData changed_scale_uncached = app.build_plan_data(false);
+        const PlanData changed_scale_uncached = app.build_plan_data();
         keyed_state_pass = keyed_state_pass &&
             app.plan_data_cache_.rebuild_count == scale_count_before + 1 &&
             plan_data_summary_matches(changed_scale, changed_scale_uncached);
@@ -12640,14 +12517,15 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         bool source_revision_pass = !app.plan_data_cache_.valid &&
             app.plan_data_source_revision_ == source_revision_before + 1;
         const PlanData& rebuilt_source_data = app.current_plan_data();
-        const PlanData rebuilt_source_uncached = app.build_plan_data(false);
+        const PlanData rebuilt_source_uncached = app.build_plan_data();
         source_revision_pass = source_revision_pass &&
             plan_data_summary_matches(rebuilt_source_data, rebuilt_source_uncached);
 
         const bool measure_index_pass = !measure_interaction ||
             (app.debug_measure_validation_passed_ && app.debug_measure_query_count_ > 0 &&
              measure_pan_rotation_hit);
-        const bool cache_checks_pass = interpolate_fixture_pass && uncached_match && stable_hit && pan_rotation_hit &&
+        const bool cache_checks_pass = interpolate_fixture_pass && uncached_match && fit_bounds_match &&
+            stable_hit && pan_rotation_hit &&
             marker_toggles_pass && curve_toggle_pass && edit_marker_toggle_pass &&
             row_visibility_pass && keyed_state_pass && source_revision_pass &&
             measure_index_pass;
@@ -12894,16 +12772,8 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         return 6;
     }
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit debug-headless-scene3d-bench path=\"" << path
          << "\" frames=" << frames
@@ -13092,24 +12962,13 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
 
         *out << "stage=warmup-start\n";
         out->flush();
-        constexpr auto k_scene_load_timeout = std::chrono::seconds(120);
-        int warmup_frames = 0;
-        bool load_completed = false;
-        auto preview_load_finished_at = std::chrono::steady_clock::now();
-        for (;; ++warmup_frames) {
-            render_frame();
-            Canvas3DSceneStats stats = app.scene_preview_canvas_->scene_stats();
-            if (!stats.loading && stats.model_ready_count + stats.model_failed_count >= stats.model_path_count) {
-                load_completed = true;
-                preview_load_finished_at = std::chrono::steady_clock::now();
-                break;
-            }
-            if (std::chrono::steady_clock::now() - preview_load_started_at >= k_scene_load_timeout) {
-                preview_load_finished_at = std::chrono::steady_clock::now();
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
+        const auto warmup = warm_headless_scene(preview_load_started_at, render_frame, [&] {
+            const auto stats = app.scene_preview_canvas_->scene_stats();
+            return !stats.loading && stats.model_ready_count + stats.model_failed_count >= stats.model_path_count;
+        });
+        const bool load_completed = warmup.completed;
+        const int warmup_frames = warmup.waiting_frames;
+        const auto preview_load_finished_at = warmup.finished_at;
         for (int i = 0; i < 5; ++i) render_frame();
         for (const std::string& message :
              app.scene_preview_canvas_->drain_scene_load_messages()) {
@@ -13249,7 +13108,9 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         const bool render_pass = render_contract.error.empty() && render_contract.cases > 0 &&
             render_contract.instances && render_contract.pixels && render_contract.picking &&
             render_contract.cache_budget && render_contract.fps_counter &&
-            render_contract.rotation_gizmo && rotation_draft_ok && render_contract.marker_index_retry;
+            render_contract.rotation_gizmo && rotation_draft_ok && render_contract.marker_index_retry &&
+            render_contract.model_preview_reference_grid && render_contract.put_between_worker.value_or(true) &&
+            render_contract.put_between_refresh.value_or(true) && render_contract.background_order.value_or(true);
         pass = pass && render_pass;
         *out << "scene3d_signature value=" << render_contract.signature << "\n"
              << "scene3d_render_contract cases=" << render_contract.cases
@@ -13259,6 +13120,13 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
              << " rotation_gizmo=" << render_contract.rotation_gizmo
              << " marker_index_retry=" << render_contract.marker_index_retry
              << " marker_index_retry_cases=" << render_contract.marker_index_retry_cases
+             << " model_preview_reference_grid=" << (render_contract.model_preview_reference_grid ? "PASS" : "FAIL")
+             << " put_between_worker=" << (!render_contract.put_between_worker ? "SKIP_NO_MODEL" :
+                 *render_contract.put_between_worker ? "PASS" : "FAIL")
+             << " put_between_refresh=" << (!render_contract.put_between_refresh ? "SKIP_NO_MODEL" :
+                 *render_contract.put_between_refresh ? "PASS" : "FAIL")
+             << " background_order=" << (!render_contract.background_order ? "SKIP_NO_MODEL" :
+                 *render_contract.background_order ? "PASS" : "FAIL")
              << " peak_cached_worlds=" << render_contract.peak_cached_worlds
              << " peak_cache_bytes=" << render_contract.peak_cache_bytes
              << " picked_cases=" << render_contract.picked_cases
@@ -13380,23 +13248,17 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
     context->Flush();
     release_com(context);
     release_com(device);
-    return exit_code;
+    if (exit_code != 0) return exit_code;
+    *out << "stage=scene-resource-contract\n";
+    return check_headless_scene_resources(out, false);
 }
 
 int App::run_debug_headless_scene_camera_transfer(const std::string& path, double unit_distance,
                                                   bool has_camera_distance, double camera_distance,
                                                   const std::string& output_path) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, output_path, HeadlessOutputMode::TextWithBom);
+    if (!out) return 1;
 
     *out << "komapedit debug-headless-scene-camera-transfer path=\"" << path
          << "\" unit_distance=" << format_double(unit_distance, 3);

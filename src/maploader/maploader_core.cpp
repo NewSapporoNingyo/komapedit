@@ -95,15 +95,40 @@ std::string trim_field_copy(const std::string& s) {
     return s.substr(begin, end - begin);
 }
 
-bool parse_finite_number(const std::string& text, double& value) {
-    const std::string trimmed = trim_field_copy(text);
+static bool parse_trimmed_finite_number(const std::string& trimmed, double& value) {
     if (trimmed.empty()) return false;
     const char* begin = trimmed.c_str();
-    char* end = nullptr;
+    char* end;
     errno = 0;
     value = std::strtod(begin, &end);
-    return end != begin && end && *end == '\0' && errno != ERANGE &&
+    return end != begin && *end == '\0' && errno != ERANGE &&
         std::isfinite(value);
+}
+
+bool parse_finite_number(const std::string& text, double& value) {
+    return parse_trimmed_finite_number(trim_field_copy(text), value);
+}
+
+std::string_view other_track_parameter_digits(std::string_view field) {
+    constexpr std::string_view prefix = "parameter";
+    if (field.substr(0, prefix.size()) != prefix) return {};
+    const auto digits = field.substr(prefix.size());
+    return digits.find_first_not_of("0123456789") == std::string_view::npos ? digits : std::string_view{};
+}
+
+std::string format_c_decimal(double value, int significant_digits) {
+    std::array<char, 64> buffer{};
+    const int written = std::snprintf(buffer.data(), buffer.size(), "%.*g", significant_digits, value);
+    if (written <= 0 || static_cast<size_t>(written) >= buffer.size()) {
+        throw std::runtime_error("decimal formatting failed");
+    }
+    return std::string(buffer.data(), static_cast<size_t>(written));
+}
+
+std::string format_stream_decimal(double value, int significant_digits) {
+    std::ostringstream out;
+    out << std::setprecision(significant_digits) << value;
+    return out.str();
 }
 
 std::string canonical_number(double value) {
@@ -113,14 +138,7 @@ std::string canonical_number(double value) {
     if (std::isinf(value)) {
         return value > 0 ? "1e999" : "-1e999";
     }
-    std::array<char, 64> buffer{};
-    int written = std::snprintf(buffer.data(), buffer.size(), "%.17g", value);
-    if (written > 0 && static_cast<size_t>(written) < buffer.size()) {
-        return std::string(buffer.data(), static_cast<size_t>(written));
-    }
-    std::ostringstream out;
-    out << std::setprecision(17) << value;
-    return out.str();
+    return format_c_decimal(value, 17);
 }
 
 double parse_first_version(const std::string& header) {
@@ -271,7 +289,7 @@ LoadedText load_header_text(const std::filesystem::path& path,
     }
 
     ScopedTimer timer(g_active_timing ? &g_active_timing->read_decode_seconds : nullptr);
-    kme::timing::MapTiming::Stage edit_timing("source.read_decode_hash");
+    kme::timing::MapTiming::Stage edit_timing(kme::timing::MapStage::SourceReadDecodeHash);
     std::string bytes = read_binary_file(path);
     std::string text;
     std::string encoding;
@@ -321,10 +339,6 @@ LoadedText load_header_text(const std::filesystem::path& path,
                                    collect_source_metadata);
 }
 
-std::filesystem::path join_path(const std::filesystem::path& root, const std::string& file) {
-    return join_utf8_path(root, file);
-}
-
 double as_number(const Value& value, double fallback) {
     if (value.kind == ValueKind::Number) return value.number;
     if (value.kind == ValueKind::Null || value.kind == ValueKind::ContinueValue) return fallback;
@@ -338,9 +352,7 @@ double as_number(const Value& value, double fallback) {
 std::string as_text(const Value& value) {
     if (value.kind == ValueKind::String) return value.text;
     if (value.kind == ValueKind::Number) {
-        std::ostringstream out;
-        out << std::setprecision(17) << value.number;
-        return out.str();
+        return format_stream_decimal(value.number, 17);
     }
     if (value.kind == ValueKind::ContinueValue) return "c";
     return "";
@@ -386,11 +398,8 @@ Value track_key_from_display_text(const std::string& text) {
     }
     if (trimmed == "c") return Value::cont();
 
-    const char* begin = trimmed.c_str();
-    char* end = nullptr;
-    errno = 0;
-    const double number = std::strtod(begin, &end);
-    if (end != begin && end && *end == '\0' && errno != ERANGE && std::isfinite(number)) {
+    double number = 0.0;
+    if (parse_trimmed_finite_number(trimmed, number)) {
         return Value::num(number);
     }
     return Value::str(trimmed);
@@ -399,7 +408,7 @@ Value track_key_from_display_text(const std::string& text) {
 Value pretrain_time_from_edit_text(const std::string& text) {
     const std::string input = trim_field_copy(text);
     double seconds = 0.0;
-    if (!input.empty() && parse_finite_number(input, seconds)) {
+    if (parse_trimmed_finite_number(input, seconds)) {
         return Value::num(seconds);
     }
     const size_t colon = input.find(':');
@@ -427,27 +436,13 @@ std::vector<std::string> parse_comma_separated_fields(
     const std::string& line, bool stop_on_inline_comment) {
     std::vector<std::string> fields;
     std::string field;
-    bool quoted = false;
-    for (size_t i = 0; i < line.size(); ++i) {
-        char ch = line[i];
-        if (ch == '"') {
-            if (quoted && i + 1 < line.size() && line[i + 1] == '"') {
-                field.push_back('"');
-                ++i;
-            } else {
-                quoted = !quoted;
-            }
-        } else if (ch == ',' && !quoted) {
+    const size_t stop = scan_csv_fields(line, stop_on_inline_comment,
+        [&](char ch) { field.push_back(ch); },
+        [&](std::string_view) {
             fields.push_back(trim_field_copy(field));
             field.clear();
-        } else if (!quoted && stop_on_inline_comment && csv_comment_starts_at(line, i)) {
-            if (fields.empty() && trim_field_copy(field).empty()) return {};
-            break;
-        } else {
-            field.push_back(ch);
-        }
-    }
-    fields.push_back(trim_field_copy(field));
+        });
+    if (stop != line.size() && fields.size() == 1 && fields.front().empty()) fields.clear();
     return fields;
 }
 
@@ -479,18 +474,18 @@ std::string trim_matching_quotes(std::string text) {
     return text;
 }
 
-int parse_sound_buffer_count(const std::string& text) {
-    std::string trimmed = trim_field_copy(text);
-    if (trimmed.empty()) return 1;
+SoundBufferCount parse_sound_buffer_count(const std::string& text) {
+    const std::string trimmed = trim_field_copy(text);
+    if (trimmed.empty()) return {SoundBufferCountKind::Omitted, 1};
 
     char* end = nullptr;
     errno = 0;
-    long value = std::strtol(trimmed.c_str(), &end, 10);
-    while (end && *end && std::isspace(static_cast<unsigned char>(*end))) ++end;
-    if (end == trimmed.c_str() || errno == ERANGE || (end && *end != '\0') || value < 1) {
-        return 1;
+    const long value = std::strtol(trimmed.c_str(), &end, 10);
+    if (end != trimmed.c_str() + trimmed.size() || errno == ERANGE ||
+        value < 1 || value > std::numeric_limits<int>::max()) {
+        return {SoundBufferCountKind::Invalid, 1};
     }
-    return static_cast<int>(std::min<long>(value, std::numeric_limits<int>::max()));
+    return {SoundBufferCountKind::Valid, static_cast<int>(value)};
 }
 
 LoadedText load_header_text(const MapContext& ctx,
@@ -998,11 +993,10 @@ void put_own(MapContext& ctx, const std::string& key, const Value& value, const 
     ctx.own_track.push_back(std::move(row));
 }
 
-void ensure_othertrack(MapContext& ctx, const std::string& key) {
-    if (ctx.othertrack.find(key) == ctx.othertrack.end()) {
-        ctx.othertrack[key] = {};
-        ctx.othertrack_order.push_back(key);
-    }
+std::vector<OtherTrackEvent>& ensure_othertrack(MapContext& ctx, const std::string& key) {
+    auto [track, inserted] = ctx.othertrack.try_emplace(key);
+    if (inserted) ctx.othertrack_order.push_back(key);
+    return track->second;
 }
 
 void put_other(MapContext& ctx, const Value& track_key, const std::string& element_key,

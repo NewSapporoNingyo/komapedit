@@ -135,18 +135,43 @@ std::vector<ScenarioPathWeight> parse_weighted_path_terms(const std::string& val
     return terms;
 }
 
+struct ScenarioFieldSpec {
+    const char* name;
+    std::string ScenarioDocument::*document;
+    std::string ScenarioEditRequest::*edit;
+};
+
+constexpr ScenarioFieldSpec k_scenario_fields[] = {
+    {"Title", &ScenarioDocument::title, &ScenarioEditRequest::title},
+    {"Route", nullptr, nullptr},
+    {"RouteTitle", &ScenarioDocument::route_title, &ScenarioEditRequest::route_title},
+    {"Vehicle", nullptr, nullptr},
+    {"VehicleTitle", &ScenarioDocument::vehicle_title, &ScenarioEditRequest::vehicle_title},
+    {"Author", &ScenarioDocument::author, &ScenarioEditRequest::author},
+    {"Image", &ScenarioDocument::image, &ScenarioEditRequest::image},
+    {"Comment", &ScenarioDocument::comment, &ScenarioEditRequest::comment},
+};
+constexpr size_t k_scenario_field_count = sizeof(k_scenario_fields) / sizeof(k_scenario_fields[0]);
+constexpr size_t k_scenario_route_field = 1;
+constexpr size_t k_scenario_vehicle_field = 3;
+
+size_t scenario_field_index(std::string_view key) {
+    for (size_t i = 0; i < k_scenario_field_count; ++i) {
+        if (key == k_scenario_fields[i].name) return i;
+    }
+    return k_scenario_field_count;
+}
+
 ScenarioDocument parse_scenario_loaded_document(const LoadedText& loaded) {
     ScenarioDocument document;
     document.root = loaded.root;
     document.source_hash = loaded.source_hash;
-    constexpr std::array<const char*, 8> k_field_names{
-        "Title", "Route", "RouteTitle", "Vehicle", "VehicleTitle", "Author", "Image", "Comment"};
-    std::array<bool, k_field_names.size()> seen{};
-    std::array<std::string, k_field_names.size()> values;
+    std::array<bool, k_scenario_field_count> seen{};
+    std::array<std::string, k_scenario_field_count> values;
     auto set_field = [&](size_t index, const std::string& value, auto& target, auto parsed) {
         if (seen[index] && values[index] != value) {
             KME_MAPLOADER_LOG_WARN(path_to_utf8(loaded.path.filename()) + " declares multiple " +
-                                    k_field_names[index] + " entries; the last one wins.");
+                                    k_scenario_fields[index].name + " entries; the last one wins.");
         }
         target = std::move(parsed);
         values[index] = value;
@@ -159,31 +184,22 @@ ScenarioDocument parse_scenario_loaded_document(const LoadedText& loaded) {
         if (trimmed.empty()) return;
         const size_t equals = trimmed.find('=');
         if (equals == std::string::npos) return;
-        const std::string key = trim_field_copy(trimmed.substr(0, equals));
+        const size_t index = scenario_field_index(trim_field_copy(trimmed.substr(0, equals)));
+        if (index == k_scenario_field_count) return;
+        const auto& field = k_scenario_fields[index];
         const std::string value = trim_field_copy(trimmed.substr(equals + 1));
-        if (key == "Title") {
-            set_field(0, value, document.title, value);
-        } else if (key == "Route") {
-            set_field(1, value, document.routes,
-                      parse_weighted_path_terms(value, "Route"));
-        } else if (key == "RouteTitle") {
-            set_field(2, value, document.route_title, value);
-        } else if (key == "Vehicle") {
-            set_field(3, value, document.vehicles,
+        if (field.document) {
+            set_field(index, value, document.*field.document, value);
+        } else if (index == k_scenario_route_field) {
+            set_field(index, value, document.routes, parse_weighted_path_terms(value, field.name));
+        } else {
+            set_field(index, value, document.vehicles,
                       value.empty() ? std::vector<ScenarioPathWeight>{}
-                                    : parse_weighted_path_terms(value, "Vehicle"));
+                                    : parse_weighted_path_terms(value, field.name));
             if (value.empty()) {
                 KME_MAPLOADER_LOG_WARN(path_to_utf8(loaded.path.filename()) +
                                       " has an empty Vehicle entry; Route loading continues.");
             }
-        } else if (key == "VehicleTitle") {
-            set_field(4, value, document.vehicle_title, value);
-        } else if (key == "Author") {
-            set_field(5, value, document.author, value);
-        } else if (key == "Image") {
-            set_field(6, value, document.image, value);
-        } else if (key == "Comment") {
-            set_field(7, value, document.comment, value);
         }
     });
     return document;
@@ -226,11 +242,9 @@ size_t unquoted_comment_begin(std::string_view line) {
     return line.size();
 }
 
-std::array<ScenarioFieldRange, 8> find_scenario_field_ranges(
+std::array<ScenarioFieldRange, k_scenario_field_count> find_scenario_field_ranges(
     const ScenarioSourceText& source) {
-    std::array<ScenarioFieldRange, 8> result{};
-    const std::array<const char*, 8> keys{
-        "Title", "Route", "RouteTitle", "Vehicle", "VehicleTitle", "Author", "Image", "Comment"};
+    std::array<ScenarioFieldRange, k_scenario_field_count> result{};
     size_t pos = source.loaded.body_offset;
     while (pos <= source.text.size()) {
         const TextLineSpan line = text_line_span(source.text, pos);
@@ -243,12 +257,8 @@ std::array<ScenarioFieldRange, 8> find_scenario_field_ranges(
             while (key_begin < equal && std::isspace(static_cast<unsigned char>(text[key_begin]))) ++key_begin;
             size_t key_end = equal;
             while (key_end > key_begin && std::isspace(static_cast<unsigned char>(text[key_end - 1]))) --key_end;
-            const std::string key(text.substr(key_begin, key_end - key_begin));
-            size_t index = keys.size();
-            for (size_t i = 0; i < keys.size(); ++i) {
-                if (key == keys[i]) { index = i; break; }
-            }
-            if (index < keys.size()) {
+            const size_t index = scenario_field_index(text.substr(key_begin, key_end - key_begin));
+            if (index < k_scenario_field_count) {
                 const size_t value_region_begin = pos + equal + 1;
                 const size_t value_region_end = pos + comment;
                 size_t value_begin = value_region_begin;
@@ -286,12 +296,7 @@ std::string scenario_newline(const std::string& newline) {
 }
 
 std::string scenario_weight_text(double weight) {
-    std::array<char, 64> buffer{};
-    const int written = std::snprintf(buffer.data(), buffer.size(), "%.12g", weight);
-    if (written <= 0 || static_cast<size_t>(written) >= buffer.size()) {
-        throw std::runtime_error("Scenario weight formatting failed");
-    }
-    return std::string(buffer.data(), static_cast<size_t>(written));
+    return format_c_decimal(weight, 12);
 }
 
 double serialized_scenario_weight(double weight) {
@@ -422,24 +427,20 @@ ScenarioDocument save_scenario_document(const std::filesystem::path& scenario_pa
     const auto ranges = find_scenario_field_ranges(source);
     std::vector<ScenarioReplacement> replacements;
     replacements.reserve(32);
-    const std::array<std::string, 8> scalar_values{
-        request.title, {}, request.route_title, {}, request.vehicle_title,
-        request.author, request.image, request.comment};
-    const std::array<const char*, 8> scalar_names{
-        "Title", "Route", "RouteTitle", "Vehicle", "VehicleTitle", "Author", "Image", "Comment"};
-    const std::array<const std::vector<ScenarioEditPath>*, 8> path_values{
-        nullptr, &request.routes, nullptr, &request.vehicles, nullptr, nullptr, nullptr, nullptr};
     std::string missing_field_insertions;
     const std::string insertion_newline = scenario_newline(source.loaded.newline);
 
-    for (size_t i = 0; i < scalar_names.size(); ++i) {
+    for (size_t i = 0; i < k_scenario_field_count; ++i) {
+        const auto& field = k_scenario_fields[i];
         std::string desired;
-        if (path_values[i]) {
-            const auto& paths = *path_values[i];
+        if (field.edit) {
+            desired = request.*field.edit;
+        } else {
+            const auto& paths = i == k_scenario_route_field ? request.routes : request.vehicles;
             if (ranges[i].present) {
-                if (i == 3 && (ranges[i].value.empty() || paths.empty())) {
+                if (i == k_scenario_vehicle_field && (ranges[i].value.empty() || paths.empty())) {
                     desired = paths.empty() ? std::string{}
-                                            : serialize_scenario_path_value(paths, scalar_names[i]);
+                                            : serialize_scenario_path_value(paths, field.name);
                     if (!desired.empty() && ranges[i].value.empty() &&
                         ranges[i].value_end < source.text.size() &&
                         (source.text[ranges[i].value_end] == '#' ||
@@ -449,24 +450,22 @@ ScenarioDocument save_scenario_document(const std::filesystem::path& scenario_pa
                     add_replacement(replacements, ranges[i].value_begin, ranges[i].value_end,
                                     std::move(desired));
                 } else {
-                    patch_scenario_path_value(source.text, ranges[i], paths, scalar_names[i], replacements);
+                    patch_scenario_path_value(source.text, ranges[i], paths, field.name, replacements);
                 }
                 continue;
             }
             if (paths.empty()) continue;
-            if (i != 3) {
-                throw std::runtime_error(std::string("Scenario ") + scalar_names[i] +
+            if (i != k_scenario_vehicle_field) {
+                throw std::runtime_error(std::string("Scenario ") + field.name +
                                          " entry is missing; candidate insertion is not supported");
             }
-            desired = serialize_scenario_path_value(paths, scalar_names[i]);
-        } else {
-            desired = scalar_values[i];
+            desired = serialize_scenario_path_value(paths, field.name);
         }
         if (ranges[i].present) {
             add_replacement(replacements, ranges[i].value_begin, ranges[i].value_end, desired);
         } else if (!desired.empty()) {
             if (!missing_field_insertions.empty()) missing_field_insertions += insertion_newline;
-            missing_field_insertions += scalar_names[i];
+            missing_field_insertions += field.name;
             missing_field_insertions += " = ";
             missing_field_insertions += desired;
         }
@@ -552,7 +551,7 @@ std::vector<ScenarioRouteCandidate> resolve_scenario_route_candidates(
     candidates.reserve(document.routes.size());
     for (const ScenarioPathWeight& term : document.routes) {
         const std::filesystem::path resolved =
-            join_path(document.root, term.path_text).lexically_normal();
+            join_utf8_path(document.root, term.path_text).lexically_normal();
         if (!std::filesystem::is_regular_file(resolved)) {
             throw std::runtime_error(
                 "Scenario Route target does not exist: " + path_to_utf8(resolved));

@@ -341,7 +341,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         point_in_rect(io.MousePos, profile_plot_pos_, profile_plot_size_);
     ScopedImPlotWheelZoomDisabled disable_default_wheel_zoom(mouse_in_profile_plot);
     const float marker_scale = marker_size_scale_from_percent(marker_size_percent_);
-    const auto nearest_marker = [&](ImVec2 pos, ImVec2 size, const auto& to_pixels, bool editable_only) {
+    const auto nearest_marker = [&](ImVec2 pos, ImVec2 plot_size, const auto& to_pixels, bool editable_only) {
         const OwnTrackEditMarker* nearest = nullptr;
         const float hit_radius = std::max(12.0f, 12.0f * marker_scale);
         float nearest_distance = hit_radius * hit_radius;
@@ -349,7 +349,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         for (const auto& marker : data.gradient_edit_markers) {
             if (editable_only && !plan_alignment_->target(marker.edit_id)) continue;
             const ImVec2 point = to_pixels(marker);
-            if (!point_in_rect(point, pos, size)) continue;
+            if (!point_in_rect(point, pos, plot_size)) continue;
             const float dx = io.MousePos.x - point.x;
             const float dy = io.MousePos.y - point.y;
             const float distance = dx * dx + dy * dy;

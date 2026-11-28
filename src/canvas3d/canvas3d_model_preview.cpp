@@ -57,9 +57,12 @@ double reference_grid_spacing(float radius) {
 bool Canvas3D::Impl::load_model(const std::string& path, std::string& error) {
     model_load_warnings.clear();
     MlMeshData data = {};
-    if (!ModelLoaderClient::load(path, data, error)) return false;
+    const auto status = ModelLoaderClient::load(path, data, error);
+    if (status == ML_LOAD_FAILED) return false;
     ModelDataGuard data_guard(data);
-
+    if (status == ML_LOAD_WHITE_MATERIAL) {
+        model_load_warnings.push_back(std::string(k_white_model_warning) + path);
+    }
     return upload_model(data, path, error);
 }
 
@@ -97,14 +100,7 @@ bool Canvas3D::Impl::upload_model(const MlMeshData& data, const std::string& pat
     }
 
     release_resources();
-    std::vector<GpuVertex> vertices(data.vertex_count);
-    for (size_t i = 0; i < data.vertex_count; ++i) {
-        vertices[i] = {
-            data.vertices[i].px, data.vertices[i].py, data.vertices[i].pz,
-            data.vertices[i].nx, data.vertices[i].ny, data.vertices[i].nz,
-            data.vertices[i].u, data.vertices[i].v
-        };
-    }
+    const auto vertices = copy_model_vertices(data);
 
     D3D11_BUFFER_DESC vb_desc = {};
     vb_desc.ByteWidth = static_cast<UINT>(vertices.size() * sizeof(GpuVertex));
@@ -163,8 +159,6 @@ bool Canvas3D::Impl::upload_model(const MlMeshData& data, const std::string& pat
     }
 
     index_count = static_cast<UINT>(data.index_count);
-    bounds_min = {data.bounds_min[0], data.bounds_min[1], data.bounds_min[2]};
-    bounds_max = {data.bounds_max[0], data.bounds_max[1], data.bounds_max[2]};
     center = {data.center[0], data.center[1], data.center[2]};
     radius = data.radius;
     model_path_value = path;
@@ -262,8 +256,6 @@ void Canvas3D::Impl::draw_model_preview_axis_labels(ImDrawList& draw, ImVec2 ori
 void Canvas3D::Impl::clear_model() {
     release_resources();
     model_path_value.clear();
-    bounds_min = {};
-    bounds_max = {};
     center = {};
     radius = 1.0f;
     yaw = 0.0f;

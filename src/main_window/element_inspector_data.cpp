@@ -86,8 +86,8 @@ void App::request_element_inspector(const std::string& edit_id, const std::strin
 
 void App::process_pending_element_inspector() {
     if (!pending_inspector_request_) return;
-    GuiTiming::Activation timing_activation(edit_timing_.get());
-    GuiTiming::Stage timing("inspector.reload");
+    GuiTiming::Activation timing_activation(active_edit_timing());
+    GuiTiming::Stage timing(kme::timing::GuiStage::InspectorReload);
     MapElementInspectorRequest request = std::move(*pending_inspector_request_);
     pending_inspector_request_.reset();
     open_element_inspector(request);
@@ -115,15 +115,11 @@ bool row_kind_supports_delete(const std::string& row_kind) {
 }
 
 std::optional<RepeaterDeleteChain> repeater_delete_chain_for_edit_id(
-    const std::vector<TableRow>& rows, const std::string& edit_id) {
-    const repeater_linkage::Linkage linkage =
-        repeater_linkage::pair_linkage(table_repeater_events(rows));
+    const MapModel& model, const std::string& edit_id) {
+    const auto& rows = model.repeaters;
+    const auto& linkage = model.repeater_links;
     for (const repeater_linkage::Segment& segment : linkage.segments) {
-        if (segment.begin_source_index >= rows.size() ||
-            rows[segment.begin_source_index].edit_id != edit_id ||
-            segment.chain_index >= linkage.chains.size()) {
-            continue;
-        }
+        if (rows[segment.begin_source_index].edit_id != edit_id) continue;
         const repeater_linkage::Chain& chain = linkage.chains[segment.chain_index];
         RepeaterDeleteChain result;
         result.begin_source_indices = chain.begin_source_indices;
@@ -723,7 +719,7 @@ void App::process_pending_resource_list_file_change() {
 
 bool App::apply_other_track_rename() {
     EditTimingScope operation(*this, "apply");
-    GuiTiming::Stage timing("rename.prepare");
+    GuiTiming::Stage timing(kme::timing::GuiStage::RenamePrepare);
     if (!edit_actions_available()) return false;
     const std::string source_key = trim_gui_ascii_copy(other_track_rename_.source_key);
     const std::string requested_key = trim_gui_ascii_copy(other_track_rename_.apply_key);
@@ -812,7 +808,7 @@ bool App::apply_other_track_rename() {
         return true;
     }
 
-    timing.next("rename.apply");
+    timing.next(kme::timing::GuiStage::RenameApply);
     if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) return false;
 
     std::string applied_key;
@@ -1634,16 +1630,13 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             }
         }
     } else if (request.row_kind == "repeater") {
-        const repeater_linkage::Linkage repeater_linkage =
-            repeater_linkage::pair_linkage(table_repeater_events(model_.repeaters));
+        const auto& repeater_linkage = model_.repeater_links;
         const auto linked = std::find_if(
             repeater_linkage.segments.begin(), repeater_linkage.segments.end(),
             [&](const repeater_linkage::Segment& segment) {
-                return segment.begin_source_index < model_.repeaters.size() &&
-                    model_.repeaters[segment.begin_source_index].edit_id == edit_id;
+                return model_.repeaters[segment.begin_source_index].edit_id == edit_id;
             });
-        if (linked == repeater_linkage.segments.end() ||
-            linked->chain_index >= repeater_linkage.chains.size()) {
+        if (linked == repeater_linkage.segments.end()) {
             KME_ADD_LOG("[warn]Repeater inspector target is not a Begin statement: " +
                     edit_id);
             return false;
@@ -1808,9 +1801,7 @@ bool App::navigate_repeater_inspector(bool toward_next) {
     request.inspector_session = inspector_.session;
     if (!open_element_inspector(request)) return false;
 
-    if (scene_preview_started_ && scene_preview_canvas_ && scene_preview_canvas_->has_scene()) {
-        locate_repeater_row_in_scene_preview(inspector_.repeater_scene_row_index);
-    }
+    locate_repeater_row_in_scene_preview(inspector_.repeater_scene_row_index);
     return true;
 }
 
@@ -2030,7 +2021,7 @@ void App::apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& u
 
 void App::apply_inspector_changes() {
     EditTimingScope operation(*this, "apply");
-    GuiTiming::Stage timing("inspector.prepare_apply");
+    GuiTiming::Stage timing(kme::timing::GuiStage::InspectorPrepareApply);
     if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
     if (inspector_.scene_rotation_draft) clear_scene_placement_edit_target();
@@ -2070,22 +2061,9 @@ void App::apply_inspector_changes() {
     std::optional<std::string> repeater_key_original;
     for (MapElementEditFieldState& field : inspector_.fields) {
         if (field.read_only) continue;
-        std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
-        if (field.required && value.empty()) {
-            set_program_status("status.edit.required_field");
-            return;
-        }
-        const bool field_changed = value != field.original_value;
-        if (!validate_and_canonicalize_edit_field(field, field_changed)) {
-            if (inspector_.row_kind == "station.put" &&
-                (field.key == "margin1" || field.key == "margin2")) {
-                set_program_status("status.edit.station_margin_invalid");
-            } else {
-                set_program_status("status.edit.invalid_number");
-            }
-            return;
-        }
-        value = trim_gui_ascii_copy(edit_field_buffer_text(field));
+        auto validated = validated_edit_form_value(field, inspector_.row_kind, false);
+        if (!validated) return;
+        std::string value = std::move(*validated);
         if (repeater_inspector && field.key == "repeaterKey") {
             repeater_key_value = value;
             repeater_key_original = trim_gui_ascii_copy(field.original_value);
@@ -2420,7 +2398,7 @@ void App::apply_inspector_changes() {
         }
     }
 
-    timing.next("inspector.apply");
+    timing.next(kme::timing::GuiStage::InspectorApply);
     if (replacements.empty() && !repeater_key_sync_requested) {
         if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
             if (repeater_inspector) {

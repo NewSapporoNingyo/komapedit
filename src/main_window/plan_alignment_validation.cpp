@@ -552,14 +552,14 @@ bool App::debug_plan_alignment_contract(double unit_distance, std::ostream& out)
             const bool shows_measurement = hovered_mileage && !app.measure_text_.empty();
             io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
             render_charts();
-            const bool opened_on_press = app.new_element_wizard_.open;
+            const bool chart_opened_on_press = app.new_element_wizard_.open;
             release_chart();
             const bool opens_with_mileage = app.new_element_wizard_.open &&
                 app.new_element_wizard_.distance_prefill == hovered_mileage;
-            check(name, shows_measurement && !opened_on_press && opens_with_mileage);
-            if (!shows_measurement || opened_on_press || !opens_with_mileage) {
+            check(name, shows_measurement && !chart_opened_on_press && opens_with_mileage);
+            if (!shows_measurement || chart_opened_on_press || !opens_with_mileage) {
                 out << name << " measurement=" << shows_measurement
-                    << " opened_on_press=" << opened_on_press
+                    << " opened_on_press=" << chart_opened_on_press
                     << " matching_prefill=" << opens_with_mileage << '\n';
             }
             app.new_element_wizard_.open = false;

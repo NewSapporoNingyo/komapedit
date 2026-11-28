@@ -113,7 +113,7 @@ void App::run_creator_message_find() {
         if (draft->second.deleted) row.cells.clear();
         else if (row.cells.size() > 1) row.cells[1] = draft->second.content;
     }
-    run_table_find(creator_message_find_, TableFindRowsView{&search_rows, nullptr, nullptr}, {0, 1});
+    run_table_find(creator_message_find_, TableFindRowsView(search_rows), {0, 1});
 }
 
 void App::ensure_creator_message_layout(float width) {

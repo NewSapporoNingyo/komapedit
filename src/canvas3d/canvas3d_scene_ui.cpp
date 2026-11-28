@@ -530,7 +530,7 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
     const bool context_popup_open =
         ImGui::IsPopupOpen("ScenePreviewObjectContext") ||
         ImGui::IsPopupOpen("ScenePreviewMarkerContext");
-    const bool loading_before_render = scene_stats().loading;
+    const bool loading_before_render = scene_is_loading();
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 pointer_pos = io.MousePos;
     const touch_input::TouchFrame& touch = touch_input::current_frame();
@@ -554,9 +554,11 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
         result.placement_drag = cancel_scene_rotation_drag();
     }
     const bool gizmo_consumes_left = scene_structure_gizmo_consumes_left_input();
+    std::optional<SceneViewProjection> frame_view;
     if (scene_active) {
+        frame_view.emplace(scene_view_projection(width, height));
         render_scene_preview_target(
-            width, height, mouse_local,
+            *frame_view, mouse_local,
             (hovered || context_popup_open) && !gizmo_consumes_left,
             hovered && !loading_before_render);
     } else {
@@ -589,7 +591,7 @@ Canvas3DSceneFrameResult Canvas3D::Impl::render_scene_preview(
         draw_scene_overlay(draw, origin, avail);
         draw_scene_route_overlay(draw, origin, avail, ui_text);
         draw_scene_metrics_overlay(draw, origin, avail, stats);
-        draw_scene_structure_gizmo(draw, origin, width, height);
+        if (frame_view) draw_scene_structure_gizmo(draw, origin, *frame_view);
     }
     }
 

@@ -633,7 +633,7 @@ std::vector<TableRow> hydrate_creator_message_rows(const KvMapSnapshot& snapshot
 MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
                               const std::string& path,
                               double snapshot_call_seconds) {
-    kme::timing::GuiTiming::Stage edit_timing("snapshot.hydrate");
+    kme::timing::GuiTiming::Stage edit_timing(kme::timing::GuiStage::SnapshotHydrate);
     const auto hydrate_started_at = std::chrono::steady_clock::now();
     MapModel model;
     model.path = path;
@@ -1037,6 +1037,18 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
     add_sections(snapshot.section_speed_limits,
                  snapshot.section_speed_limit_count,
                  model.section_speed_limits);
+    std::map<std::pair<std::uint64_t, int32_t>, KvStringRef> sound_source_counts;
+    for (std::uint64_t i = 0; i < snapshot.statement_count; ++i) {
+        const auto& statement = snapshot.statements[i];
+        if (statement.evaluated_values.count < 3) continue;
+        const auto kind = map_snapshot_string(snapshot, statement.statement_kind);
+        if (kind != "SoundList.Row" && kind != "Sound3DList.Row") continue;
+        const auto& value = snapshot.values[statement.evaluated_values.offset + 2];
+        if (value.kind != KV_VALUE_STRING || value.string_value.length == 0) continue;
+        sound_source_counts.emplace(
+            std::make_pair(statement.source.source_file_index, statement.source.line),
+            value.string_value);
+    }
     model.sound_list.reserve(static_cast<size_t>(snapshot.sound_list_count));
     model.sound_3d_list.reserve(static_cast<size_t>(snapshot.sound_list_count));
     for (std::uint64_t i = 0; i < snapshot.sound_list_count; ++i) {
@@ -1046,7 +1058,10 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         row.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
         row.cells["resolvedFilePath"] = resolve_list_asset_path(
             snapshot, input.metadata, row.cells["filePath"]);
-        row.cells["bufferCount"] = std::to_string(input.buffer_count);
+        const auto raw_count = sound_source_counts.find(
+            {input.metadata.source_file_index, input.metadata.line});
+        row.cells["bufferCount"] = raw_count == sound_source_counts.end()
+            ? std::to_string(input.buffer_count) : map_snapshot_string(snapshot, raw_count->second);
         row.cells["is3D"] = input.is_3d ? "true" : "false";
         apply_map_row_metadata(row, snapshot, input.metadata);
         (input.is_3d ? model.sound_3d_list : model.sound_list).push_back(
@@ -1374,6 +1389,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
     model.buffer_copy_seconds = buffer_copy_seconds;
     model.snapshot_hydrate_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - hydrate_started_at).count();
+    model.repeater_links = link_repeater_rows(model.repeaters);
     annotate_scene_track_key_warnings(model);
     return model;
 }

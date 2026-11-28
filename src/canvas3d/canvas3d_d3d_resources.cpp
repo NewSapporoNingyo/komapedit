@@ -221,6 +221,7 @@ public:
     ~SceneComResource() { release_com(resource_); }
 
     T** output() { return &resource_; }
+    T* get() const { return resource_; }
     T* operator->() const { return resource_; }
     explicit operator bool() const { return resource_ != nullptr; }
     T* take() { return std::exchange(resource_, nullptr); }
@@ -312,61 +313,61 @@ bool Canvas3D::Impl::ensure_scene_pick_pipeline(std::string& error) {
     return true;
 }
 
-bool Canvas3D::Impl::ensure_scene_pipeline(std::string& error) {
-    if (scene_marker_vertex_shader) return true;
-    if (!device || !context) {
-        error = "Direct3D device is not available";
-        return false;
-    }
+bool Canvas3D::Impl::ensure_scene_mesh_pipeline(std::string& error) {
+    if (scene_vertex_shader) return true;
     if (!ensure_pipeline(error) || !ensure_scene_depth_states(error)) return false;
 
-    if (!scene_vertex_shader) {
-        SceneComResource<ID3DBlob> vs, ps, fog_ps;
-        SceneComResource<ID3D11VertexShader> vertex;
-        SceneComResource<ID3D11PixelShader> pixel, fog_pixel;
-        SceneComResource<ID3D11InputLayout> input_layout;
-        SceneComResource<ID3D11Buffer> constants;
-        const char* source = k_scene_shader_source;
-        if (!compile_scene_shader(source, "vs_main", "vs_4_0", "D3DCompile(scene vertex shader)", vs, error) ||
-            !compile_scene_shader(source, "ps_main", "ps_4_0", "D3DCompile(scene pixel shader)", ps, error) ||
-            !compile_scene_shader(source, "ps_fog_main", "ps_4_0", "D3DCompile(scene fog pixel shader)", fog_ps, error)) {
-            return false;
-        }
-
-        D3D11_INPUT_ELEMENT_DESC layout[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"WORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"WORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"WORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"WORLD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D11_INPUT_PER_INSTANCE_DATA, 1},
-        };
-        if (!scene_d3d_succeeded(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(),
-                                     nullptr, vertex.output()), "CreateVertexShader(scene)", error) ||
-            !scene_d3d_succeeded(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(),
-                                     nullptr, pixel.output()), "CreatePixelShader(scene)", error) ||
-            !scene_d3d_succeeded(device->CreatePixelShader(fog_ps->GetBufferPointer(), fog_ps->GetBufferSize(),
-                                     nullptr, fog_pixel.output()), "CreatePixelShader(scene fog)", error) ||
-            !scene_d3d_succeeded(device->CreateInputLayout(layout, IM_ARRAYSIZE(layout),
-                                     vs->GetBufferPointer(), vs->GetBufferSize(), input_layout.output()),
-                                 "CreateInputLayout(scene)", error) ||
-            !create_scene_constants(*device, sizeof(SceneViewConstants),
-                                    "CreateBuffer(scene constants)", constants, error)) {
-            return false;
-        }
-
-        scene_vertex_shader = vertex.take();
-        scene_pixel_shader = pixel.take();
-        scene_fog_pixel_shader = fog_pixel.take();
-        scene_input_layout = input_layout.take();
-        scene_constant_buffer = constants.take();
+    SceneComResource<ID3DBlob> vs, ps, fog_ps;
+    SceneComResource<ID3D11VertexShader> vertex;
+    SceneComResource<ID3D11PixelShader> pixel, fog_pixel;
+    SceneComResource<ID3D11InputLayout> input_layout;
+    SceneComResource<ID3D11Buffer> constants;
+    const char* source = k_scene_shader_source;
+    if (!compile_scene_shader(source, "vs_main", "vs_4_0", "D3DCompile(scene vertex shader)", vs, error) ||
+        !compile_scene_shader(source, "ps_main", "ps_4_0", "D3DCompile(scene pixel shader)", ps, error) ||
+        !compile_scene_shader(source, "ps_fog_main", "ps_4_0", "D3DCompile(scene fog pixel shader)", fog_ps, error)) {
+        return false;
     }
-    return ensure_scene_outline_pipeline(error) && ensure_scene_pick_pipeline(error) &&
-        ensure_scene_marker_pipeline(error);
+
+    D3D11_INPUT_ELEMENT_DESC layout[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"WORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"WORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"WORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"WORLD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+    };
+    if (!scene_d3d_succeeded(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(),
+                                 nullptr, vertex.output()), "CreateVertexShader(scene)", error) ||
+        !scene_d3d_succeeded(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(),
+                                 nullptr, pixel.output()), "CreatePixelShader(scene)", error) ||
+        !scene_d3d_succeeded(device->CreatePixelShader(fog_ps->GetBufferPointer(), fog_ps->GetBufferSize(),
+                                 nullptr, fog_pixel.output()), "CreatePixelShader(scene fog)", error) ||
+        !scene_d3d_succeeded(device->CreateInputLayout(layout, IM_ARRAYSIZE(layout),
+                                 vs->GetBufferPointer(), vs->GetBufferSize(), input_layout.output()),
+                             "CreateInputLayout(scene)", error) ||
+        !create_scene_constants(*device, sizeof(SceneViewConstants),
+                                "CreateBuffer(scene constants)", constants, error)) {
+        return false;
+    }
+
+    scene_vertex_shader = vertex.take();
+    scene_pixel_shader = pixel.take();
+    scene_fog_pixel_shader = fog_pixel.take();
+    scene_input_layout = input_layout.take();
+    scene_constant_buffer = constants.take();
+    return true;
+}
+
+bool Canvas3D::Impl::ensure_scene_pipeline(std::string& error) {
+    return ensure_scene_mesh_pipeline(error) && ensure_scene_outline_pipeline(error) &&
+        ensure_scene_pick_pipeline(error) && ensure_scene_marker_pipeline(error);
 }
 
 bool Canvas3D::Impl::ensure_scene_marker_pipeline(std::string& error) {
+    if (scene_marker_vertex_shader) return true;
+
     SceneComResource<ID3DBlob> vs, ps, pick_ps, mask_ps;
     SceneComResource<ID3D11VertexShader> vertex;
     SceneComResource<ID3D11PixelShader> pixel, pick_pixel, mask_pixel;
@@ -375,7 +376,7 @@ bool Canvas3D::Impl::ensure_scene_marker_pipeline(std::string& error) {
     const char* source = k_scene_marker_shader_source;
     const char* mask_entry = "ps_mask_main";
 #ifndef NDEBUG
-    if (std::exchange(debug_scene_marker_compile_failure, false)) mask_entry = "missing_mask_entry";
+    if (std::exchange(debug_faults.marker_compile_failure, false)) mask_entry = "missing_mask_entry";
 #endif
     if (!compile_scene_shader(source, "vs_main", "vs_4_0", "D3DCompile(scene marker vertex shader)", vs, error) ||
         !compile_scene_shader(source, "ps_main", "ps_4_0", "D3DCompile(scene marker pixel shader)", ps, error) ||
@@ -665,6 +666,19 @@ bool Canvas3D::Impl::ensure_pipeline(std::string& error) {
     return true;
 }
 
+static D3D11_TEXTURE2D_DESC render_color_description(int width, int height, UINT bind_flags) {
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = static_cast<UINT>(width);
+    desc.Height = static_cast<UINT>(height);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = bind_flags;
+    return desc;
+}
+
 bool Canvas3D::Impl::ensure_render_target(int width, int height, std::string& error) {
     if (!device || width <= 0 || height <= 0) return false;
     if (render_srv && render_width == width && render_height == height) return true;
@@ -673,15 +687,8 @@ bool Canvas3D::Impl::ensure_render_target(int width, int height, std::string& er
     render_width = width;
     render_height = height;
 
-    D3D11_TEXTURE2D_DESC tex_desc = {};
-    tex_desc.Width = static_cast<UINT>(width);
-    tex_desc.Height = static_cast<UINT>(height);
-    tex_desc.MipLevels = 1;
-    tex_desc.ArraySize = 1;
-    tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    tex_desc.SampleDesc.Count = 1;
-    tex_desc.Usage = D3D11_USAGE_DEFAULT;
-    tex_desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    const auto tex_desc = render_color_description(
+        width, height, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
     HRESULT hr = device->CreateTexture2D(&tex_desc, nullptr, &render_texture);
     if (FAILED(hr)) {
         error = hresult_text("CreateTexture2D(render target)", hr);
@@ -725,95 +732,48 @@ bool Canvas3D::Impl::ensure_render_target(int width, int height, std::string& er
     return true;
 }
 
-bool Canvas3D::Impl::ensure_scene_highlight_mask_target(int width, int height, std::string& error) {
-    if (!device || width <= 0 || height <= 0) return false;
-    if (scene_highlight_mask_texture && scene_highlight_mask_rtv && scene_highlight_mask_srv &&
-        render_width == width && render_height == height) {
-        return true;
-    }
+bool Canvas3D::Impl::ensure_scene_highlight_mask_target(std::string& error) {
+    if (scene_highlight_mask_srv) return true;
 
-    release_com(scene_highlight_mask_srv);
-    release_com(scene_highlight_mask_rtv);
-    release_com(scene_highlight_mask_texture);
-
-    D3D11_TEXTURE2D_DESC tex_desc = {};
-    tex_desc.Width = static_cast<UINT>(width);
-    tex_desc.Height = static_cast<UINT>(height);
-    tex_desc.MipLevels = 1;
-    tex_desc.ArraySize = 1;
-    tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    tex_desc.SampleDesc.Count = 1;
-    tex_desc.Usage = D3D11_USAGE_DEFAULT;
-    tex_desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-    HRESULT hr = device->CreateTexture2D(&tex_desc, nullptr, &scene_highlight_mask_texture);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateTexture2D(scene highlight mask)", hr);
-        release_com(scene_highlight_mask_texture);
+    SceneComResource<ID3D11Texture2D> texture;
+    SceneComResource<ID3D11RenderTargetView> target;
+    SceneComResource<ID3D11ShaderResourceView> resource;
+    const auto desc = render_color_description(
+        render_width, render_height, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
+    if (!scene_d3d_succeeded(device->CreateTexture2D(&desc, nullptr, texture.output()),
+                             "CreateTexture2D(scene highlight mask)", error) ||
+        !scene_d3d_succeeded(device->CreateRenderTargetView(texture.get(), nullptr, target.output()),
+                             "CreateRenderTargetView(scene highlight mask)", error) ||
+        !scene_d3d_succeeded(device->CreateShaderResourceView(texture.get(), nullptr, resource.output()),
+                             "CreateShaderResourceView(scene highlight mask)", error)) {
         return false;
     }
-    hr = device->CreateRenderTargetView(scene_highlight_mask_texture, nullptr, &scene_highlight_mask_rtv);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateRenderTargetView(scene highlight mask)", hr);
-        release_com(scene_highlight_mask_texture);
-        return false;
-    }
-    hr = device->CreateShaderResourceView(scene_highlight_mask_texture, nullptr, &scene_highlight_mask_srv);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateShaderResourceView(scene highlight mask)", hr);
-        release_com(scene_highlight_mask_rtv);
-        release_com(scene_highlight_mask_texture);
-        return false;
-    }
+    scene_highlight_mask_texture = texture.take();
+    scene_highlight_mask_rtv = target.take();
+    scene_highlight_mask_srv = resource.take();
     return true;
 }
 
-bool Canvas3D::Impl::ensure_scene_pick_target(int width, int height, std::string& error) {
-    if (!device || width <= 0 || height <= 0) return false;
-    if (scene_pick_texture && scene_pick_rtv && scene_pick_readback_texture &&
-        render_width == width && render_height == height) {
-        return true;
-    }
+bool Canvas3D::Impl::ensure_scene_pick_target(std::string& error) {
+    if (scene_pick_readback_texture) return true;
 
-    release_com(scene_pick_readback_texture);
-    release_com(scene_pick_rtv);
-    release_com(scene_pick_texture);
-
-    D3D11_TEXTURE2D_DESC tex_desc = {};
-    tex_desc.Width = static_cast<UINT>(width);
-    tex_desc.Height = static_cast<UINT>(height);
-    tex_desc.MipLevels = 1;
-    tex_desc.ArraySize = 1;
-    tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    tex_desc.SampleDesc.Count = 1;
-    tex_desc.Usage = D3D11_USAGE_DEFAULT;
-    tex_desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-    HRESULT hr = device->CreateTexture2D(&tex_desc, nullptr, &scene_pick_texture);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateTexture2D(scene pick)", hr);
-        release_com(scene_pick_texture);
-        return false;
-    }
-    hr = device->CreateRenderTargetView(scene_pick_texture, nullptr, &scene_pick_rtv);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateRenderTargetView(scene pick)", hr);
-        release_com(scene_pick_texture);
-        return false;
-    }
-
-    D3D11_TEXTURE2D_DESC read_desc = tex_desc;
-    read_desc.Width = 1;
-    read_desc.Height = 1;
+    SceneComResource<ID3D11Texture2D> texture, readback;
+    SceneComResource<ID3D11RenderTargetView> target;
+    const auto desc = render_color_description(render_width, render_height, D3D11_BIND_RENDER_TARGET);
+    auto read_desc = render_color_description(1, 1, 0);
     read_desc.Usage = D3D11_USAGE_STAGING;
-    read_desc.BindFlags = 0;
     read_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    hr = device->CreateTexture2D(&read_desc, nullptr, &scene_pick_readback_texture);
-    if (FAILED(hr)) {
-        error = hresult_text("CreateTexture2D(scene pick readback)", hr);
-        release_com(scene_pick_rtv);
-        release_com(scene_pick_texture);
+    if (!scene_d3d_succeeded(device->CreateTexture2D(&desc, nullptr, texture.output()),
+                             "CreateTexture2D(scene pick)", error) ||
+        !scene_d3d_succeeded(device->CreateRenderTargetView(texture.get(), nullptr, target.output()),
+                             "CreateRenderTargetView(scene pick)", error) ||
+        !scene_d3d_succeeded(device->CreateTexture2D(&read_desc, nullptr, readback.output()),
+                             "CreateTexture2D(scene pick readback)", error)) {
         return false;
     }
-
+    scene_pick_texture = texture.take();
+    scene_pick_rtv = target.take();
+    scene_pick_readback_texture = readback.take();
     return true;
 }
 

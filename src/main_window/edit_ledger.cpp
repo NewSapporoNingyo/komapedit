@@ -78,50 +78,49 @@ bool App::edit_ui_operation_pending() const {
     return pending_edit_ui_operation_.operation != PendingEditUiOperation::None;
 }
 
-App::GuiTiming::Trace* App::begin_edit_timing(const char* operation) noexcept try {
+App::GuiTiming::Trace* App::begin_edit_timing(const char* operation) noexcept {
     if (!edit_timing_) {
-        edit_timing_ = std::make_unique<GuiTiming::Trace>();
+        edit_timing_.emplace();
         edit_timing_operation_ = operation;
         edit_timing_outcome_ = "failed";
         edit_timing_change_count_ = 0;
-        edit_timing_wait_scene_frame_ = scene_preview_started_ && show_scene_preview_window_;
+        edit_timing_started_with_scene_ = scene_preview_started_;
+        edit_timing_wait_scene_frame_ = edit_timing_started_with_scene_ && show_scene_preview_window_;
         ++edit_timing_sequence_;
-        KME_ADD_LOG("[info]edit begin: id=" + std::to_string(edit_timing_sequence_) +
-                    " operation=" + operation + " scene=" +
-                    (scene_preview_started_ ? "on" : "off"));
     }
     ++edit_timing_depth_;
-    return edit_timing_.get();
-} catch (...) {
-    edit_timing_.reset();
-    ++edit_timing_depth_;
-    return nullptr;
+    return &*edit_timing_;
 }
 
 void App::end_edit_timing() noexcept {
-    if (edit_timing_depth_ != 0) --edit_timing_depth_;
-    if (edit_timing_depth_ == 0) edit_timing_status_key_ = program_status_key_;
-    finish_edit_timing();
+    if (--edit_timing_depth_ == 0) {
+        edit_timing_status_key_ = program_status_key_;
+        if (!pending_inspector_request_ && !edit_timing_wait_scene_frame_) edit_timing_->stop();
+    }
 }
 
-void App::finish_edit_timing() noexcept try {
-    if (!edit_timing_ || edit_timing_depth_ != 0) return;
-    if (pending_inspector_request_) return;
-    if (edit_timing_wait_scene_frame_) return;
+void App::finish_edit_timing() noexcept {
+    if (!edit_timing_ || edit_timing_depth_ != 0 ||
+        pending_inspector_request_ || edit_timing_wait_scene_frame_) return;
+    edit_timing_->stop();
     last_edit_seconds_ = edit_timing_->seconds();
     last_edit_timing_ = std::move(*edit_timing_);
     edit_timing_.reset();
-    const std::string label = "gui." + edit_timing_operation_ +
-        " id=" + std::to_string(edit_timing_sequence_) +
-        " changes=" + std::to_string(edit_timing_change_count_) +
-        " scene=" + (scene_preview_started_ ? "on" : "off");
-    KME_ADD_LOG("[info]" + last_edit_timing_.format(
-        label, last_edit_seconds_, edit_timing_outcome_));
-    set_program_status(edit_timing_outcome_ == "scene_refresh_failed"
-        ? program_status_key_ : edit_timing_status_key_, format_double(last_edit_seconds_, 3));
-} catch (...) {
-    // Logging/status allocation failures cannot turn a completed edit into a crash.
-    edit_timing_.reset();
+    try {
+        const std::string operation(edit_timing_operation_);
+        const std::string id = std::to_string(edit_timing_sequence_);
+        const std::string label = "gui." + operation + " id=" + id +
+            " changes=" + std::to_string(edit_timing_change_count_) +
+            " scene=" + (scene_preview_started_ ? "on" : "off");
+        KME_ADD_LOG("[info]edit begin: id=" + id + " operation=" + operation +
+                    " scene=" + (edit_timing_started_with_scene_ ? "on" : "off"));
+        KME_ADD_LOG("[info]" + last_edit_timing_.format(
+            label, last_edit_seconds_, edit_timing_outcome_));
+        set_program_status(edit_timing_outcome_ == "scene_refresh_failed"
+            ? program_status_key_ : edit_timing_status_key_, format_double(last_edit_seconds_, 3));
+    } catch (const std::exception&) {
+        std::fputs("[WARN]komapedit: Edit timing output failed\n", stderr);
+    }
 }
 
 void App::request_edit_ui_operation(PendingEditUiOperation operation) {
@@ -216,6 +215,7 @@ void App::process_pending_edit_ui_operation() {
         // Preserve the final UI result when timing waits for a later scene frame.
         edit_timing_status_key_ = program_status_key_;
     }
+    finish_edit_timing();
 }
 
 void App::clear_pending_edit_state() {
@@ -643,7 +643,7 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
 
 void App::refresh_local_preview_after_edits(const std::map<std::string, std::string>& targets) {
     if (targets.empty()) return;
-    GuiTiming::Stage timing("refresh.local");
+    GuiTiming::Stage timing(kme::timing::GuiStage::RefreshLocal);
     if (targets.size() == 1 && targets.count("creator.message") != 0) {
         invalidate_table_cache();
         return;
@@ -687,7 +687,7 @@ void App::refresh_local_preview_after_edits(const std::map<std::string, std::str
          map_refresh.section_signals) &&
         scene_preview_started_ && scene_preview_canvas_ && !scene_preview_dirty_) {
         std::string error;
-        GuiTiming::Stage scene_timing("scene.map_content");
+        GuiTiming::Stage scene_timing(kme::timing::GuiStage::SceneMapContent);
         if (!scene_preview_canvas_->refresh_scene_map_content(model_, map_refresh, error)) {
             KME_ADD_LOG("[warn]3D scene marker refresh failed, scheduling full rebuild: " +
                     (error.empty() ? std::string("unknown error") : error));
@@ -696,7 +696,7 @@ void App::refresh_local_preview_after_edits(const std::map<std::string, std::str
             scene_preview_preserve_camera_on_rebuild_ = true;
         }
     }
-    timing.next("refresh.tables_markers");
+    timing.next(kme::timing::GuiStage::RefreshTablesMarkers);
     if (targets.size() == 1 && has("speedlimit")) {
         refresh_speed_limit_table_cache();
         rebuild_speed_limit_marker_overlay_cache();
@@ -705,7 +705,7 @@ void App::refresh_local_preview_after_edits(const std::map<std::string, std::str
         rebuild_marker_overlay_cache();
     }
     sync_marker_visibility_sizes();
-    timing.next("scene.placements");
+    timing.next(kme::timing::GuiStage::ScenePlacements);
     // The scheduled rebuild consumes the complete updated model. Updating the
     // outgoing scene here would rebuild its markers/chunks only to discard them.
     if (!scene_preview_started_ || !scene_preview_canvas_ || scene_preview_dirty_) return;
@@ -733,7 +733,7 @@ void App::refresh_local_preview_after_edits(const std::map<std::string, std::str
         }
     }
     if (affects_scene_dynamic) {
-        GuiTiming::Stage scene_timing("scene.dynamic_content");
+        GuiTiming::Stage scene_timing(kme::timing::GuiStage::SceneDynamicContent);
         std::string error;
         if (!scene_preview_canvas_->refresh_scene_dynamic_content(model_, station_jump_index_, error)) {
             KME_ADD_LOG("[warn]3D scene dynamic refresh failed, scheduling full rebuild: " +
@@ -873,7 +873,7 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 
 bool App::delete_element_target(const MapElementDeleteRequest& request) {
     EditTimingScope operation(*this, "delete");
-    GuiTiming::Stage timing("delete.prepare_apply");
+    GuiTiming::Stage timing(kme::timing::GuiStage::DeletePrepareApply);
     if (!edit_actions_available() || request.edit_id.empty() ||
         !row_kind_supports_delete(request.row_kind)) {
         return false;
@@ -940,7 +940,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
         }
     } else if (request.row_kind == "repeater") {
         const std::optional<RepeaterDeleteChain> chain =
-            repeater_delete_chain_for_edit_id(model_.repeaters, request.edit_id);
+            repeater_delete_chain_for_edit_id(model_, request.edit_id);
         if (!chain || chain->begin_source_indices.empty() ||
             chain->selected_begin_index >= chain->begin_source_indices.size()) {
             KME_ADD_LOG("[warn]Repeater delete target is not a linked Begin statement: " +
@@ -1043,7 +1043,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
         cancel_insert_or_add_delete(request.edit_id, request.row_kind);
     }
 
-    timing.next("delete.apply");
+    timing.next(kme::timing::GuiStage::DeleteApply);
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, true)) {
         const bool close_repeater_inspector = inspector_.open && inspector_.row_kind == "repeater" &&
             repeater_chain_edit_ids.find(inspector_.edit_id) != repeater_chain_edit_ids.end();
@@ -1487,7 +1487,7 @@ bool App::sync_edit_memory_with_ledger(
     if (resolution_requests) resolution_requests->clear();
     if (!edit_actions_available()) return false;
 
-    GuiTiming::Stage timing("backend.reset");
+    GuiTiming::Stage timing(kme::timing::GuiStage::BackendReset);
 
     if (!kv_edit_reset_memory(handle_)) {
         edit_memory_matches_pending_ledger_ = false;
@@ -1502,11 +1502,11 @@ bool App::sync_edit_memory_with_ledger(
         return true;
     }
 
-    timing.next("backend.batch");
+    timing.next(kme::timing::GuiStage::BackendBatch);
     TypedEditBatchStorage batch_storage = typed_edit_batch(changes);
     const KvEditBatch batch = batch_storage.view();
     KvEditReportSnapshot report{};
-    timing.next("backend.apply");
+    timing.next(kme::timing::GuiStage::BackendApply);
     if (!kv_edit_apply_to_memory_typed(handle_, &batch, &report, sizeof(report))) {
         edit_memory_matches_pending_ledger_ = false;
         const char* err = kv_get_last_error();
@@ -1515,7 +1515,7 @@ bool App::sync_edit_memory_with_ledger(
         return false;
     }
 
-    timing.next("backend.report");
+    timing.next(kme::timing::GuiStage::BackendReport);
     if (!parse_and_log_edit_report(report, "[info]edit memory updated",
                                    nullptr, nullptr, nullptr, resolution_requests)) {
         edit_memory_matches_pending_ledger_ = false;
@@ -1531,7 +1531,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
                                        std::string resolution_origin_edit_id,
                                        bool applying_plan_alignment) {
     EditTimingScope operation(*this, applying_delete ? "delete" : "apply");
-    GuiTiming::Stage timing("preview.backup");
+    GuiTiming::Stage timing(kme::timing::GuiStage::PreviewBackup);
     edit_timing_change_count_ = changes.size();
     if (!edit_actions_available()) return false;
     prepare_distance_resolution_operation(changes);
@@ -1568,10 +1568,10 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
     }
 
-    timing.next("preview.backend");
+    timing.next(kme::timing::GuiStage::PreviewBackend);
     std::vector<DistanceResolutionRequest> resolution_requests;
     if (!sync_edit_memory_with_ledger(changes, &resolution_requests)) {
-        GuiTiming::Stage rollback_timing("preview.rollback");
+        GuiTiming::Stage rollback_timing(kme::timing::GuiStage::PreviewRollback);
         original_edit_rows_ = snapshot_backup;
         if (!pending_edit_changes_.empty()) {
             sync_edit_memory_with_ledger(pending_edit_changes_);
@@ -1586,7 +1586,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     }
 
     auto rollback_local_preview = [&]() {
-        GuiTiming::Stage rollback_timing("preview.rollback");
+        GuiTiming::Stage rollback_timing(kme::timing::GuiStage::PreviewRollback);
         for (auto& backup : row_backups) {
             if (std::vector<TableRow>* rows =
                     inspector_rows_for_kind(model_, backup.first)) {
@@ -1607,7 +1607,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         return false;
     };
 
-    timing.next("preview.hydration");
+    timing.next(kme::timing::GuiStage::PreviewHydration);
     const bool signal_aspects_hydrated =
         affected_row_kinds.find("signal.aspect") !=
         affected_row_kinds.end();
@@ -1660,9 +1660,9 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     };
     if (!full_insert_hydration &&
         (signal_aspects_hydrated || alignment_hydrated || creator_messages_hydrated)) {
-        GuiTiming::Stage partial_refresh("snapshot.partial_refresh");
+        GuiTiming::Stage partial_refresh(kme::timing::GuiStage::SnapshotPartialRefresh);
         KvMapSnapshot snapshot{};
-        GuiTiming::Stage snapshot_fetch("snapshot.get");
+        GuiTiming::Stage snapshot_fetch(kme::timing::GuiStage::SnapshotGet);
         const bool snapshot_loaded = kv_get_map_snapshot(
                 handle_, KV_MAP_SNAPSHOT_VERSION,
                 &snapshot, sizeof(snapshot)) != 0;
@@ -1719,9 +1719,9 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         // row-patching loops below cannot target them. Re-hydrate the whole
         // model from the validated working-copy snapshot; every pending
         // change of the batch is already reflected in it.
-        GuiTiming::Stage full_refresh("snapshot.full_refresh");
+        GuiTiming::Stage full_refresh(kme::timing::GuiStage::SnapshotFullRefresh);
         KvMapSnapshot snapshot{};
-        GuiTiming::Stage snapshot_fetch("snapshot.get");
+        GuiTiming::Stage snapshot_fetch(kme::timing::GuiStage::SnapshotGet);
         const bool snapshot_loaded = kv_get_map_snapshot(
                 handle_, KV_MAP_SNAPSHOT_VERSION,
                 &snapshot, sizeof(snapshot)) != 0;
@@ -1742,7 +1742,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         normalize_station_preview_rows(model_);
     }
 
-    timing.next("preview.rows");
+    timing.next(kme::timing::GuiStage::PreviewRows);
     std::map<std::string, std::string> refresh_targets;
     auto note_refresh_target = [&](const std::string& row_kind, const std::string& edit_id,
                                    bool force_full_refresh) {
@@ -1825,7 +1825,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     }
     pending_edit_changes_ = changes;
     refresh_pending_edit_counts();
-    timing.next("preview.refresh");
+    timing.next(kme::timing::GuiStage::PreviewRefresh);
     refresh_local_preview_after_edits(refresh_targets);
     if (ended_batch) {
         distance_resolution_choices_.clear();
@@ -1842,30 +1842,38 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         plan_alignment_->clear_drafts();
         set_program_status("status.edit.applied_to_preview");
     }
-    timing.next("preview.text");
+    timing.next(kme::timing::GuiStage::PreviewText);
     refresh_text_preview_from_working_copy();
     distance_resolution_attempt_history_.rejected_choices.clear();
     edit_timing_outcome_ = "success";
     return true;
 }
 
-bool App::save_pending_edits(bool refresh_inspector) {
+bool App::check_save_drafts() {
     if (plan_alignment_->dirty()) {
         set_program_status("status.edit.apply_plan_before_save");
         return false;
     }
-    EditTimingScope operation(*this, "save");
-    GuiTiming::Stage timing("save.prepare");
-    if (!edit_actions_available()) return false;
     if (has_unapplied_editable_list_drafts()) {
         KME_ADD_LOG("[warning]Save blocked by unapplied editable-list drafts");
         set_program_status("status.edit.apply_list_before_save");
         return false;
     }
+    return true;
+}
+
+bool App::save_pending_edits(bool refresh_inspector) {
+    EditTimingScope operation(*this, "save");
+    if (!edit_actions_available() || !check_save_drafts()) return false;
     if (!has_pending_edits()) {
         edit_timing_outcome_ = "no_changes";
         return false;
     }
+    return commit_pending_map_edits(refresh_inspector);
+}
+
+bool App::commit_pending_map_edits(bool refresh_inspector) {
+    GuiTiming::Stage timing(kme::timing::GuiStage::SavePrepare);
 
     if (!edit_memory_matches_pending_ledger_) {
         std::vector<DistanceResolutionRequest> replay_requests;
@@ -1887,7 +1895,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
     // pending ledger. Save is only the disk-write boundary; resetting, replaying,
     // or rebuilding the GUI model here would parse the same map state again.
     edit_timing_change_count_ = pending_edit_changes_.size();
-    timing.next("save.commit");
+    timing.next(kme::timing::GuiStage::SaveCommit);
     KvEditReportSnapshot report{};
     if (!kv_edit_commit_typed(handle_, &report, sizeof(report))) {
         const char* err = kv_get_last_error();
@@ -1895,7 +1903,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
         return false;
     }
 
-    timing.next("save.metadata");
+    timing.next(kme::timing::GuiStage::SaveMetadata);
     int committed_file_count = 0;
     if (!parse_and_log_edit_report(report, "[info]edit save committed",
                                    nullptr, nullptr, &committed_file_count)) {
@@ -1915,9 +1923,9 @@ bool App::save_pending_edits(bool refresh_inspector) {
     refresh_pending_edit_counts();
     edit_memory_matches_pending_ledger_ = true;
     original_edit_rows_.clear();
-    timing.next("save.text");
+    timing.next(kme::timing::GuiStage::SaveText);
     refresh_text_preview_from_working_copy();
-    timing.next("save.inspector");
+    timing.next(kme::timing::GuiStage::SaveInspector);
     if (refresh_inspector && inspector_target_deleted) {
         inspector_.open = false;
     } else if (inspector_request) {
@@ -1934,15 +1942,7 @@ bool App::save_pending_document_changes(bool refresh_inspector) {
     if (load_state_.running || !(edit_actions_available() || scenario_edit_actions_available())) {
         return false;
     }
-    if (plan_alignment_->dirty()) {
-        set_program_status("status.edit.apply_plan_before_save");
-        return false;
-    }
-    if (has_unapplied_editable_list_drafts()) {
-        KME_ADD_LOG("[warning]Save blocked by unapplied editable-list drafts");
-        set_program_status("status.edit.apply_list_before_save");
-        return false;
-    }
+    if (!check_save_drafts()) return false;
     const bool map_dirty = has_pending_edits();
     const bool scenario_dirty = has_scenario_unsaved_changes();
     const bool scenario_route_warning_before_save = scenario_route_changed_;
@@ -1952,7 +1952,7 @@ bool App::save_pending_document_changes(bool refresh_inspector) {
     }
 
     if (map_dirty) {
-        if (!save_pending_edits(refresh_inspector)) return false;
+        if (!edit_actions_available() || !commit_pending_map_edits(refresh_inspector)) return false;
         if (scenario_dirty && scenario_route_changed_) {
             KME_ADD_LOG(LogSeverity::Warning,
                         "Scenario save deferred because its Route path changed after Map save.");
@@ -2034,17 +2034,8 @@ bool App::save_pending_document_changes(bool refresh_inspector) {
 }
 
 bool App::discard_pending_edits() {
-    if (!has_pending_edits()) {
-        distance_resolution_choices_.clear();
-        distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
-        distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
-        text_preview_.placement = TextPreviewPlacementState{};
-        discard_all_editable_list_drafts();
-        plan_alignment_->clear_drafts();
-        if (has_scenario_unsaved_changes()) revert_scenario_draft();
-        return true;
-    }
-    if (!apply_edit_ledger_to_preview({}, std::nullopt, false)) return false;
+    if (has_pending_edits() && !apply_edit_ledger_to_preview({}, std::nullopt, false)) return false;
+    clear_scene_placement_edit_target();
     distance_resolution_choices_.clear();
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
     distance_resolution_attempt_history_ = DistanceResolutionAttemptHistory{};
@@ -2070,11 +2061,7 @@ bool App::revert_all_pending_edits() {
         inspector_request = std::move(request);
     }
 
-    clear_scene_placement_edit_target();
-    if (has_pending_edits() && !discard_pending_edits()) return false;
-    if (has_scenario_unsaved_changes()) revert_scenario_draft();
-    discard_all_editable_list_drafts();
-    plan_alignment_->clear_drafts();
+    if (!discard_pending_edits()) return false;
 
     if (inspector_request && !open_element_inspector(*inspector_request)) {
         inspector_ = MapElementInspectorState{};

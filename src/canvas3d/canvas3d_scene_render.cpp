@@ -198,7 +198,6 @@ void Canvas3D::Impl::draw_scene_model(SceneModelGpu& model,
     if (model.state != SceneModelGpu::State::Ready || instances.empty()) return;
     std::string error;
     if (!ensure_instance_buffer(model.instance_buffer, model.instance_capacity, instances, error)) {
-        scene_last_error = error;
         return;
     }
     draw_scene_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer,
@@ -306,7 +305,7 @@ bool Canvas3D::Impl::begin_scene_pick_at_mouse(
     const int pixel_x = static_cast<int>(std::floor(mouse_local.x));
     const int pixel_y = static_cast<int>(std::floor(mouse_local.y));
     if (pixel_x < 0 || pixel_y < 0 || pixel_x >= width || pixel_y >= height) return false;
-    if (!ensure_scene_pick_target(width, height, error)) return false;
+    if (!ensure_scene_pick_target(error)) return false;
 
     using PickBatchKey = std::pair<int, std::string>;
     std::map<PickBatchKey, std::vector<SceneInstanceData>> pick_batches;
@@ -339,9 +338,7 @@ bool Canvas3D::Impl::begin_scene_pick_at_mouse(
         const std::string& model_path = kv.first.second;
         auto model_it = scene_models.find(model_path);
         if (model_it == scene_models.end()) continue;
-        if (!draw_scene_pick_model(model_it->second, kv.second, view_proj, object_index, error)) {
-            if (!error.empty()) scene_last_error = error;
-        }
+        draw_scene_pick_model(model_it->second, kv.second, view_proj, object_index, error);
     }
 
     return true;
@@ -467,7 +464,6 @@ void Canvas3D::Impl::draw_scene_highlight_mask_batches(const std::map<std::strin
         SceneModelGpu& model = model_it->second;
         if (model.state != SceneModelGpu::State::Ready || kv.second.empty()) continue;
         if (!ensure_instance_buffer(model.instance_buffer, model.instance_capacity, kv.second, error)) {
-            scene_last_error = error;
             continue;
         }
         draw_scene_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer,
@@ -487,8 +483,7 @@ void Canvas3D::Impl::draw_scene_model_highlight_outlines(const std::vector<Scene
                                          bool separate_instances) {
     if (instances.empty() || !render_rtv) return;
     std::string error;
-    if (!ensure_scene_highlight_mask_target(width, height, error)) {
-        if (!error.empty()) scene_last_error = error;
+    if (!ensure_scene_highlight_mask_target(error)) {
         return;
     }
 
@@ -545,7 +540,6 @@ void Canvas3D::Impl::draw_scene_track_chunk(SceneTrackChunkGpu& track,
 
     track_instance[0] = make_chunk_instance_data(track.origin, render_origin);
     if (!ensure_instance_buffer(track.instance_buffer, track.instance_capacity, track_instance, error)) {
-        if (!error.empty()) scene_last_error = error;
         return;
     }
     draw_scene_mesh(track.vertex_buffer, track.index_buffer, track.instance_buffer,
@@ -595,8 +589,7 @@ void Canvas3D::Impl::draw_scene_marker_highlight(size_t marker_index,
     if (range.label || !range.visible || range.count == 0) return;
 
     std::string error;
-    if (!ensure_scene_highlight_mask_target(width, height, error)) {
-        if (!error.empty()) scene_last_error = error;
+    if (!ensure_scene_highlight_mask_target(error)) {
         return;
     }
 
@@ -738,31 +731,35 @@ float Canvas3D::Impl::scene_far_z(double window_forward_m) const {
     return static_cast<float>(std::clamp(far_z, 256.0, static_cast<double>(k_scene_background_far_z)));
 }
 
-void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 mouse_local,
+SceneViewProjection Canvas3D::Impl::scene_view_projection(int width, int height) const {
+    const Vec3 forward = scene_forward();
+    const Mat4 view = look_to_bve({0.0f, 0.0f, 0.0f}, forward, {0.0f, 1.0f, 0.0f});
+    const float aspect = static_cast<float>(width) / static_cast<float>(height);
+    const double window_forward_m = effective_scene_window_forward_m();
+    const Mat4 projection = perspective_fov_lh_reverse_z(
+        k_scene_camera_fov_y, aspect, k_scene_near_z, scene_far_z(window_forward_m));
+    return {width, height, scene_camera_pos, forward, view, multiply(view, projection),
+            aspect, window_forward_m};
+}
+
+void Canvas3D::Impl::render_scene_preview_target(const SceneViewProjection& frame_view, ImVec2 mouse_local,
                                  bool pick_enabled,
                                  bool mileage_pick_enabled) {
+    const int width = frame_view.width;
+    const int height = frame_view.height;
 #ifndef NDEBUG
-    debug_scene_signature = 14695981039346656037ULL;
+    debug_scene_signature.value = 14695981039346656037ULL;
 #endif
     std::string error;
     scene_hovered_object_index = -1;
     scene_hovered_marker_index = -1;
     scene_hovered_mileage.reset();
     scene_hover_highlight_batch.clear();
-    if (!ensure_render_target(width, height, error)) {
-        if (scene_last_error != error) scene_last_error = error;
-        return;
-    }
-    if (!ensure_scene_pipeline(error)) {
-        if (scene_last_error != error) scene_last_error = error;
-        return;
-    }
+    if (!ensure_render_target(width, height, error) || !ensure_scene_pipeline(error)) return;
     upload_pending_scene_models();
     apply_scene_put_between_preview_result();
-    if (!scene_data.markers.empty() &&
-        !scene_marker_font_cache_current() &&
-        !build_scene_marker_chunks(error)) {
-        if (scene_last_error != error) scene_last_error = error;
+    if (!scene_data.markers.empty() && !scene_marker_font_cache_current()) {
+        build_scene_marker_chunks(error);
     }
 
 #ifndef NDEBUG
@@ -790,20 +787,15 @@ void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 m
     const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
 
-    const DVec3 render_origin = scene_camera_pos;
-    Vec3 forward = scene_forward();
-    Mat4 view = look_to_bve({0.0f, 0.0f, 0.0f}, forward, {0.0f, 1.0f, 0.0f});
-    float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
-    Mat4 background_proj = perspective_fov_lh_reverse_z(k_scene_camera_fov_y, aspect, k_scene_background_near_z, k_scene_background_far_z);
-    Mat4 background_view_proj = multiply(view, background_proj);
+    const DVec3& render_origin = frame_view.camera_origin;
+    const Mat4 background_proj = perspective_fov_lh_reverse_z(
+        k_scene_camera_fov_y, frame_view.aspect, k_scene_background_near_z, k_scene_background_far_z);
+    const Mat4 background_view_proj = multiply(frame_view.view, background_proj);
     draw_background_model(background_view_proj, fog_ptr);
     context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, k_scene_depth_clear, 0);
 
-    const double effective_window_forward_m = effective_scene_window_forward_m();
-    Mat4 proj = perspective_fov_lh_reverse_z(
-        k_scene_camera_fov_y, aspect, k_scene_near_z,
-        scene_far_z(effective_window_forward_m));
-    Mat4 view_proj = multiply(view, proj);
+    const double effective_window_forward_m = frame_view.window_forward_m;
+    const Mat4& view_proj = frame_view.view_projection;
 
     scene_stats_value.drawn_instance_count = 0;
     scene_stats_value.drawn_track_chunk_count = 0;
@@ -835,7 +827,7 @@ void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 m
         for (const SceneInstance& instance : chunk.instances) {
             if (instance.distance < visible_min || instance.distance > visible_max) continue;
 #ifndef NDEBUG
-            debug_record_scene_world(instance.model_path, instance.object_index, instance.distance, instance.world);
+            debug_scene_signature.record(instance.model_path, instance.object_index, instance.distance, instance.world);
 #endif
             SceneInstanceData data = make_instance_data_relative(instance.world, render_origin);
             SceneScreenBounds bounds;
@@ -878,7 +870,6 @@ void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 m
         begin_scene_pick_at_mouse(
             visible_instances, visible_object_instances, view_proj,
             width, height, mouse_local, error);
-    if (!error.empty() && scene_last_error != error) scene_last_error = error;
     ID3D11RenderTargetView* scene_target = render_rtv;
     context->OMSetRenderTargets(1, &scene_target, depth_dsv);
     context->RSSetViewports(1, &viewport);
@@ -891,7 +882,6 @@ void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 m
                                track_instance, error, fog_ptr);
     }
     draw_scene_mileage_highlight(render_origin, view_proj, error);
-    if (!error.empty() && scene_last_error != error) scene_last_error = error;
     ScenePickTarget picked_target;
     if (scene_pick_active) {
         KME_SCENE_PROFILE(Picking);
@@ -902,9 +892,6 @@ void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 m
             visible_min, visible_max, render_origin, view_proj);
         picked_target = finish_scene_pick_at_mouse(
             width, height, mouse_local, error);
-        if (!error.empty() && scene_last_error != error) {
-            scene_last_error = error;
-        }
         context->OMSetRenderTargets(1, &scene_target, depth_dsv);
         context->RSSetViewports(1, &viewport);
         context->OMSetDepthStencilState(scene_depth_state, 0);
@@ -980,15 +967,8 @@ void Canvas3D::Impl::render_scene_preview_target(int width, int height, ImVec2 m
 std::optional<Mat4> Canvas3D::Impl::render_model_preview_target(int width, int height,
                                                                bool show_reference_grid) {
     std::string error;
-    if (!ensure_render_target(width, height, error)) {
-        if (last_error != error) last_error = error;
-        return std::nullopt;
-    }
-    const bool model_loaded = has_model();
-    const bool scene_pipeline_ready = model_loaded && ensure_scene_pipeline(error);
-    if (model_loaded && !scene_pipeline_ready) {
-        if (last_error != error) last_error = error;
-    }
+    if (!ensure_render_target(width, height, error)) return std::nullopt;
+    const bool mesh_ready = has_model() && ensure_scene_mesh_pipeline(error);
 
     const ImVec4 bg = clamp_theme_color(background_color_value);
     const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
@@ -997,9 +977,7 @@ std::optional<Mat4> Canvas3D::Impl::render_model_preview_target(int width, int h
     context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, k_scene_depth_clear, 0);
 
     std::optional<Mat4> reference_projection;
-    if (model_loaded && scene_vertex_shader && scene_pixel_shader &&
-        scene_input_layout && scene_constant_buffer &&
-        scene_depth_state && rasterizer_state && sampler_state && blend_state) {
+    if (mesh_ready) {
         D3D11_VIEWPORT viewport = {};
         viewport.Width = static_cast<float>(width);
         viewport.Height = static_cast<float>(height);
@@ -1025,15 +1003,12 @@ std::optional<Mat4> Canvas3D::Impl::render_model_preview_target(int width, int h
 
         model_preview_instances.resize(1);
         model_preview_instances[0] = make_instance_data(world);
-        if (!ensure_instance_buffer(model_preview_instance_buffer,
-                                    model_preview_instance_capacity,
-                                    model_preview_instances,
-                                    error)) {
-            if (last_error != error) last_error = error;
-        } else {
+        if (ensure_instance_buffer(model_preview_instance_buffer,
+                                   model_preview_instance_capacity,
+                                   model_preview_instances, error)) {
             draw_scene_mesh(vertex_buffer, index_buffer, model_preview_instance_buffer,
                             parts, materials, 1, view_proj, rasterizer_state);
-            if (show_reference_grid && scene_pipeline_ready) {
+            if (show_reference_grid && ensure_scene_marker_pipeline(error)) {
                 reference_projection = multiply(world, view_proj);
                 draw_model_preview_reference_grid(*reference_projection);
             }

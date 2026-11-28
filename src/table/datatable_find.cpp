@@ -44,16 +44,9 @@ void run_unused_key_search(TableFindState& state,
                            size_t definition_key_column,
                            NoteUsedKeysFn note_used_keys,
                            UndefinedKeyFn on_undefined_key) {
-    state.exact = true;
-    state.committed.clear();
-    state.matches.clear();
-    state.row_matches.clear();
-    state.current = -1;
-    state.scroll_row = -1;
-    state.has_run = false;
+    reset_table_find_results(state);
+    state.draft_revision = definition_rows.revision();
     state.unused_row_matches.assign(definition_rows.size(), 0);
-    state.unused_count = 0;
-    state.unused_total = 0;
     state.unused_has_run = true;
 
     std::unordered_map<std::string, std::vector<size_t>> rows_by_key;
@@ -64,7 +57,7 @@ void run_unused_key_search(TableFindState& state,
         const std::string* key =
             definition_rows.cell(row_index, definition_key_column);
         if (!key || blank_ascii(*key)) continue;
-        rows_by_key[ascii_case_key(*key)].push_back(row_index);
+        rows_by_key[ascii_lower(*key)].push_back(row_index);
     }
 
     std::vector<unsigned char> used_rows(definition_rows.size(), 0);
@@ -72,7 +65,7 @@ void run_unused_key_search(TableFindState& state,
     auto note_key = [&](const std::string& raw_key) {
         std::string key = trim_gui_ascii_copy(raw_key);
         if (key.empty()) return;
-        std::string folded_key = ascii_case_key(key);
+        std::string folded_key = ascii_lower(key);
         auto match = rows_by_key.find(folded_key);
         if (match == rows_by_key.end()) {
             if (warned_undefined_keys.insert(folded_key).second) {
@@ -104,7 +97,7 @@ void App::run_structure_model_find() {
         structure_model_edit_, k_structure_model_edit_spec);
     ensure_table_cache();
     run_table_find(structure_model_find_,
-                   editable_table_find_rows(
+                   TableFindRowsView(
                        table_cache_.structure_model_rows,
                        structure_model_edit_,
                        k_structure_model_edit_spec),
@@ -122,7 +115,7 @@ void App::run_unused_structure_model_search() {
 
     run_unused_key_search(
         structure_model_find_,
-        editable_table_find_rows(
+        TableFindRowsView(
             table_cache_.structure_model_rows,
             structure_model_edit_,
             k_structure_model_edit_spec),
@@ -225,7 +218,7 @@ void App::run_signal_aspect_find() {
     ensure_table_cache();
     run_table_find(
         signal_aspect_find_,
-        editable_table_find_rows(
+        TableFindRowsView(
             table_cache_.signal_aspect_rows,
             signal_aspect_edit_,
             k_signal_aspect_edit_spec),
@@ -240,7 +233,7 @@ void App::run_unused_signal_aspect_search() {
 
     run_unused_key_search(
         signal_aspect_find_,
-        editable_table_find_rows(
+        TableFindRowsView(
             table_cache_.signal_aspect_rows,
             signal_aspect_edit_,
             k_signal_aspect_edit_spec),
@@ -303,7 +296,7 @@ void App::run_sound_file_find(bool is_3d) {
         : table_cache_.sound_list_rows;
 
     run_table_find(state,
-                   editable_table_find_rows(rows, edit, spec),
+                   TableFindRowsView(rows, edit, spec),
                    {static_cast<size_t>(k_sound_list_key_column),
                     static_cast<size_t>(k_sound_list_file_path_column)});
 }
@@ -332,7 +325,7 @@ void App::run_unused_sound_file_search(bool is_3d) {
 
     run_unused_key_search(
         state,
-        editable_table_find_rows(file_rows, edit, spec),
+        TableFindRowsView(file_rows, edit, spec),
         static_cast<size_t>(k_sound_list_key_column),
         [&](auto& note_sound_key) {
             for (const CachedTableRow& row : usage_rows) {
@@ -345,7 +338,7 @@ void App::run_unused_sound_file_search(bool is_3d) {
                     note_sound_key(table_cell(row, "key"));
                 }
             } else {
-                const auto station_rows = editable_table_find_rows(
+                const TableFindRowsView station_rows(
                     table_cache_.station_definition_rows,
                     station_definition_edit_, k_station_definition_edit_spec);
                 for (size_t row = 0; row < station_rows.size(); ++row) {

@@ -854,10 +854,7 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
     } else if (target.row_kind == "otherTrack.change") {
         for (const auto& input : change.field_changes) {
             if (input.first == "distance" || input.first == "trackKey" ||
-                (input.first.compare(0, 9, "parameter") == 0 &&
-                 input.first.size() > 9 &&
-                 input.first.find_first_not_of("0123456789", 9) ==
-                     std::string::npos)) {
+                !other_track_parameter_digits(input.first).empty()) {
                 continue;
             }
             throw std::runtime_error("unsupported semantic edit field " +
@@ -1381,209 +1378,101 @@ std::string expected_target_semantic(MapContext& ctx,
         }
     }
     begin_element(out, target.source_file, expected_container, target.row_kind);
-    if (target.row_kind == "structure.model") {
-        if (target.row_index >= snapshot.structure_model_count || !snapshot.structure_models) {
-            throw std::runtime_error("structure.model target row is out of bounds");
+    const auto row_at = [&](const auto* rows, std::uint64_t count, size_t index) -> const auto& {
+        if (index >= count) {
+            throw std::runtime_error(target.row_kind + " target row is out of bounds");
         }
-        write_structure_model(out, snapshot, snapshot.structure_models[target.row_index], &change);
-    } else if (target.row_kind == "sound.list" ||
-               target.row_kind == "sound3D.list") {
+        const auto& row = rows[index];
+        if (SemanticWriter::snapshot_text(snapshot, row.metadata.edit_id) != target.edit_id) {
+            throw std::runtime_error(target.row_kind + " target row identity changed");
+        }
+        return row;
+    };
+    const auto write = [&](const auto* rows, std::uint64_t count, auto writer) {
+        writer(out, snapshot, row_at(rows, count, target.row_index), &change);
+    };
+
+    if (target.row_kind == "structure.model") {
+        write(snapshot.structure_models, snapshot.structure_model_count, write_structure_model);
+    } else if (target.row_kind == "curve") {
+        write(snapshot.curves, snapshot.curve_count, write_curve);
+    } else if (target.row_kind == "gradient") {
+        write(snapshot.gradients, snapshot.gradient_count, write_gradient);
+    } else if (target.row_kind == "otherTrack.change") {
+        write(snapshot.other_track_changes, snapshot.other_track_change_count, write_other_track_change);
+    } else if (target.row_kind == "structure.put") {
+        write(snapshot.structure_puts, snapshot.structure_put_count, write_structure_put);
+    } else if (target.row_kind == "structure.between") {
+        write(snapshot.structure_betweens, snapshot.structure_between_count, write_structure_between);
+    } else if (target.row_kind == "station.put") {
+        write(snapshot.station_puts, snapshot.station_put_count, write_station_put);
+    } else if (target.row_kind == "irregularity.change") {
+        write(snapshot.irregularities, snapshot.irregularity_count, write_irregularity);
+    } else if (target.row_kind == "beacon.put") {
+        write(snapshot.beacons, snapshot.beacon_count, write_beacon);
+    } else if (target.row_kind == "preTrain.pass") {
+        write(snapshot.pretrains, snapshot.pretrain_count, write_pretrain);
+    } else if (target.row_kind == "mapSound.play") {
+        write(snapshot.map_sounds, snapshot.map_sound_count, write_map_sound);
+    } else if (target.row_kind == "mapSound3D.put") {
+        write(snapshot.map_sounds_3d, snapshot.map_sound_3d_count, write_map_sound_3d);
+    } else if (target.row_kind == "rollingNoise.change") {
+        write(snapshot.rolling_noises, snapshot.rolling_noise_count, write_noise);
+    } else if (target.row_kind == "flangeNoise.change") {
+        write(snapshot.flange_noises, snapshot.flange_noise_count, write_noise);
+    } else if (target.row_kind == "jointNoise.play") {
+        write(snapshot.joint_noises, snapshot.joint_noise_count, write_noise);
+    } else if (target.row_kind == "background.change") {
+        write(snapshot.backgrounds, snapshot.background_count, write_background);
+    } else if (target.row_kind == "adhesion.change") {
+        write(snapshot.adhesions, snapshot.adhesion_count, write_adhesion);
+    } else if (target.row_kind == "cabIlluminance.change") {
+        write(snapshot.cab_illuminance, snapshot.cab_illuminance_count, write_cab_illuminance);
+    } else if (target.row_kind == "fog.change") {
+        write(snapshot.fogs, snapshot.fog_count, write_fog);
+    } else if (target.row_kind == "legacyFog.change") {
+        write(snapshot.legacy_fogs, snapshot.legacy_fog_count, write_legacy_fog);
+    } else if (target.row_kind == "creator.message") {
+        write(snapshot.creator_messages, snapshot.creator_message_count, write_creator_message);
+    } else if (target.row_kind == "light.ambient") {
+        write(snapshot.light_ambient, snapshot.light_ambient_count, write_light_color);
+    } else if (target.row_kind == "light.diffuse") {
+        write(snapshot.light_diffuse, snapshot.light_diffuse_count, write_light_color);
+    } else if (target.row_kind == "light.direction") {
+        write(snapshot.light_direction, snapshot.light_direction_count, write_light_direction);
+    } else if (target.row_kind == "drawDistance.change") {
+        write(snapshot.draw_distances, snapshot.draw_distance_count, write_draw_distance);
+    } else if (target.row_kind == "speedlimit") {
+        write(snapshot.speed_limits, snapshot.speed_limit_count, write_speed_limit);
+    } else if (target.row_kind == "station.list") {
+        write(snapshot.station_list, snapshot.station_list_count, write_station_list);
+    } else if (target.row_kind == "signal.put") {
+        write(snapshot.signal_puts, snapshot.signal_put_count, write_signal_put);
+    } else if (target.row_kind == "repeater") {
+        write(snapshot.repeaters, snapshot.repeater_count, write_repeater);
+    } else if (target.row_kind == "sound.list" || target.row_kind == "sound3D.list") {
         const bool want_3d = target.row_kind == "sound3D.list";
-        const KvSoundListRow* selected = nullptr;
         size_t matching_index = 0;
-        for (std::uint64_t i = 0; i < snapshot.sound_list_count; ++i) {
-            const KvSoundListRow& row = snapshot.sound_list[i];
-            if ((row.is_3d != 0) != want_3d) continue;
-            if (matching_index++ == target.row_index) {
-                selected = &row;
-                break;
+        for (size_t i = 0; i < snapshot.sound_list_count; ++i) {
+            if ((snapshot.sound_list[i].is_3d != 0) == want_3d &&
+                matching_index++ == target.row_index) {
+                write_sound_list(out, snapshot, row_at(snapshot.sound_list, snapshot.sound_list_count, i),
+                                 &change);
+                return out.take();
             }
         }
-        if (!selected) {
-            throw std::runtime_error(target.row_kind +
-                                     " target row is out of bounds");
-        }
-        write_sound_list(out, snapshot, *selected, &change);
-    } else if (target.row_kind == "curve") {
-        if (target.row_index >= snapshot.curve_count || !snapshot.curves) {
-            throw std::runtime_error("curve target row is out of bounds");
-        }
-        write_curve(out, snapshot, snapshot.curves[target.row_index], &change);
-    } else if (target.row_kind == "gradient") {
-        if (target.row_index >= snapshot.gradient_count || !snapshot.gradients) {
-            throw std::runtime_error("gradient target row is out of bounds");
-        }
-        write_gradient(out, snapshot, snapshot.gradients[target.row_index], &change);
-    } else if (target.row_kind == "otherTrack.change") {
-        if (target.row_index >= snapshot.other_track_change_count ||
-            !snapshot.other_track_changes) {
-            throw std::runtime_error(
-                "otherTrack.change target row is out of bounds");
-        }
-        write_other_track_change(
-            out, snapshot, snapshot.other_track_changes[target.row_index],
-            &change);
-    } else if (target.row_kind == "structure.put") {
-        if (target.row_index >= snapshot.structure_put_count || !snapshot.structure_puts) {
-            throw std::runtime_error("structure.put target row is out of bounds");
-        }
-        write_structure_put(out, snapshot, snapshot.structure_puts[target.row_index], &change);
-    } else if (target.row_kind == "structure.between") {
-        if (target.row_index >= snapshot.structure_between_count || !snapshot.structure_betweens) {
-            throw std::runtime_error("structure.between target row is out of bounds");
-        }
-        write_structure_between(out, snapshot, snapshot.structure_betweens[target.row_index], &change);
-    } else if (target.row_kind == "station.put") {
-        if (target.row_index >= snapshot.station_put_count || !snapshot.station_puts) {
-            throw std::runtime_error("station.put target row is out of bounds");
-        }
-        write_station_put(out, snapshot, snapshot.station_puts[target.row_index], &change);
-    } else if (target.row_kind == "irregularity.change") {
-        if (target.row_index >= snapshot.irregularity_count || !snapshot.irregularities) {
-            throw std::runtime_error("irregularity.change target row is out of bounds");
-        }
-        write_irregularity(out, snapshot, snapshot.irregularities[target.row_index], &change);
-    } else if (target.row_kind == "beacon.put") {
-        if (target.row_index >= snapshot.beacon_count || !snapshot.beacons) {
-            throw std::runtime_error("beacon.put target row is out of bounds");
-        }
-        write_beacon(out, snapshot, snapshot.beacons[target.row_index], &change);
-    } else if (target.row_kind == "preTrain.pass") {
-        if (target.row_index >= snapshot.pretrain_count || !snapshot.pretrains) {
-            throw std::runtime_error("preTrain.pass target row is out of bounds");
-        }
-        write_pretrain(out, snapshot, snapshot.pretrains[target.row_index], &change);
-    } else if (target.row_kind == "mapSound.play") {
-        if (target.row_index >= snapshot.map_sound_count || !snapshot.map_sounds) {
-            throw std::runtime_error("mapSound.play target row is out of bounds");
-        }
-        write_map_sound(out, snapshot, snapshot.map_sounds[target.row_index], &change);
-    } else if (target.row_kind == "mapSound3D.put") {
-        if (target.row_index >= snapshot.map_sound_3d_count || !snapshot.map_sounds_3d) {
-            throw std::runtime_error("mapSound3D.put target row is out of bounds");
-        }
-        write_map_sound_3d(out, snapshot, snapshot.map_sounds_3d[target.row_index], &change);
-    } else if (target.row_kind == "rollingNoise.change" ||
-               target.row_kind == "flangeNoise.change" ||
-               target.row_kind == "jointNoise.play") {
-        const KvNoiseRow* rows = target.row_kind == "rollingNoise.change"
-            ? snapshot.rolling_noises
-            : target.row_kind == "flangeNoise.change" ? snapshot.flange_noises
-                                                        : snapshot.joint_noises;
-        const std::uint64_t count = target.row_kind == "rollingNoise.change"
-            ? snapshot.rolling_noise_count
-            : target.row_kind == "flangeNoise.change" ? snapshot.flange_noise_count
-                                                        : snapshot.joint_noise_count;
-        if (target.row_index >= count || !rows) {
-            throw std::runtime_error(target.row_kind + " target row is out of bounds");
-        }
-        write_noise(out, snapshot, rows[target.row_index], &change);
-    } else if (target.row_kind == "background.change") {
-        if (target.row_index >= snapshot.background_count || !snapshot.backgrounds) {
-            throw std::runtime_error("background.change target row is out of bounds");
-        }
-        write_background(out, snapshot, snapshot.backgrounds[target.row_index], &change);
-    } else if (target.row_kind == "adhesion.change") {
-        if (target.row_index >= snapshot.adhesion_count || !snapshot.adhesions) {
-            throw std::runtime_error("adhesion.change target row is out of bounds");
-        }
-        write_adhesion(out, snapshot, snapshot.adhesions[target.row_index], &change);
-    } else if (target.row_kind == "cabIlluminance.change") {
-        if (target.row_index >= snapshot.cab_illuminance_count || !snapshot.cab_illuminance) {
-            throw std::runtime_error("cabIlluminance.change target row is out of bounds");
-        }
-        write_cab_illuminance(out, snapshot, snapshot.cab_illuminance[target.row_index], &change);
-    } else if (target.row_kind == "fog.change") {
-        if (target.row_index >= snapshot.fog_count || !snapshot.fogs) {
-            throw std::runtime_error("fog.change target row is out of bounds");
-        }
-        write_fog(out, snapshot, snapshot.fogs[target.row_index], &change);
-    } else if (target.row_kind == "legacyFog.change") {
-        if (target.row_index >= snapshot.legacy_fog_count || !snapshot.legacy_fogs) {
-            throw std::runtime_error("legacyFog.change target row is out of bounds");
-        }
-        write_legacy_fog(out, snapshot, snapshot.legacy_fogs[target.row_index], &change);
-    } else if (target.row_kind == "creator.message") {
-        if (target.row_index >= snapshot.creator_message_count || !snapshot.creator_messages) {
-            throw std::runtime_error("creator.message target row is out of bounds");
-        }
-        write_creator_message(out, snapshot, snapshot.creator_messages[target.row_index], &change);
-    } else if (target.row_kind == "light.ambient" ||
-               target.row_kind == "light.diffuse") {
-        const KvLightColorRow* rows = target.row_kind == "light.ambient"
-            ? snapshot.light_ambient
-            : snapshot.light_diffuse;
-        const std::uint64_t count = target.row_kind == "light.ambient"
-            ? snapshot.light_ambient_count
-            : snapshot.light_diffuse_count;
-        if (target.row_index >= count || !rows) {
-            throw std::runtime_error(target.row_kind + " target row is out of bounds");
-        }
-        write_light_color(out, snapshot, rows[target.row_index], &change);
-    } else if (target.row_kind == "light.direction") {
-        if (target.row_index >= snapshot.light_direction_count ||
-            !snapshot.light_direction) {
-            throw std::runtime_error("light.direction target row is out of bounds");
-        }
-        write_light_direction(
-            out, snapshot, snapshot.light_direction[target.row_index], &change);
-    } else if (target.row_kind == "drawDistance.change") {
-        if (target.row_index >= snapshot.draw_distance_count || !snapshot.draw_distances) {
-            throw std::runtime_error("drawDistance.change target row is out of bounds");
-        }
-        write_draw_distance(out, snapshot, snapshot.draw_distances[target.row_index], &change);
-    } else if (target.row_kind == "speedlimit") {
-        if (target.row_index >= snapshot.speed_limit_count || !snapshot.speed_limits) {
-            throw std::runtime_error("speedlimit target row is out of bounds");
-        }
-        write_speed_limit(out, snapshot, snapshot.speed_limits[target.row_index], &change);
-    } else if (target.row_kind == "section.begin" ||
-               target.row_kind == "section.speedLimit") {
+        throw std::runtime_error(target.row_kind + " target row is out of bounds");
+    } else if (target.row_kind == "section.begin" || target.row_kind == "section.speedLimit") {
         const bool begins = target.row_kind == "section.begin";
-        const KvSectionRow* rows = begins
-            ? snapshot.section_begins : snapshot.section_speed_limits;
-        const std::uint64_t count = begins
-            ? snapshot.section_begin_count : snapshot.section_speed_limit_count;
-        if (target.row_index >= count || !rows) {
-            throw std::runtime_error(target.row_kind + " target row is out of bounds");
-        }
-        write_section_row(out, snapshot, rows[target.row_index],
-                          begins ? "signalIndices" : "speeds", &change);
-    } else if (target.row_kind == "station.list") {
-        if (target.row_index >= snapshot.station_list_count || !snapshot.station_list) {
-            throw std::runtime_error("station.list target row is out of bounds");
-        }
-        write_station_list(out, snapshot, snapshot.station_list[target.row_index], &change);
+        const auto& row = row_at(begins ? snapshot.section_begins : snapshot.section_speed_limits,
+                                 begins ? snapshot.section_begin_count : snapshot.section_speed_limit_count,
+                                 target.row_index);
+        write_section_row(out, snapshot, row, begins ? "signalIndices" : "speeds", &change);
     } else if (target.row_kind == "signal.aspect") {
-        if (target.row_index >= snapshot.signal_aspect_count ||
-            !snapshot.signal_aspects ||
-            target.row_index >= ctx.signal_aspects.size()) {
-            throw std::runtime_error(
-                "signal.aspect target row is out of bounds");
-        }
-        const EditSourceRef ref =
-            ctx.signal_aspects[target.row_index].edit_ref;
-        if (!ref.valid() ||
-            ref.statement_index >= ctx.parsed_statements.size()) {
-            throw std::runtime_error(
-                "signal.aspect target has no source statement");
-        }
-        const std::string rebuilt_statement =
-            build_signal_aspect_statement(
-                change, ctx.parsed_statements[ref.statement_index]);
-        write_signal_aspect_values(
-            out, parse_signal_aspect_source_values(
-                     rebuilt_statement));
-    } else if (target.row_kind == "signal.put") {
-        if (target.row_index >= snapshot.signal_put_count || !snapshot.signal_puts) {
-            throw std::runtime_error("signal.put target row is out of bounds");
-        }
-        write_signal_put(out, snapshot, snapshot.signal_puts[target.row_index], &change);
-    } else if (target.row_kind == "repeater") {
-        if (target.row_index >= snapshot.repeater_count || !snapshot.repeaters) {
-            throw std::runtime_error("repeater target row is out of bounds");
-        }
-        write_repeater(out, snapshot, snapshot.repeaters[target.row_index], &change);
+        row_at(snapshot.signal_aspects, snapshot.signal_aspect_count, target.row_index);
+        const EditSourceRef ref = ctx.signal_aspects[target.row_index].edit_ref;
+        const std::string rebuilt = build_signal_aspect_statement(change, ctx.parsed_statements[ref.statement_index]);
+        write_signal_aspect_values(out, parse_signal_aspect_source_values(rebuilt));
     } else {
         throw std::runtime_error("unsupported semantic edit target: " + target.row_kind);
     }
@@ -1679,7 +1568,7 @@ std::string expected_resource_list_content_insert_semantic(
         field(out, "soundKey", fields[0]);
         field(out, "filePath", fields[1]);
         field(out, "bufferCount", static_cast<std::int64_t>(
-            parse_sound_buffer_count(fields[2])));
+            parse_sound_buffer_count(fields[2]).value));
         field(out, "is3D", change.row_kind == "sound3D.list");
         return out.take();
     }

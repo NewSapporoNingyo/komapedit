@@ -200,7 +200,7 @@ The plan alignment and Profile follow the draft as you edit. The other plan mark
 - Use `Auxiliary Info` to choose which markers to show.
 - With `Curve Radius` enabled, `Curve.Interpolate` endpoints appear as green markers with their evaluated signed radius beside them. An omitted radius displays its inherited value.
 - Right-click a marker to locate its table row. Items with a 3D object can also be located in the 3D scene.
-- Enable editing to right-click supported markers for `Properties/Edit` or `Delete`. Own-track curve/gradient and other-track edit control points appear in this mode; `Curve.Interpolate` and `CG`/`CC`/`CF` markers follow their respective visibility switches.
+- In edit mode, right-click supported markers for `Properties/Edit` or `Delete`. Visible `Curve.Interpolate` markers with a source row are available in the same menu. The `CG`/`CC`/`CF` markers follow their display switches.
 - Right-click a gradient marker in the Profile to open its edit menu.
 
 #### Background Image
@@ -224,7 +224,7 @@ The current map or Scenario history stores the image path and alignment settings
 
 - Open the required table from `Map Info List`. Right-click a mileage cell that has a locate menu to move to that position in the Plan or a running 3D scene.
 - Right-click a source-file or resource-file path to open its directory. Hover over a path to see the original argument and resolved absolute path when available.
-- In the Structure List, Signal Aspects List, Sound File List, and 3D Sound File List tables, expand `Find`, choose partial or exact matching, enter a query, and press `Enter` or click the magnifying glass. Use the up and down arrows to move between results. English text matching is case-insensitive.
+- In the Structure List, Signal Aspects List, Sound File List, and 3D Sound File List tables, expand `Find`, choose partial or exact matching, enter a query, and press `Enter` or click the magnifying glass. Use the up and down arrows to move between results. English text matching is case-insensitive. Changing the query or match mode clears previous Find results. Find Unused retains the selected match mode.
 - The magnifying glass with an open box (`Search unused...`) highlights definitions that the current map does not reference. Structure searches include placements, Repeaters, backgrounds, signals, and other-train references. Ordinary sound searches include station arrival/departure sounds and account for current list drafts.
 - In a map-placement row, right-click a resource key to jump to the matching Structure List, Signal Aspects List, or sound definition.
 - With editing enabled, right-click an editable element's cell for `Properties/Edit` or `Delete`. Some tables also open `Properties/Edit` on double-click.
@@ -266,7 +266,7 @@ With editing enabled, station definitions, Structure List, Signal Aspects List, 
 - A signal aspect's primary and glare rows move or are deleted as a block. A new primary row starts with six fields; use `Add Glare` to add a glare row.
 - Click the table's `Apply` to update the in-memory preview. After applying all table drafts, click toolbar `Save` to write the files.
 
-The Signal Aspects List uses each CSV row's actual field count, including trailing empty fields. A diagonal line marks a field absent from that row; existing empty fields are editable. The table displays up to 509 structure-key columns, with a notice for additional fields retained in the source and draft.
+The Signal Aspects List uses each CSV row's actual field count, including trailing empty fields. A diagonal line marks a field absent from that row. Existing empty fields are editable. The table displays up to 509 structure-key columns. Open the list in Text Preview from the File Structure Diagram to see all columns. Apply updates Text Preview with the working copy.
 
 - Right-click a CSV cell to append a cell at the right, trim trailing empty cells, or remove the last cell in that row. Primary and glare rows can have different field counts.
 - `Align All Columns` pads each row to the maximum field count. `Add Column on Right` and `Delete Rightmost Column` add or remove one cell per row. `Delete All Trailing Empty Cells` trims each row's trailing empty fields.
@@ -443,7 +443,7 @@ When creating or moving an element, the program arranges distance statements aut
 
 The wizard provides the currently supported elements in these categories:
 
-- **Structures**: `Structure.Put`, `Put0`, `PutBetween`, and `Repeater.Begin`/`Begin0`/`End`.
+- **Structures**: `Structure.Put`, `Put0`, `PutBetween`, and `Repeater.Begin`/`Begin0`/`End`. When `Put` or `Put0` references an unknown track key, komapedit previews the structure on the own track and reports the key in the Console.
 - **Station**: `Station.Put`.
 - **Track Geometry**: Curves, gradients, gauge, curve center and interpolation function, track irregularity, and adhesion changes.
 - **Other Tracks**: `Track.*` statements for position, X/Y interpolation, and cant.

@@ -57,6 +57,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <initializer_list>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -78,199 +79,100 @@
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-std::string App::open_map_dialog() {
-    wchar_t file[MAX_PATH] = {};
-    OPENFILENAMEW ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
+namespace {
+
+struct FileDialogFilter {
+    std::wstring_view label;
+    const wchar_t* pattern;
+};
+
+const std::initializer_list<FileDialogFilter> k_image_file_filters = {
+    {L"Images", L"*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff"},
+    {L"All files", L"*.*"}
+};
+
+std::string choose_windows_file(std::initializer_list<FileDialogFilter> filters,
+                                const std::string& initial_directory = {},
+                                const wchar_t* title = nullptr,
+                                DWORD filter_index = 0,
+                                const wchar_t* save_extension = nullptr) {
     std::wstring filter;
-    const auto append_filter =
-        [&](const std::wstring& label, const wchar_t* value) {
-            filter += label;
-            filter.push_back(L'\0');
-            filter += value;
-            filter.push_back(L'\0');
-        };
-    append_filter(utf8_to_wide(tr("dialog.filter.map_files")), L"*.txt;*.csv");
-    append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
-    ofn.lpstrFilter = filter.c_str();
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
+    for (const auto& item : filters) {
+        filter += item.label;
+        filter.push_back(L'\0');
+        filter += item.pattern;
+        filter.push_back(L'\0');
+    }
+
+    const std::wstring initial = utf8_to_wide(initial_directory);
+    wchar_t file[MAX_PATH] = {};
+    OPENFILENAMEW options = {};
+    options.lStructSize = sizeof(options);
+    options.lpstrFile = file;
+    options.nMaxFile = MAX_PATH;
+    options.lpstrFilter = filter.c_str();
+    options.nFilterIndex = filter_index;
+    options.lpstrInitialDir = initial.empty() ? nullptr : initial.c_str();
+    options.lpstrTitle = title;
+    options.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+
+    if (save_extension) {
+        options.lpstrDefExt = save_extension;
+        if (GetSaveFileNameW(&options)) return wide_to_utf8(file);
+    } else {
+        options.Flags |= OFN_FILEMUSTEXIST;
+        if (GetOpenFileNameW(&options)) return wide_to_utf8(file);
+    }
     return {};
 }
 
-std::string App::open_map_dialog(const std::string& initial_directory,
-                                 const char* title_key) {
-    wchar_t file[MAX_PATH] = {};
-    OPENFILENAMEW ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    std::wstring filter;
-    const auto append_filter = [&](const std::wstring& label, const wchar_t* value) {
-        filter += label;
-        filter.push_back(L'\0');
-        filter += value;
-        filter.push_back(L'\0');
-    };
-    append_filter(utf8_to_wide(tr("dialog.filter.map_files")), L"*.txt;*.csv");
-    append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
-    filter.push_back(L'\0');
-    ofn.lpstrFilter = filter.c_str();
-    ofn.nFilterIndex = 1;
-    const std::wstring initial = utf8_to_wide(initial_directory);
-    ofn.lpstrInitialDir = initial.empty() ? nullptr : initial.c_str();
-    const std::wstring title = utf8_to_wide(tr(title_key));
-    ofn.lpstrTitle = title.c_str();
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
-    return {};
+} // namespace
+
+std::string App::open_map_dialog() {
+    return choose_windows_file({
+        {utf8_to_wide(tr("dialog.filter.map_files")), L"*.txt;*.csv"},
+        {utf8_to_wide(tr("dialog.filter.all_files")), L"*.*"}
+    });
+}
+
+std::string App::open_map_dialog(const std::string& initial_directory, const char* title_key) {
+    return open_include_file_dialog(initial_directory, title_key, "dialog.filter.map_files");
 }
 
 std::string App::open_image_dialog() {
-    wchar_t file[MAX_PATH] = {};
-    OPENFILENAMEW ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = L"Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff\0All files\0*.*\0";
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
-    return {};
+    return choose_windows_file(k_image_file_filters);
 }
 
-std::string App::open_image_dialog(const std::string& initial_directory,
-                                   const char* title_key) {
-    wchar_t file[MAX_PATH] = {};
-    OPENFILENAMEW ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = L"Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff\0All files\0*.*\0\0";
-    ofn.nFilterIndex = 1;
-    const std::wstring initial = utf8_to_wide(initial_directory);
-    ofn.lpstrInitialDir = initial.empty() ? nullptr : initial.c_str();
-    const std::wstring title = utf8_to_wide(tr(title_key));
-    ofn.lpstrTitle = title.c_str();
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
-    return {};
+std::string App::open_image_dialog(const std::string& initial_directory, const char* title_key) {
+    return choose_windows_file(k_image_file_filters, initial_directory, utf8_to_wide(tr(title_key)).c_str(), 1);
 }
 
-std::string App::open_editable_list_file_dialog(
-    const EditableListSpec& spec,
-    const std::string& initial_directory) {
-    const bool is_structure =
-        std::string_view(spec.row_kind) == "structure.model";
-    const wchar_t* pattern = is_structure
-        ? L"*.csv;*.b3d;*.x;*.obj;*.fbx;*.dae;*.gltf;*.glb"
-        : L"*.wav;*.ogg;*.mp3;*.flac";
-    std::wstring resource_label = utf8_to_wide(
-        tr(is_structure ? "dialog.filter.model_files"
-                        : "dialog.filter.audio_files"));
-    resource_label += L" (";
-    resource_label += pattern;
-    resource_label += L")";
-
-    std::wstring filter;
-    const auto append_filter =
-        [&](const std::wstring& label, const wchar_t* value) {
-            filter += label;
-            filter.push_back(L'\0');
-            filter += value;
-            filter.push_back(L'\0');
-        };
-    append_filter(resource_label, pattern);
-    append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
-    filter.push_back(L'\0');
-
-    wchar_t file[MAX_PATH] = {};
-    const std::wstring initial_directory_wide =
-        utf8_to_wide(initial_directory);
-    const std::wstring title =
-        utf8_to_wide(tr("dialog.select_resource_file"));
-    OPENFILENAMEW ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = filter.c_str();
-    ofn.nFilterIndex = 1;
-    ofn.lpstrInitialDir = initial_directory_wide.empty()
-        ? nullptr : initial_directory_wide.c_str();
-    ofn.lpstrTitle = title.c_str();
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
-    return {};
+std::string App::open_editable_list_file_dialog(const EditableListSpec& spec,
+                                               const std::string& initial_directory) {
+    const bool is_structure = std::string_view(spec.row_kind) == "structure.model";
+    const wchar_t* pattern = is_structure ? L"*.csv;*.b3d;*.x;*.obj;*.fbx;*.dae;*.gltf;*.glb"
+                                          : L"*.wav;*.ogg;*.mp3;*.flac";
+    const std::wstring label = utf8_to_wide(
+        tr(is_structure ? "dialog.filter.model_files" : "dialog.filter.audio_files"))
+        + L" (" + pattern + L")";
+    return choose_windows_file({{label, pattern}, {utf8_to_wide(tr("dialog.filter.all_files")), L"*.*"}},
+        initial_directory, utf8_to_wide(tr("dialog.select_resource_file")).c_str(), 1);
 }
 
 std::string App::open_include_file_dialog(const std::string& initial_directory,
                                           const char* title_key,
                                           const char* filter_key) {
-    wchar_t file[MAX_PATH] = {};
-    OPENFILENAMEW ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    std::wstring filter;
-    const auto append_filter =
-        [&](const std::wstring& label, const wchar_t* value) {
-            filter += label;
-            filter.push_back(L'\0');
-            filter += value;
-            filter.push_back(L'\0');
-        };
-    append_filter(utf8_to_wide(tr(filter_key)), L"*.txt;*.csv");
-    append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
-    filter.push_back(L'\0');
-    ofn.lpstrFilter = filter.c_str();
-    ofn.nFilterIndex = 1;
-    const std::wstring initial_directory_wide =
-        utf8_to_wide(initial_directory);
-    ofn.lpstrInitialDir = initial_directory_wide.empty()
-        ? nullptr : initial_directory_wide.c_str();
-    const std::wstring title = utf8_to_wide(tr(title_key));
-    ofn.lpstrTitle = title.c_str();
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
-    return {};
+    return choose_windows_file({
+        {utf8_to_wide(tr(filter_key)), L"*.txt;*.csv"},
+        {utf8_to_wide(tr("dialog.filter.all_files")), L"*.*"}
+    }, initial_directory, utf8_to_wide(tr(title_key)).c_str(), 1);
 }
 
 std::string App::save_include_file_dialog(const std::string& initial_directory) {
-    wchar_t file[MAX_PATH] = {};
-    OPENFILENAMEW ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    std::wstring filter;
-    const auto append_filter =
-        [&](const std::wstring& label, const wchar_t* value) {
-            filter += label;
-            filter.push_back(L'\0');
-            filter += value;
-            filter.push_back(L'\0');
-        };
-    append_filter(utf8_to_wide(tr("dialog.filter.map_files")), L"*.txt;*.csv");
-    append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
-    filter.push_back(L'\0');
-    ofn.lpstrFilter = filter.c_str();
-    ofn.nFilterIndex = 1;
-    ofn.lpstrDefExt = L"txt";
-    const std::wstring initial_directory_wide = utf8_to_wide(initial_directory);
-    ofn.lpstrInitialDir = initial_directory_wide.empty()
-        ? nullptr : initial_directory_wide.c_str();
-    const std::wstring title = utf8_to_wide(tr("dialog.create_include_file"));
-    ofn.lpstrTitle = title.c_str();
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetSaveFileNameW(&ofn)) return wide_to_utf8(file);
-    return {};
+    return choose_windows_file({
+        {utf8_to_wide(tr("dialog.filter.map_files")), L"*.txt;*.csv"},
+        {utf8_to_wide(tr("dialog.filter.all_files")), L"*.*"}
+    }, initial_directory, utf8_to_wide(tr("dialog.create_include_file")).c_str(), 1, L"txt");
 }
 
 std::string App::open_model_file_dialog(const std::string& initial_directory) {

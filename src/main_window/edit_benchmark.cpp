@@ -83,12 +83,8 @@ private:
 
 int App::run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& options) {
     std::ofstream file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        file.open(benchmark_path(options.output_path), std::ios::binary | std::ios::trunc);
-        if (!file) return 1;
-        out = &file;
-    }
+    std::ostream* out = open_headless_output(file, options.output_path, HeadlessOutputMode::QuietBinary);
+    if (!out) return 1;
     *out << "command=debug-headless-edit-bench build=Debug scene=" << (options.scene ? "on" : "off")
          << " repeat=" << options.repeat << " unit_distance=" << options.unit_distance
          << " window_back_m=100 window_forward_m=1200 canvas=1260x680\n"
@@ -184,13 +180,10 @@ int App::run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& o
             auto settle = [&]() {
                 if (!options.scene) return;
                 const auto started = std::chrono::steady_clock::now();
-                do {
-                    render();
-                    if (!app.scene_preview_canvas_->scene_stats().loading) break;
-                    require_benchmark(std::chrono::steady_clock::now() - started < std::chrono::seconds(120),
-                        "model loading timed out");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                } while (true);
+                const auto warmup = warm_headless_scene(started, render, [&] {
+                    return !app.scene_preview_canvas_->scene_stats().loading;
+                });
+                require_benchmark(warmup.completed, "model loading timed out");
                 for (int frame = 0; frame < 5; ++frame) render();
             };
             if (options.scene) {
@@ -258,8 +251,8 @@ int App::run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& o
                     require_benchmark(!app.scene_preview_dirty_, "edit scene rebuild failed");
                 }
                 if (options.scene) {
-                    GuiTiming::Activation activation(app.edit_timing_.get());
-                    GuiTiming::Stage stage("scene.first_frame");
+                    GuiTiming::Activation activation(app.active_edit_timing());
+                    GuiTiming::Stage stage(kme::timing::GuiStage::SceneFirstFrame);
                     render();
                     app.edit_timing_wait_scene_frame_ = false;
                 }
@@ -275,7 +268,7 @@ int App::run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& o
                 out->flush();
                 require_benchmark(!app.edit_timing_, "operation timing did not finish");
                 require_benchmark(app.edit_timing_outcome_ == "success", std::string("edit failed: ") + name +
-                    " outcome=" + app.edit_timing_outcome_ + " status=" + app.program_status_key_);
+                    " outcome=" + std::string(app.edit_timing_outcome_) + " status=" + app.program_status_key_);
                 require_benchmark(!app.program_status_elapsed_suffix_.empty(), "status elapsed time missing");
                 for (const char* stage : {"table.invalidate", "plan.markers", "snapshot.hydrate",
                                           "scene.map_content", "scene.dynamic_content", "scene.rebuild"}) {
@@ -354,8 +347,8 @@ int App::run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& o
             app.process_pending_element_inspector();
             if (options.scene && app.scene_preview_dirty_) app.rebuild_scene_preview(true, true);
             if (options.scene) {
-                GuiTiming::Activation activation(app.edit_timing_.get());
-                GuiTiming::Stage stage("scene.first_frame");
+                GuiTiming::Activation activation(app.active_edit_timing());
+                GuiTiming::Stage stage(kme::timing::GuiStage::SceneFirstFrame);
                 render();
                 app.edit_timing_wait_scene_frame_ = false;
             }
@@ -452,6 +445,7 @@ int App::run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& o
         insert.field_changes = {{"method", "Gradient.Begin"}, {"distance", "150"}, {"gradient", "5"}};
         std::map<std::string, MapElementPendingChange> mixed{{update.edit_id, update}, {insert.edit_id, insert}};
         fixture_check(fixture_app.apply_edit_ledger_to_preview(mixed, std::nullopt, false), "mixed fixture Apply failed");
+        fixture_app.finish_edit_timing();
         const auto& trace = fixture_app.last_edit_timing_;
         fixture_check(trace.count("snapshot.hydrate") == 1 && trace.count("snapshot.full_refresh") == 1 &&
             trace.count("snapshot.partial_refresh") == 0 && trace.count("table.invalidate") == 1 &&
@@ -460,7 +454,9 @@ int App::run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& o
             "mixed insert missing from preview");
         auto invalid = mixed;
         invalid.at(update.edit_id).field_changes["radius"] = "invalid";
-        fixture_check(!fixture_app.apply_edit_ledger_to_preview(invalid, std::nullopt, false) &&
+        const bool applied_invalid = fixture_app.apply_edit_ledger_to_preview(invalid, std::nullopt, false);
+        fixture_app.finish_edit_timing();
+        fixture_check(!applied_invalid &&
             fixture_app.edit_timing_outcome_ == "failed" && !fixture_app.edit_timing_ &&
             fixture_app.edit_memory_matches_pending_ledger_, "failed Apply did not restore the validated ledger");
         fixture_check(fixture_app.pending_edit_changes_.at(update.edit_id).field_changes.at("radius") == "400" &&
@@ -469,7 +465,10 @@ int App::run_debug_headless_edit_benchmark(const HeadlessEditBenchmarkOptions& o
         fixture_check(fixture_app.discard_pending_edits() && fixture_app.pending_edit_changes_.empty() &&
             fixture_app.model_.gradient_rows.size() == gradient_count && benchmark_bytes(fixture_path) == fixture_text,
             "mixed insert Revert did not restore the baseline");
-        fixture_check(!fixture_app.save_pending_document_changes() &&
+        fixture_app.finish_edit_timing();
+        const bool saved_without_changes = fixture_app.save_pending_document_changes();
+        fixture_app.finish_edit_timing();
+        fixture_check(!saved_without_changes &&
             fixture_app.edit_timing_outcome_ == "no_changes" && !fixture_app.edit_timing_,
             "empty Save did not finish with no_changes");
         *out << "refresh_contract=PASS full_partial_exclusive=1 batched_refresh=1 failure_restore=1 revert=1 no_changes=1\n";

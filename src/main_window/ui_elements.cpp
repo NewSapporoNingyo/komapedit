@@ -362,112 +362,93 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
+const auto& App::window_visibility_bindings() {
+    static constexpr std::array bindings{
+        std::pair{&WindowVisibilitySettings::show_othertracks_window, &App::show_othertracks_window_},
+        std::pair{&WindowVisibilitySettings::show_station_list_window, &App::show_station_list_window_},
+        std::pair{&WindowVisibilitySettings::show_structures_window, &App::show_structures_window_},
+        std::pair{&WindowVisibilitySettings::show_structures_between_window, &App::show_structures_between_window_},
+        std::pair{&WindowVisibilitySettings::show_structure_models_window, &App::show_structure_models_window_},
+        std::pair{&WindowVisibilitySettings::show_other_trains_window, &App::show_other_trains_window_},
+        std::pair{&WindowVisibilitySettings::show_sound_list_window, &App::show_sound_list_window_},
+        std::pair{&WindowVisibilitySettings::show_sound_3d_list_window, &App::show_sound_3d_list_window_},
+        std::pair{&WindowVisibilitySettings::show_repeaters_window, &App::show_repeaters_window_},
+        std::pair{&WindowVisibilitySettings::show_signal_aspects_window, &App::show_signal_aspects_window_},
+        std::pair{&WindowVisibilitySettings::show_signals_window, &App::show_signals_window_},
+        std::pair{&WindowVisibilitySettings::show_sections_window, &App::show_sections_window_},
+        std::pair{&WindowVisibilitySettings::show_variables_window, &App::show_variables_window_},
+        std::pair{&WindowVisibilitySettings::show_creator_messages_window, &App::show_creator_messages_window_},
+        std::pair{&WindowVisibilitySettings::show_beacons_window, &App::show_beacons_window_},
+        std::pair{&WindowVisibilitySettings::show_irregularities_window, &App::show_irregularities_window_},
+        std::pair{&WindowVisibilitySettings::show_map_sounds_window, &App::show_map_sounds_window_},
+        std::pair{&WindowVisibilitySettings::show_map_sound_3d_window, &App::show_map_sound_3d_window_},
+        std::pair{&WindowVisibilitySettings::show_rolling_noises_window, &App::show_rolling_noises_window_},
+        std::pair{&WindowVisibilitySettings::show_flange_noises_window, &App::show_flange_noises_window_},
+        std::pair{&WindowVisibilitySettings::show_joint_noises_window, &App::show_joint_noises_window_},
+        std::pair{&WindowVisibilitySettings::show_backgrounds_window, &App::show_backgrounds_window_},
+        std::pair{&WindowVisibilitySettings::show_adhesions_window, &App::show_adhesions_window_},
+        std::pair{&WindowVisibilitySettings::show_cab_illuminance_window, &App::show_cab_illuminance_window_},
+        std::pair{&WindowVisibilitySettings::show_fogs_window, &App::show_fogs_window_},
+        std::pair{&WindowVisibilitySettings::show_legacy_fogs_window, &App::show_legacy_fogs_window_},
+        std::pair{&WindowVisibilitySettings::show_lighting_window, &App::show_lighting_window_},
+        std::pair{&WindowVisibilitySettings::show_draw_distances_window, &App::show_draw_distances_window_},
+        std::pair{&WindowVisibilitySettings::show_speed_limits_window, &App::show_speed_limits_window_},
+        std::pair{&WindowVisibilitySettings::show_file_structure_window, &App::show_file_structure_window_},
+        std::pair{&WindowVisibilitySettings::show_console_window, &App::show_console_window_},
+        std::pair{&WindowVisibilitySettings::show_plots_window, &App::show_plots_window_},
+        std::pair{&WindowVisibilitySettings::show_model_preview_window, &App::show_model_preview_window_},
+        std::pair{&WindowVisibilitySettings::show_scene_preview_window, &App::show_scene_preview_window_},
+    };
+    return bindings;
+}
+
 WindowVisibilitySettings App::current_window_visibility() const {
     WindowVisibilitySettings visibility;
-    visibility.show_othertracks_window = show_othertracks_window_;
-    visibility.show_station_list_window = show_station_list_window_;
-    visibility.show_structures_window = show_structures_window_;
-    visibility.show_structures_between_window = show_structures_between_window_;
-    visibility.show_structure_models_window = show_structure_models_window_;
-    visibility.show_other_trains_window = show_other_trains_window_;
-    visibility.show_sound_list_window = show_sound_list_window_;
-    visibility.show_sound_3d_list_window = show_sound_3d_list_window_;
-    visibility.show_repeaters_window = show_repeaters_window_;
-    visibility.show_signal_aspects_window = show_signal_aspects_window_;
-    visibility.show_signals_window = show_signals_window_;
-    visibility.show_sections_window = show_sections_window_;
-    visibility.show_variables_window = show_variables_window_;
-    visibility.show_creator_messages_window = show_creator_messages_window_;
-    visibility.show_beacons_window = show_beacons_window_;
-    visibility.show_irregularities_window = show_irregularities_window_;
-    visibility.show_map_sounds_window = show_map_sounds_window_;
-    visibility.show_map_sound_3d_window = show_map_sound_3d_window_;
-    visibility.show_rolling_noises_window = show_rolling_noises_window_;
-    visibility.show_flange_noises_window = show_flange_noises_window_;
-    visibility.show_joint_noises_window = show_joint_noises_window_;
-    visibility.show_backgrounds_window = show_backgrounds_window_;
-    visibility.show_adhesions_window = show_adhesions_window_;
-    visibility.show_cab_illuminance_window = show_cab_illuminance_window_;
-    visibility.show_fogs_window = show_fogs_window_;
-    visibility.show_legacy_fogs_window = show_legacy_fogs_window_;
-    visibility.show_lighting_window = show_lighting_window_;
-    visibility.show_draw_distances_window = show_draw_distances_window_;
-    visibility.show_speed_limits_window = show_speed_limits_window_;
-    visibility.show_file_structure_window = show_file_structure_window_;
-    visibility.show_console_window = show_console_window_;
-    visibility.show_plots_window = show_plots_window_;
-    visibility.show_model_preview_window = show_model_preview_window_;
-    visibility.show_scene_preview_window = show_scene_preview_window_;
+    for (const auto& [stored, live] : window_visibility_bindings()) visibility.*stored = this->*live;
     return visibility;
 }
 
 void App::apply_window_visibility_settings(const WindowVisibilitySettings& visibility) {
-    show_othertracks_window_ = visibility.show_othertracks_window;
-    show_station_list_window_ = visibility.show_station_list_window;
-    show_structures_window_ = visibility.show_structures_window;
-    show_structures_between_window_ = visibility.show_structures_between_window;
-    show_structure_models_window_ = visibility.show_structure_models_window;
-    show_other_trains_window_ = visibility.show_other_trains_window;
-    show_sound_list_window_ = visibility.show_sound_list_window;
-    show_sound_3d_list_window_ = visibility.show_sound_3d_list_window;
-    show_repeaters_window_ = visibility.show_repeaters_window;
-    show_signal_aspects_window_ = visibility.show_signal_aspects_window;
-    show_signals_window_ = visibility.show_signals_window;
-    show_sections_window_ = visibility.show_sections_window;
-    show_variables_window_ = visibility.show_variables_window;
-    show_creator_messages_window_ = visibility.show_creator_messages_window;
-    show_beacons_window_ = visibility.show_beacons_window;
-    show_irregularities_window_ = visibility.show_irregularities_window;
-    show_map_sounds_window_ = visibility.show_map_sounds_window;
-    show_map_sound_3d_window_ = visibility.show_map_sound_3d_window;
-    show_rolling_noises_window_ = visibility.show_rolling_noises_window;
-    show_flange_noises_window_ = visibility.show_flange_noises_window;
-    show_joint_noises_window_ = visibility.show_joint_noises_window;
-    show_backgrounds_window_ = visibility.show_backgrounds_window;
-    show_adhesions_window_ = visibility.show_adhesions_window;
-    show_cab_illuminance_window_ = visibility.show_cab_illuminance_window;
-    show_fogs_window_ = visibility.show_fogs_window;
-    show_legacy_fogs_window_ = visibility.show_legacy_fogs_window;
-    show_lighting_window_ = visibility.show_lighting_window;
-    show_draw_distances_window_ = visibility.show_draw_distances_window;
-    show_speed_limits_window_ = visibility.show_speed_limits_window;
-    show_file_structure_window_ = visibility.show_file_structure_window;
-    show_console_window_ = visibility.show_console_window;
-    show_plots_window_ = visibility.show_plots_window;
-    show_model_preview_window_ = visibility.show_model_preview_window;
-    show_scene_preview_window_ = visibility.show_scene_preview_window;
+    for (const auto& [stored, live] : window_visibility_bindings()) this->*live = visibility.*stored;
+}
+
+const auto& App::view_2d_bindings() {
+    static constexpr std::array bindings{
+        std::pair{&View2DSettings::show_stations, &App::show_stations_},
+        std::pair{&View2DSettings::show_station_names, &App::show_station_names_},
+        std::pair{&View2DSettings::show_station_mileage, &App::show_station_mileage_},
+        std::pair{&View2DSettings::show_gradient_pos, &App::show_gradient_pos_},
+        std::pair{&View2DSettings::show_gradient_values, &App::show_gradient_values_},
+        std::pair{&View2DSettings::show_curve_values, &App::show_curve_values_},
+        std::pair{&View2DSettings::show_curve_gauge_markers, &App::show_curve_gauge_markers_},
+        std::pair{&View2DSettings::show_curve_center_markers, &App::show_curve_center_markers_},
+        std::pair{&View2DSettings::show_curve_function_markers, &App::show_curve_function_markers_},
+        std::pair{&View2DSettings::show_profile_other, &App::show_profile_other_},
+        std::pair{&View2DSettings::show_speedlimits, &App::show_speedlimits_},
+        std::pair{&View2DSettings::show_section_markers, &App::show_section_markers_},
+        std::pair{&View2DSettings::show_irregularity_markers, &App::show_irregularity_markers_},
+        std::pair{&View2DSettings::show_beacon_markers, &App::show_beacon_markers_},
+        std::pair{&View2DSettings::show_pretrain_markers, &App::show_pretrain_markers_},
+        std::pair{&View2DSettings::show_map_sound_markers, &App::show_map_sound_markers_},
+        std::pair{&View2DSettings::show_map_sound_3d_markers, &App::show_map_sound_3d_markers_},
+        std::pair{&View2DSettings::show_rolling_noise_markers, &App::show_rolling_noise_markers_},
+        std::pair{&View2DSettings::show_flange_noise_markers, &App::show_flange_noise_markers_},
+        std::pair{&View2DSettings::show_joint_noise_markers, &App::show_joint_noise_markers_},
+        std::pair{&View2DSettings::show_background_markers, &App::show_background_markers_},
+        std::pair{&View2DSettings::show_adhesion_markers, &App::show_adhesion_markers_},
+        std::pair{&View2DSettings::show_cab_illuminance_markers, &App::show_cab_illuminance_markers_},
+        std::pair{&View2DSettings::show_fog_markers, &App::show_fog_markers_},
+        std::pair{&View2DSettings::show_draw_distance_markers, &App::show_draw_distance_markers_},
+        std::pair{&View2DSettings::show_profile_graph, &App::show_profile_graph_},
+        std::pair{&View2DSettings::show_radius_graph, &App::show_radius_graph_},
+        std::pair{&View2DSettings::show_background_image, &App::bg_show_},
+    };
+    return bindings;
 }
 
 View2DSettings App::current_view_2d_settings() const {
     View2DSettings view;
-    view.show_stations = show_stations_;
-    view.show_station_names = show_station_names_;
-    view.show_station_mileage = show_station_mileage_;
-    view.show_gradient_pos = show_gradient_pos_;
-    view.show_gradient_values = show_gradient_values_;
-    view.show_curve_values = show_curve_values_;
-    view.show_curve_gauge_markers = show_curve_gauge_markers_;
-    view.show_curve_center_markers = show_curve_center_markers_;
-    view.show_curve_function_markers = show_curve_function_markers_;
-    view.show_profile_other = show_profile_other_;
-    view.show_speedlimits = show_speedlimits_;
-    view.show_section_markers = show_section_markers_;
-    view.show_irregularity_markers = show_irregularity_markers_;
-    view.show_beacon_markers = show_beacon_markers_;
-    view.show_pretrain_markers = show_pretrain_markers_;
-    view.show_map_sound_markers = show_map_sound_markers_;
-    view.show_map_sound_3d_markers = show_map_sound_3d_markers_;
-    view.show_rolling_noise_markers = show_rolling_noise_markers_;
-    view.show_flange_noise_markers = show_flange_noise_markers_;
-    view.show_joint_noise_markers = show_joint_noise_markers_;
-    view.show_background_markers = show_background_markers_;
-    view.show_adhesion_markers = show_adhesion_markers_;
-    view.show_cab_illuminance_markers = show_cab_illuminance_markers_;
-    view.show_fog_markers = show_fog_markers_;
-    view.show_draw_distance_markers = show_draw_distance_markers_;
-    view.show_profile_graph = show_profile_graph_;
-    view.show_radius_graph = show_radius_graph_;
-    view.show_background_image = bg_show_;
+    for (const auto& [stored, live] : view_2d_bindings()) view.*stored = this->*live;
     const Mode navigation_mode = mode_ == Mode::Edit || mode_ == Mode::NewAtMileage
         ? previous_navigation_mode_ : mode_;
     view.mode = navigation_mode == Mode::Measure ? 1 : 0;
@@ -476,34 +457,7 @@ View2DSettings App::current_view_2d_settings() const {
 }
 
 void App::apply_view_2d_settings(const View2DSettings& settings) {
-    show_stations_ = settings.show_stations;
-    show_station_names_ = settings.show_station_names;
-    show_station_mileage_ = settings.show_station_mileage;
-    show_gradient_pos_ = settings.show_gradient_pos;
-    show_gradient_values_ = settings.show_gradient_values;
-    show_curve_values_ = settings.show_curve_values;
-    show_curve_gauge_markers_ = settings.show_curve_gauge_markers;
-    show_curve_center_markers_ = settings.show_curve_center_markers;
-    show_curve_function_markers_ = settings.show_curve_function_markers;
-    show_profile_other_ = settings.show_profile_other;
-    show_speedlimits_ = settings.show_speedlimits;
-    show_section_markers_ = settings.show_section_markers;
-    show_irregularity_markers_ = settings.show_irregularity_markers;
-    show_beacon_markers_ = settings.show_beacon_markers;
-    show_pretrain_markers_ = settings.show_pretrain_markers;
-    show_map_sound_markers_ = settings.show_map_sound_markers;
-    show_map_sound_3d_markers_ = settings.show_map_sound_3d_markers;
-    show_rolling_noise_markers_ = settings.show_rolling_noise_markers;
-    show_flange_noise_markers_ = settings.show_flange_noise_markers;
-    show_joint_noise_markers_ = settings.show_joint_noise_markers;
-    show_background_markers_ = settings.show_background_markers;
-    show_adhesion_markers_ = settings.show_adhesion_markers;
-    show_cab_illuminance_markers_ = settings.show_cab_illuminance_markers;
-    show_fog_markers_ = settings.show_fog_markers;
-    show_draw_distance_markers_ = settings.show_draw_distance_markers;
-    show_profile_graph_ = settings.show_profile_graph;
-    show_radius_graph_ = settings.show_radius_graph;
-    bg_show_ = settings.show_background_image;
+    for (const auto& [stored, live] : view_2d_bindings()) this->*live = settings.*stored;
     mode_ = normalize_view_2d_mode(settings.mode) == 1 ? Mode::Measure : Mode::Pan;
     switch (normalize_grid_mode(settings.grid_mode)) {
         case 1:
@@ -518,39 +472,40 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     }
 }
 
+const auto& App::view_3d_bindings() {
+    static constexpr auto bindings = std::tuple{
+        std::pair{&View3DSettings::show_scene_owntrack_markers, &App::show_scene_owntrack_markers_},
+        std::pair{&View3DSettings::show_scene_current_position_on_plan, &App::show_scene_current_position_on_plan_},
+        std::pair{&View3DSettings::scene_fog_enabled, &App::scene_fog_enabled_},
+        std::pair{&View3DSettings::scene_map_draw_distance_enabled, &App::scene_map_draw_distance_enabled_},
+        std::pair{&View3DSettings::scene_auto_load_on_map_open, &App::scene_auto_load_on_map_open_},
+        std::pair{&View3DSettings::scene_draw_distance_m, &App::scene_draw_distance_m_},
+        std::pair{&View3DSettings::scene_edit_component_size_percent, &App::scene_edit_component_size_percent_},
+        std::pair{&View3DSettings::scene_camera_speed_percent, &App::scene_camera_speed_percent_},
+        std::pair{&View3DSettings::scene_performance_warning_enabled, &App::scene_performance_warning_enabled_},
+        std::pair{&View3DSettings::scene_instance_warning_threshold, &App::scene_instance_warning_threshold_},
+        std::pair{&View3DSettings::scene_instance_critical_warning_threshold, &App::scene_instance_critical_warning_threshold_},
+    };
+    return bindings;
+}
+
 View3DSettings App::current_view_3d_settings() const {
     View3DSettings view;
-    view.show_scene_owntrack_markers = show_scene_owntrack_markers_;
-    view.show_scene_current_position_on_plan = show_scene_current_position_on_plan_;
-    view.scene_fog_enabled = scene_fog_enabled_;
-    view.scene_map_draw_distance_enabled = scene_map_draw_distance_enabled_;
-    view.scene_auto_load_on_map_open = scene_auto_load_on_map_open_;
-    view.scene_draw_distance_m = scene_draw_distance_m_;
-    view.scene_edit_component_size_percent = scene_edit_component_size_percent_;
-    view.scene_camera_speed_percent = scene_camera_speed_percent_;
-    view.scene_performance_warning_enabled = scene_performance_warning_enabled_;
-    view.scene_instance_warning_threshold = scene_instance_warning_threshold_;
-    view.scene_instance_critical_warning_threshold =
-        scene_instance_critical_warning_threshold_;
+    std::apply([&](const auto&... binding) {
+        ((view.*binding.first = this->*binding.second), ...);
+    }, view_3d_bindings());
     return view;
 }
 
 void App::apply_view_3d_settings(const View3DSettings& settings) {
-    show_scene_owntrack_markers_ = settings.show_scene_owntrack_markers;
-    show_scene_current_position_on_plan_ = settings.show_scene_current_position_on_plan;
-    scene_fog_enabled_ = settings.scene_fog_enabled;
-    scene_map_draw_distance_enabled_ = settings.scene_map_draw_distance_enabled;
-    scene_auto_load_on_map_open_ = settings.scene_auto_load_on_map_open;
-    scene_draw_distance_m_ = clamp_scene_draw_distance(settings.scene_draw_distance_m);
+    std::apply([&](const auto&... binding) {
+        ((this->*binding.second = settings.*binding.first), ...);
+    }, view_3d_bindings());
+    scene_draw_distance_m_ = clamp_scene_draw_distance(scene_draw_distance_m_);
     scene_edit_component_size_percent_ =
-        clamp_scene_edit_component_size_percent(settings.scene_edit_component_size_percent);
-    scene_camera_speed_percent_ = std::clamp(settings.scene_camera_speed_percent,
-                                              k_min_scene_camera_speed_percent,
-                                              k_max_scene_camera_speed_percent);
-    scene_performance_warning_enabled_ = settings.scene_performance_warning_enabled;
-    scene_instance_warning_threshold_ = settings.scene_instance_warning_threshold;
-    scene_instance_critical_warning_threshold_ =
-        settings.scene_instance_critical_warning_threshold;
+        clamp_scene_edit_component_size_percent(scene_edit_component_size_percent_);
+    scene_camera_speed_percent_ = std::clamp(scene_camera_speed_percent_,
+        k_min_scene_camera_speed_percent, k_max_scene_camera_speed_percent);
     normalize_scene_instance_warning_thresholds(
         scene_instance_warning_threshold_, scene_instance_critical_warning_threshold_);
     apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
@@ -669,10 +624,18 @@ void App::restore_scene_settings_preview() {
         scene_instance_critical_warning_threshold_);
 }
 
-bool App::persist_user_settings() {
+void App::capture_runtime_settings() {
     settings_.window_visibility = current_window_visibility();
     settings_.view_2d = current_view_2d_settings();
     settings_.view_3d = current_view_3d_settings();
+}
+
+bool App::persist_user_settings() {
+    capture_runtime_settings();
+    return write_runtime_settings();
+}
+
+bool App::write_runtime_settings() {
     if (!save_user_settings(settings_)) {
         if (!settings_save_pending_) KME_ADD_LOG(LogSeverity::Warning, "[WARN]Failed to save settings; retrying.");
         settings_save_pending_ = true;
@@ -716,12 +679,13 @@ void App::service_pending_persistence(const std::filesystem::path& layout_path) 
 }
 
 void App::save_runtime_settings_if_changed() {
-    const bool changed = current_window_visibility() != last_saved_window_visibility_ ||
-        current_view_2d_settings() != last_saved_view_2d_settings_ ||
-        current_view_3d_settings() != last_saved_view_3d_settings_;
+    capture_runtime_settings();
+    const bool changed = settings_.window_visibility != last_saved_window_visibility_ ||
+        settings_.view_2d != last_saved_view_2d_settings_ ||
+        settings_.view_3d != last_saved_view_3d_settings_;
     if ((changed || settings_save_pending_) &&
         (!settings_save_pending_ || std::chrono::steady_clock::now() >= settings_save_retry_at_)) {
-        persist_user_settings();
+        write_runtime_settings();
     }
 }
 

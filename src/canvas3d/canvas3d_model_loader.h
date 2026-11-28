@@ -9,13 +9,19 @@
 #include "canvas3d_types.h"
 #include "model_loader.h"
 #include <atomic>
+#include <string_view>
 
 namespace canvas3d_detail {
+
+inline constexpr std::string_view k_white_model_warning =
+    "[WARN]canvas3D.cpp: rendering a white model because Assimp supplied no materials for ";
+
+std::vector<GpuVertex> copy_model_vertices(const MlMeshData& data);
 
 class ModelLoaderClient {
 public:
     static bool prepare(std::string& error);
-    static bool load(const std::string& path, MlMeshData& data, std::string& error);
+    static MlModelLoadStatus load(const std::string& path, MlMeshData& data, std::string& error);
     static void free_model(MlMeshData& data) noexcept;
 
 #ifndef NDEBUG

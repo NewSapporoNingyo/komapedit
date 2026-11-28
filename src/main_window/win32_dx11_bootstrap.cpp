@@ -12,6 +12,7 @@
 #include "kme.h"
 #include "app_settings.h"
 #include "debug_headless.h"
+#include "runtime_paths.h"
 #include "touch_input.h"
 
 #include "canvas3D.h"
@@ -65,6 +66,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <tuple>
 #include <thread>
 #include <type_traits>
@@ -176,571 +178,219 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
+#ifndef NDEBUG
+static std::optional<int> run_headless_commands(const std::vector<std::string>& args) {
+    std::optional<int> status;
+    const auto dispatch = [&](const char* command, auto parse, auto run, int usage_status,
+                              const char* usage, bool (*matches)(std::string_view) = nullptr) {
+        if (status || std::none_of(args.begin(), args.end(), [&](const std::string& arg) {
+                return matches ? matches(arg) : arg == command;
+            })) return;
+        const auto options = parse(args);
+        if (!options.requested) return;
+        if (!options.error.empty()) {
+            std::cerr << options.error << '\n';
+            if (usage) std::cerr << "usage: komapedit.exe " << command << usage << '\n';
+            status = usage_status;
+            return;
+        }
+        status = run(options);
+    };
+
+    dispatch("--debug-headless-scene-loader-contract", parse_headless_scene_loader_contract_options,
+             run_debug_headless_scene_loader_contract, 1,
+             " [--headless-output FILE]");
+    dispatch("--debug-headless-diagnostics-popup-bench", parse_headless_diagnostics_popup_bench_options,
+             App::run_debug_headless_diagnostics_popup_benchmark, 1,
+             " [--headless-output FILE]");
+    dispatch("--debug-headless-table-find", parse_headless_table_find_options,
+             [](const HeadlessTableFindOptions& options) {
+                 return App::run_debug_headless_table_find(
+                     options.output_path);
+             }, 1, " [--headless-output FILE]");
+    dispatch("--debug-headless-table-cache-bench", parse_headless_table_cache_benchmark_options,
+             App::run_debug_headless_table_cache_benchmark, 1,
+             " <map-path> [--repeat N] [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-settings-persistence", parse_headless_settings_persistence_options,
+             run_debug_headless_settings_persistence, 1,
+             " [--headless-output FILE]");
+    dispatch("--debug-headless-touch-input", parse_headless_touch_input_options,
+             run_debug_headless_touch_input, 1,
+             " [--headless-output FILE]");
+    dispatch("--debug-headless-scene3d-bench", parse_headless_scene3d_benchmark_options,
+             [](const HeadlessScene3DBenchmarkOptions& options) {
+                 return App::run_debug_headless_scene3d_benchmark(
+                     options.path, options.frames, options.unit_distance, options.max_frame_ms,
+                     options.window_back_m, options.window_forward_m, options.scene_model_workers,
+                     options.disable_scene_texture_cache, options.profile_stages, options.interaction,
+                     options.output_path);
+             }, 1, " <map-path> [--frames N] [--unit-distance M] [--max-frame-ms MS] [--window-back-m M] [--window-forward-m M] [--scene-model-workers N] [--disable-scene-texture-cache] [--profile-stages] [--interaction stationary|moving] [--headless-output FILE]");
+    dispatch("--debug-headless-scene-camera-transfer", parse_headless_scene_camera_transfer_options,
+             [](const HeadlessSceneCameraTransferOptions& options) {
+                 return App::run_debug_headless_scene_camera_transfer(
+                     options.path, options.unit_distance, options.has_camera_distance,
+                     options.camera_distance, options.output_path);
+             }, 1, " <map-path> [--unit-distance M] [--camera-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-source-anchors", parse_headless_source_anchor_options,
+             [](const HeadlessSourceAnchorOptions& options) {
+                 return App::run_debug_headless_source_anchors(
+                     options.path, options.unit_distance, options.output_path);
+             }, 1, " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-station-list-edit", parse_headless_station_list_edit_options,
+             run_debug_headless_station_list_edit, 2,
+             " <map-path> [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-distance-edit-batch", parse_headless_distance_edit_batch_options,
+             run_debug_headless_distance_edit_batch, 2,
+             " <map-path> [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-auto-insert-diagnostics", parse_headless_auto_insert_diagnostics_options,
+             App::run_debug_headless_auto_insert_diagnostics, 2,
+             " <fixture-directory> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-repeater-edit-batch", parse_headless_repeater_edit_batch_options,
+             run_debug_headless_repeater_edit_batch, 2,
+             " <map-path> [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-repeater-key-edit", parse_headless_repeater_key_edit_options,
+             run_debug_headless_repeater_key_edit, 2,
+             " <map-path> [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-other-track-key-edit", parse_headless_other_track_key_edit_options,
+             App::run_debug_headless_other_track_key_edit, 2,
+             " <map-path> [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-section-edit-batch", parse_headless_section_edit_batch_options,
+             run_debug_headless_section_edit_batch, 2,
+             " <map-path> [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-new-element-edit", parse_headless_new_element_edit_options,
+             App::run_debug_headless_new_element_edit, 2,
+             " <map-path> [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-legacy-fog-edit", parse_headless_legacy_fog_edit_options,
+             App::run_debug_headless_legacy_fog_edit, 1,
+             " <map-path> [--unit-distance N] [--headless-output <file>]");
+    dispatch("--debug-headless-pretrain-edit", parse_headless_pretrain_edit_options,
+             App::run_debug_headless_pretrain_edit, 2,
+             " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-light-edit", parse_headless_light_edit_options,
+             App::run_debug_headless_light_edit, 2,
+             " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-curve-parameter-edit", parse_headless_curve_parameter_edit_options,
+             App::run_debug_headless_curve_parameter_edit, 2,
+             " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-station-put-margin-edit", parse_headless_station_put_margin_edit_options,
+             App::run_debug_headless_station_put_margin_edit, 2,
+             " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-sparse-new-element", parse_headless_sparse_new_element_options,
+             App::run_debug_headless_sparse_new_element, 2,
+             " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-insert-edit", parse_headless_insert_edit_options,
+             run_debug_headless_insert_edit, 2,
+             " <map-path> [--repeater-only] [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-include-delete", parse_headless_include_delete_options,
+             run_debug_headless_include_delete, 2,
+             " <map-path> [--index N] [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-include-replace", parse_headless_include_replace_options,
+             run_debug_headless_include_replace, 2,
+             " <map-path> --new-path <file> [--index N] [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-resource-list-replace", parse_headless_resource_list_replace_options,
+             App::run_debug_headless_resource_list_replace, 2,
+             " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-resource-list-insert", parse_headless_resource_list_insert_options,
+             App::run_debug_headless_resource_list_insert, 2,
+             " <map-path> --kind structure|signal [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-new-file-wizard", parse_headless_new_file_wizard_options,
+             App::run_debug_headless_new_file_wizard, 2,
+             " <new-map-path-under-tests> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-new-project", parse_headless_new_project_options,
+             App::run_debug_headless_new_project, 2,
+             " <existing-directory> [--headless-output FILE]");
+    dispatch("--debug-headless-scenario-lifecycle", parse_headless_scenario_lifecycle_options,
+             App::run_debug_headless_scenario_lifecycle, 2,
+             " <scenario-path> [--scenario-index N] [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-creator-message", parse_headless_creator_message_options,
+             App::run_debug_headless_creator_message, 2,
+             " <map-or-scenario-path> [--scenario-index N] [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-scenario-create", parse_headless_scenario_create_options,
+             App::run_debug_headless_scenario_create, 2,
+             " <new-scenario-path-under-tests> --route <existing-map-path> [--headless-output FILE]");
+    dispatch("--debug-headless-fresh-resource-list-workflow", parse_headless_fresh_resource_list_workflow_options,
+             App::run_debug_headless_fresh_resource_list_workflow, 2,
+             " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-signal-aspect-columns", parse_headless_signal_aspect_columns_options,
+             App::run_debug_headless_signal_aspect_columns, 2,
+             " <map-or-scenario-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-include-import-create", parse_headless_include_import_create_options,
+             run_debug_headless_include_import_create, 2,
+             " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-edit-bench", parse_headless_edit_benchmark_options,
+             App::run_debug_headless_edit_benchmark, 2,
+             nullptr);
+    dispatch("--debug-headless-edit-roundtrip", parse_headless_edit_roundtrip_options,
+             [](const HeadlessEditRoundtripOptions& options) {
+                 return App::run_debug_headless_edit_roundtrip(
+                     options.path, options.unit_distance, options.output_path);
+             }, 2, " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-own-track-edit", parse_headless_own_track_edit_options,
+             App::run_debug_headless_own_track_edit, 2,
+             " <map-path> [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-other-track-edit", parse_headless_other_track_edit_options,
+             App::run_debug_headless_other_track_edit, 2,
+             " <map-path> [--unit-distance M] [--commit] [--headless-output FILE]");
+    dispatch("--debug-headless-open-bench", parse_headless_open_benchmark_options,
+             App::run_debug_headless_open_benchmark, 1,
+             " <map-path> [--repeat N] [--unit-distance M] [--headless-output FILE]");
+    dispatch("--debug-headless-plan-bench", parse_headless_plan_benchmark_options,
+             [](const HeadlessPlanBenchmarkOptions& options) {
+                 return App::run_debug_headless_plan_benchmark(
+                     options.path, options.frames, options.unit_distance, options.pan_pixels,
+                     options.max_frame_ms, options.output_path, options.profile_stages,
+                     options.interaction);
+             }, 1, " <map-path> [--frames N] [--unit-distance M] [--pan-pixels P] [--interaction pan|measure-stationary|measure-moving|edit-stationary|edit-drag|edit-wheel] [--max-frame-ms MS] [--headless-output FILE] [--profile-stages]");
+    dispatch("--headless-load-map", parse_headless_load_options,
+             run_headless_load_map, 1,
+             " <map-path> [--repeat N] [--unit-distance M] [--load-profile preview|edit] [--headless-output FILE]",
+             is_headless_load_map_command);
+    dispatch("--headless-load-scenario", parse_headless_load_scenario_options,
+             run_headless_load_scenario, 1,
+             " <scenario-path> [--scenario-index N] [--unit-distance M] [--expect-no-map] [--scenario-edit-roundtrip] [--load-profile preview|edit] [--headless-output FILE]");
+    return status;
+}
+#endif
+
 int main(int, char**) {
 #ifndef NDEBUG
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     std::vector<std::string> args = command_line_args_utf8();
-#if defined(_MSC_VER)
     const bool debug_headless_requested = std::any_of(
         args.begin(), args.end(), [](const std::string& arg) {
-            return arg == "--headless-load-map" ||
+            return is_headless_load_map_command(arg) ||
                 arg == "--headless-load-scenario" ||
                 arg.rfind("--debug-headless-", 0) == 0;
         });
+#endif
+    try {
+        runtime_paths::executable_directory();
+    } catch (const std::system_error& error) {
+#ifndef NDEBUG
+        if (debug_headless_requested) {
+            std::cerr << error.what() << '\n';
+            return EXIT_FAILURE;
+        }
+#endif
+        MessageBoxA(nullptr, error.what(), "komapedit", MB_OK | MB_ICONERROR);
+        return EXIT_FAILURE;
+    }
+#ifndef NDEBUG
+#if defined(_MSC_VER)
     if (debug_headless_requested) {
         _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
         _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
     }
 #endif
-    HeadlessSceneLoaderContractOptions scene_loader_contract =
-        parse_headless_scene_loader_contract_options(args);
-    if (scene_loader_contract.requested) {
-        if (!scene_loader_contract.error.empty()) {
-            std::cerr << scene_loader_contract.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-scene-loader-contract "
-                         "[--headless-output FILE]\n";
-            return 1;
-        }
-        return run_debug_headless_scene_loader_contract(scene_loader_contract);
-    }
-
-    HeadlessDiagnosticsPopupBenchOptions diagnostics_popup_bench =
-        parse_headless_diagnostics_popup_bench_options(args);
-    if (diagnostics_popup_bench.requested) {
-        if (!diagnostics_popup_bench.error.empty()) {
-            std::cerr << diagnostics_popup_bench.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-diagnostics-popup-bench "
-                         "[--headless-output FILE]\n";
-            return 1;
-        }
-        return App::run_debug_headless_diagnostics_popup_benchmark(
-            diagnostics_popup_bench);
-    }
-
-    HeadlessTableFindOptions table_find = parse_headless_table_find_options(args);
-    if (table_find.requested) {
-        if (!table_find.error.empty()) {
-            std::cerr << table_find.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-table-find [--headless-output FILE]\n";
-            return 1;
-        }
-        return App::run_debug_headless_table_find(table_find.output_path);
-    }
-
-    HeadlessTableCacheBenchmarkOptions table_cache_bench =
-        parse_headless_table_cache_benchmark_options(args);
-    if (table_cache_bench.requested) {
-        if (!table_cache_bench.error.empty()) {
-            std::cerr << table_cache_bench.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-table-cache-bench "
-                         "<map-path> [--repeat N] [--unit-distance M] "
-                         "[--headless-output FILE]\n";
-            return 1;
-        }
-        return App::run_debug_headless_table_cache_benchmark(
-            table_cache_bench);
-    }
-
-    HeadlessSettingsPersistenceOptions settings_persistence =
-        parse_headless_settings_persistence_options(args);
-    if (settings_persistence.requested) {
-        if (!settings_persistence.error.empty()) {
-            std::cerr << settings_persistence.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-settings-persistence "
-                         "[--headless-output FILE]\n";
-            return 1;
-        }
-        return run_debug_headless_settings_persistence(settings_persistence);
-    }
-
-    HeadlessTouchInputOptions touch_input_options = parse_headless_touch_input_options(args);
-    if (touch_input_options.requested) {
-        if (!touch_input_options.error.empty()) {
-            std::cerr << touch_input_options.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-touch-input [--headless-output FILE]\n";
-            return 1;
-        }
-        return run_debug_headless_touch_input(touch_input_options);
-    }
-
-    HeadlessScene3DBenchmarkOptions scene3d_bench = parse_headless_scene3d_benchmark_options(args);
-    if (scene3d_bench.requested) {
-        if (!scene3d_bench.error.empty()) {
-            std::cerr << scene3d_bench.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-scene3d-bench <map-path> "
-                      << "[--frames N] [--unit-distance M] [--max-frame-ms MS] "
-                      << "[--window-back-m M] [--window-forward-m M] "
-                      << "[--scene-model-workers N] [--disable-scene-texture-cache] "
-                      << "[--profile-stages] [--interaction stationary|moving] "
-                      << "[--headless-output FILE]\n";
-            return 1;
-        }
-        return App::run_debug_headless_scene3d_benchmark(scene3d_bench.path, scene3d_bench.frames,
-                                                         scene3d_bench.unit_distance, scene3d_bench.max_frame_ms,
-                                                         scene3d_bench.window_back_m,
-                                                         scene3d_bench.window_forward_m,
-                                                         scene3d_bench.scene_model_workers,
-                                                         scene3d_bench.disable_scene_texture_cache,
-                                                         scene3d_bench.profile_stages,
-                                                         scene3d_bench.interaction,
-                                                         scene3d_bench.output_path);
-    }
-
-    HeadlessSceneCameraTransferOptions scene_camera_transfer = parse_headless_scene_camera_transfer_options(args);
-    if (scene_camera_transfer.requested) {
-        if (!scene_camera_transfer.error.empty()) {
-            std::cerr << scene_camera_transfer.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-scene-camera-transfer <map-path> "
-                      << "[--unit-distance M] [--camera-distance M] [--headless-output FILE]\n";
-            return 1;
-        }
-        return App::run_debug_headless_scene_camera_transfer(scene_camera_transfer.path,
-                                                             scene_camera_transfer.unit_distance,
-                                                             scene_camera_transfer.has_camera_distance,
-                                                             scene_camera_transfer.camera_distance,
-                                                             scene_camera_transfer.output_path);
-    }
-
-    HeadlessSourceAnchorOptions source_anchors = parse_headless_source_anchor_options(args);
-    if (source_anchors.requested) {
-        if (!source_anchors.error.empty()) {
-            std::cerr << source_anchors.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-source-anchors <map-path> "
-                      << "[--unit-distance M] [--headless-output FILE]\n";
-            return 1;
-        }
-        return App::run_debug_headless_source_anchors(source_anchors.path,
-                                                      source_anchors.unit_distance,
-                                                      source_anchors.output_path);
-    }
-
-    HeadlessStationListEditOptions station_list_edit =
-        parse_headless_station_list_edit_options(args);
-    if (station_list_edit.requested) {
-        if (!station_list_edit.error.empty()) {
-            std::cerr << station_list_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-station-list-edit <map-path> "
-                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
-            return 2;
-        }
-        return run_debug_headless_station_list_edit(station_list_edit);
-    }
-
-    HeadlessDistanceEditBatchOptions distance_edit_batch =
-        parse_headless_distance_edit_batch_options(args);
-    if (distance_edit_batch.requested) {
-        if (!distance_edit_batch.error.empty()) {
-            std::cerr << distance_edit_batch.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-distance-edit-batch <map-path> "
-                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
-            return 2;
-        }
-        return run_debug_headless_distance_edit_batch(distance_edit_batch);
-    }
-
-    HeadlessAutoInsertDiagnosticsOptions auto_insert_diagnostics =
-        parse_headless_auto_insert_diagnostics_options(args);
-    if (auto_insert_diagnostics.requested) {
-        if (!auto_insert_diagnostics.error.empty()) {
-            std::cerr << auto_insert_diagnostics.error << "\n"
-                      << "usage: komapedit.exe "
-                         "--debug-headless-auto-insert-diagnostics <fixture-directory> "
-                         "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_auto_insert_diagnostics(
-            auto_insert_diagnostics);
-    }
-
-    HeadlessRepeaterEditBatchOptions repeater_edit_batch =
-        parse_headless_repeater_edit_batch_options(args);
-    if (repeater_edit_batch.requested) {
-        if (!repeater_edit_batch.error.empty()) {
-            std::cerr << repeater_edit_batch.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-repeater-edit-batch <map-path> "
-                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
-            return 2;
-        }
-        return run_debug_headless_repeater_edit_batch(repeater_edit_batch);
-    }
-
-    HeadlessRepeaterKeyEditOptions repeater_key_edit =
-        parse_headless_repeater_key_edit_options(args);
-    if (repeater_key_edit.requested) {
-        if (!repeater_key_edit.error.empty()) {
-            std::cerr << repeater_key_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-repeater-key-edit <map-path> "
-                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
-            return 2;
-        }
-        return run_debug_headless_repeater_key_edit(repeater_key_edit);
-    }
-
-    HeadlessOtherTrackKeyEditOptions other_track_key_edit =
-        parse_headless_other_track_key_edit_options(args);
-    if (other_track_key_edit.requested) {
-        if (!other_track_key_edit.error.empty()) {
-            std::cerr << other_track_key_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-other-track-key-edit "
-                         "<map-path> [--unit-distance M] [--commit] "
-                         "[--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_other_track_key_edit(other_track_key_edit);
-    }
-
-    HeadlessSectionEditBatchOptions section_edit_batch =
-        parse_headless_section_edit_batch_options(args);
-    if (section_edit_batch.requested) {
-        if (!section_edit_batch.error.empty()) {
-            std::cerr << section_edit_batch.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-section-edit-batch <map-path> "
-                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
-            return 2;
-        }
-        return run_debug_headless_section_edit_batch(section_edit_batch);
-    }
-
-    HeadlessNewElementEditOptions new_element_edit =
-        parse_headless_new_element_edit_options(args);
-    if (new_element_edit.requested) {
-        if (!new_element_edit.error.empty()) {
-            std::cerr << new_element_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-new-element-edit <map-path> "
-                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_new_element_edit(new_element_edit);
-    }
-
-    HeadlessLegacyFogEditOptions legacy_fog_edit = parse_headless_legacy_fog_edit_options(args);
-    if (legacy_fog_edit.requested) {
-        if (!legacy_fog_edit.error.empty()) {
-            std::cerr << legacy_fog_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-legacy-fog-edit <map-path> "
-                      << "[--unit-distance N] [--headless-output <file>]\n";
-            return 1;
-        }
-        return App::run_debug_headless_legacy_fog_edit(legacy_fog_edit);
-    }
-    HeadlessPreTrainEditOptions pretrain_edit = parse_headless_pretrain_edit_options(args);
-    if (pretrain_edit.requested) {
-        if (!pretrain_edit.error.empty()) {
-            std::cerr << pretrain_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-pretrain-edit <map-path> "
-                         "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_pretrain_edit(pretrain_edit);
-    }
-
-    HeadlessLightEditOptions light_edit = parse_headless_light_edit_options(args);
-    if (light_edit.requested) {
-        if (!light_edit.error.empty()) {
-            std::cerr << light_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-light-edit <map-path> "
-                         "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_light_edit(light_edit);
-    }
-
-    HeadlessCurveParameterEditOptions curve_parameter_edit =
-        parse_headless_curve_parameter_edit_options(args);
-    if (curve_parameter_edit.requested) {
-        if (!curve_parameter_edit.error.empty()) {
-            std::cerr << curve_parameter_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-curve-parameter-edit "
-                         "<map-path> [--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_curve_parameter_edit(
-            curve_parameter_edit);
-    }
-
-    HeadlessStationPutMarginEditOptions station_put_margin_edit =
-        parse_headless_station_put_margin_edit_options(args);
-    if (station_put_margin_edit.requested) {
-        if (!station_put_margin_edit.error.empty()) {
-            std::cerr << station_put_margin_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-station-put-margin-edit <map-path> "
-                         "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_station_put_margin_edit(station_put_margin_edit);
-    }
-
-    HeadlessSparseNewElementOptions sparse_new_element =
-        parse_headless_sparse_new_element_options(args);
-    if (sparse_new_element.requested) {
-        if (!sparse_new_element.error.empty()) {
-            std::cerr << sparse_new_element.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-sparse-new-element <map-path> "
-                         "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_sparse_new_element(sparse_new_element);
-    }
-
-    HeadlessInsertEditOptions insert_edit = parse_headless_insert_edit_options(args);
-    if (insert_edit.requested) {
-        if (!insert_edit.error.empty()) {
-            std::cerr << insert_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-insert-edit <map-path> "
-                      << "[--repeater-only] [--unit-distance M] [--commit] "
-                      << "[--headless-output FILE]\n";
-            return 2;
-        }
-        return run_debug_headless_insert_edit(insert_edit);
-    }
-
-    HeadlessIncludeDeleteOptions include_delete =
-        parse_headless_include_delete_options(args);
-    if (include_delete.requested) {
-        if (!include_delete.error.empty()) {
-            std::cerr << include_delete.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-include-delete <map-path> "
-                      << "[--index N] [--unit-distance M] [--commit] "
-                      << "[--headless-output FILE]\n";
-            return 2;
-        }
-        return run_debug_headless_include_delete(include_delete);
-    }
-
-    HeadlessIncludeReplaceOptions include_replace =
-        parse_headless_include_replace_options(args);
-    if (include_replace.requested) {
-        if (!include_replace.error.empty()) {
-            std::cerr << include_replace.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-include-replace <map-path> "
-                      << "--new-path <file> [--index N] [--unit-distance M] "
-                      << "[--commit] [--headless-output FILE]\n";
-            return 2;
-        }
-        return run_debug_headless_include_replace(include_replace);
-    }
-
-    HeadlessResourceListReplaceOptions resource_list_replace =
-        parse_headless_resource_list_replace_options(args);
-    if (resource_list_replace.requested) {
-        if (!resource_list_replace.error.empty()) {
-            std::cerr << resource_list_replace.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-resource-list-replace <map-path> "
-                      << "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_resource_list_replace(resource_list_replace);
-    }
-
-    HeadlessResourceListInsertOptions resource_list_insert =
-        parse_headless_resource_list_insert_options(args);
-    if (resource_list_insert.requested) {
-        if (!resource_list_insert.error.empty()) {
-            std::cerr << resource_list_insert.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-resource-list-insert <map-path> "
-                         "--kind structure|signal [--unit-distance M] "
-                         "[--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_resource_list_insert(resource_list_insert);
-    }
-
-    HeadlessNewFileWizardOptions new_file_wizard =
-        parse_headless_new_file_wizard_options(args);
-    if (new_file_wizard.requested) {
-        if (!new_file_wizard.error.empty()) {
-            std::cerr << new_file_wizard.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-new-file-wizard <new-map-path-under-tests> "
-                      << "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_new_file_wizard(new_file_wizard);
-    }
-
-    HeadlessNewProjectOptions new_project = parse_headless_new_project_options(args);
-    if (new_project.requested) {
-        if (!new_project.error.empty()) {
-            std::cerr << new_project.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-new-project <existing-directory> "
-                         "[--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_new_project(new_project);
-    }
-
-    HeadlessScenarioLifecycleOptions scenario_lifecycle =
-        parse_headless_scenario_lifecycle_options(args);
-    if (scenario_lifecycle.requested) {
-        if (!scenario_lifecycle.error.empty()) {
-            std::cerr << scenario_lifecycle.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-scenario-lifecycle <scenario-path> "
-                         "[--scenario-index N] [--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_scenario_lifecycle(scenario_lifecycle);
-    }
-
-    HeadlessCreatorMessageOptions creator_message =
-        parse_headless_creator_message_options(args);
-    if (creator_message.requested) {
-        if (!creator_message.error.empty()) {
-            std::cerr << creator_message.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-creator-message <map-or-scenario-path> "
-                         "[--scenario-index N] [--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_creator_message(creator_message);
-    }
-
-    HeadlessScenarioCreateOptions scenario_create =
-        parse_headless_scenario_create_options(args);
-    if (scenario_create.requested) {
-        if (!scenario_create.error.empty()) {
-            std::cerr << scenario_create.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-scenario-create <new-scenario-path-under-tests> "
-                      << "--route <existing-map-path> [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_scenario_create(scenario_create);
-    }
-
-    HeadlessFreshResourceListWorkflowOptions fresh_resource_list =
-        parse_headless_fresh_resource_list_workflow_options(args);
-    if (fresh_resource_list.requested) {
-        if (!fresh_resource_list.error.empty()) {
-            std::cerr << fresh_resource_list.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-fresh-resource-list-workflow <map-path> "
-                         "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_fresh_resource_list_workflow(fresh_resource_list);
-    }
-
-    HeadlessSignalAspectColumnsOptions signal_columns =
-        parse_headless_signal_aspect_columns_options(args);
-    if (signal_columns.requested) {
-        if (!signal_columns.error.empty()) {
-            std::cerr << signal_columns.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-signal-aspect-columns <map-or-scenario-path> "
-                         "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_signal_aspect_columns(signal_columns);
-    }
-
-    HeadlessIncludeImportCreateOptions include_import_create =
-        parse_headless_include_import_create_options(args);
-    if (include_import_create.requested) {
-        if (!include_import_create.error.empty()) {
-            std::cerr << include_import_create.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-include-import-create <map-path> "
-                      << "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return run_debug_headless_include_import_create(include_import_create);
-    }
-
-    const auto edit_bench = parse_headless_edit_benchmark_options(args);
-    if (edit_bench.requested) {
-        if (!edit_bench.error.empty()) {
-            std::cerr << edit_bench.error << "\n";
-            return 2;
-        }
-        return App::run_debug_headless_edit_benchmark(edit_bench);
-    }
-    HeadlessEditRoundtripOptions edit_roundtrip = parse_headless_edit_roundtrip_options(args);
-    if (edit_roundtrip.requested) {
-        if (!edit_roundtrip.error.empty()) {
-            std::cerr << edit_roundtrip.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-edit-roundtrip <map-path> "
-                      << "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_edit_roundtrip(edit_roundtrip.path,
-                                                      edit_roundtrip.unit_distance,
-                                                      edit_roundtrip.output_path);
-    }
-
-    HeadlessOwnTrackEditOptions own_track_edit =
-        parse_headless_own_track_edit_options(args);
-    if (own_track_edit.requested) {
-        if (!own_track_edit.error.empty()) {
-            std::cerr << own_track_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-own-track-edit <map-path> "
-                      << "[--unit-distance M] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_own_track_edit(own_track_edit);
-    }
-
-    HeadlessOtherTrackEditOptions other_track_edit =
-        parse_headless_other_track_edit_options(args);
-    if (other_track_edit.requested) {
-        if (!other_track_edit.error.empty()) {
-            std::cerr << other_track_edit.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-other-track-edit <map-path> "
-                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
-            return 2;
-        }
-        return App::run_debug_headless_other_track_edit(other_track_edit);
-    }
-
-    HeadlessOpenBenchmarkOptions open_bench = parse_headless_open_benchmark_options(args);
-    if (open_bench.requested) {
-        if (!open_bench.error.empty()) {
-            std::cerr << open_bench.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-open-bench <map-path> "
-                      << "[--repeat N] [--unit-distance M] [--headless-output FILE]\n";
-            return 1;
-        }
-        return App::run_debug_headless_open_benchmark(open_bench);
-    }
-
-    HeadlessPlanBenchmarkOptions plan_bench = parse_headless_plan_benchmark_options(args);
-    if (plan_bench.requested) {
-        if (!plan_bench.error.empty()) {
-            std::cerr << plan_bench.error << "\n"
-                      << "usage: komapedit.exe --debug-headless-plan-bench <map-path> "
-                      << "[--frames N] [--unit-distance M] [--pan-pixels P] "
-                      << "[--interaction pan|measure-stationary|measure-moving|edit-stationary|edit-drag|edit-wheel] "
-                      << "[--max-frame-ms MS] [--headless-output FILE] [--profile-stages]\n";
-            return 1;
-        }
-        return App::run_debug_headless_plan_benchmark(plan_bench.path, plan_bench.frames,
-                                                      plan_bench.unit_distance, plan_bench.pan_pixels,
-                                                      plan_bench.max_frame_ms, plan_bench.output_path,
-                                                      plan_bench.profile_stages,
-                                                      plan_bench.interaction);
-    }
-
-    HeadlessLoadOptions headless = parse_headless_load_options(args);
-    if (headless.requested) {
-        if (!headless.error.empty()) {
-            std::cerr << headless.error << "\n"
-                      << "usage: komapedit.exe --headless-load-map <map-path> "
-                      << "[--repeat N] [--unit-distance M] [--load-profile preview|edit] "
-                      << "[--headless-output FILE]\n";
-            return 1;
-        }
-        return run_headless_load_map(headless);
-    }
-
-    HeadlessLoadScenarioOptions headless_scenario =
-        parse_headless_load_scenario_options(args);
-    if (headless_scenario.requested) {
-        if (!headless_scenario.error.empty()) {
-            std::cerr << headless_scenario.error << "\n"
-                      << "usage: komapedit.exe --headless-load-scenario <scenario-path> "
-                      << "[--scenario-index N] [--unit-distance M] [--expect-no-map] "
-                         "[--scenario-edit-roundtrip] "
-                      << "[--load-profile preview|edit] [--headless-output FILE]\n";
-            return 1;
-        }
-        return run_headless_load_scenario(headless_scenario);
-    }
+    if (const auto status = run_headless_commands(args)) return *status;
 #endif
 
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(apartment)) {
+        std::cerr << "CoInitializeEx failed (HRESULT 0x" << std::hex
+                  << static_cast<std::uint32_t>(apartment) << ")\n";
+        return EXIT_FAILURE;
+    }
     UserSettings settings = load_user_settings();
     ImGui_ImplWin32_EnableDpiAwareness();
     float scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));

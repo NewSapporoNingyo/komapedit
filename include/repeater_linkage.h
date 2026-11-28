@@ -11,6 +11,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -25,6 +26,12 @@ enum class EventKind {
     End,
     Other,
 };
+
+inline EventKind event_kind(std::string_view method) {
+    if (method == "Begin" || method == "Begin0") return EventKind::Begin;
+    if (method == "End") return EventKind::End;
+    return EventKind::Other;
+}
 
 enum class BoundaryKind {
     ExplicitEnd,
@@ -156,13 +163,9 @@ inline Linkage pair_linkage(std::vector<Event> events) {
             open_segments.erase(open);
         }
     }
-    for (size_t chain_index = 0; chain_index < result.chains.size(); ++chain_index) {
-        const Chain& chain = result.chains[chain_index];
-        for (size_t begin_index = 0; begin_index < chain.segment_indices.size(); ++begin_index) {
-            Segment& segment = result.segments[chain.segment_indices[begin_index]];
-            segment.chain_index = chain_index;
-            segment.chain_begin_index = begin_index;
-            segment.chain_begin_count = chain.begin_source_indices.size();
+    for (const Chain& chain : result.chains) {
+        for (const size_t index : chain.segment_indices) {
+            result.segments[index].chain_begin_count = chain.begin_source_indices.size();
         }
     }
     return result;

@@ -42,6 +42,7 @@ namespace {
 template <typename RunFindFn, typename RunUnusedFn, typename StepFn, typename StatusTextFn>
 void render_table_find_panel(toolbar_icons::Cache& icons,
                              TableFindState& state,
+                             const EditableListEditState& draft,
                              const char* id,
                              const std::string& find_label,
                              const std::string& partial_label,
@@ -51,6 +52,10 @@ void render_table_find_panel(toolbar_icons::Cache& icons,
                              RunUnusedFn run_unused,
                              StepFn step,
                              StatusTextFn status_text) {
+    if (state.draft_revision != draft.revision) {
+        reset_table_find_results(state);
+        state.draft_revision = draft.revision;
+    }
     std::string toggle_id = std::string("##") + id + "_find_panel_toggle";
     std::string input_id = std::string("##") + id + "_find_text";
     std::string prev_id = std::string("↑##") + id + "_find_prev";
@@ -94,10 +99,12 @@ void render_table_find_panel(toolbar_icons::Cache& icons,
                                                   all_controls_width,
                                                   step_controls_width);
         ImGui::SetNextItemWidth(input_width);
-        if (ImGui::InputText(input_id.c_str(), state.query, IM_ARRAYSIZE(state.query),
-                             ImGuiInputTextFlags_EnterReturnsTrue)) {
-            run_find();
+        const bool submit = ImGui::InputText(input_id.c_str(), state.query, IM_ARRAYSIZE(state.query),
+                                             ImGuiInputTextFlags_EnterReturnsTrue);
+        if (state.has_run && state.committed != state.query) {
+            reset_ordinary_table_find_results(state);
         }
+        if (submit) run_find();
         same_line_if_next_item_fits(arrow_button_width, right_padding);
         ImGui::BeginDisabled(state.matches.empty());
         if (ImGui::Button(prev_id.c_str(), ImVec2(arrow_button_width, 0.0f))) {
@@ -109,14 +116,14 @@ void render_table_find_panel(toolbar_icons::Cache& icons,
         }
         ImGui::EndDisabled();
         same_line_if_next_item_fits(partial_width, right_padding);
-        if (ImGui::RadioButton(partial_id.c_str(), !state.exact)) {
+        if (ImGui::RadioButton(partial_id.c_str(), !state.exact) && state.exact) {
             state.exact = false;
-            if (state.has_run || !blank_ascii(state.query)) run_find();
+            reset_ordinary_table_find_results(state);
         }
         same_line_if_next_item_fits(exact_width, right_padding);
-        if (ImGui::RadioButton(exact_id.c_str(), state.exact)) {
+        if (ImGui::RadioButton(exact_id.c_str(), state.exact) && !state.exact) {
             state.exact = true;
-            if (state.has_run || !blank_ascii(state.query)) run_find();
+            reset_ordinary_table_find_results(state);
         }
         same_line_if_next_item_fits(unused_width, right_padding);
         if (icons.button(toolbar_icons::Icon::FindUnused, unused_label.c_str())) run_unused();
@@ -706,35 +713,28 @@ void App::render_editable_list_table(
     run_pending_editable_list_actions();
 }
 
+bool App::render_resource_list_header(ResourceListKind kind, NewFileKind new_file_kind) {
+    const auto& source = model_.resource_list_sources[static_cast<size_t>(kind)];
+    if (!has_model_ || !source.present) {
+        const std::string message = resource_list_unavailable_message(
+            has_model_, tr("status.resource_list_no_map"), tr("status.resource_list_not_specified"),
+            tr(resource_list_name_translation_key(kind)));
+        if (render_resource_list_empty_overlay(message, tr("button.new_or_import_file"))) {
+            open_new_file_wizard(new_file_kind);
+        }
+        return false;
+    }
+    if (render_resource_list_source(source, tr("label.source_path"), tr("menu.open_in_explorer"),
+                                    tr("menu.change_file"), edit_actions_available())) {
+        request_resource_list_file_change(kind);
+    }
+    return true;
+}
+
 void App::render_station_list_window() {
     if (!show_station_list_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    std::string title = tr("frame.station_list") + "###StationList";
-    if (!ImGui::Begin(title.c_str(), &show_station_list_window_)) {
-        ImGui::End();
-        return;
-    }
-    const ResourceListKind resource_kind = ResourceListKind::Station;
-    const bool resource_list_present = has_model_ &&
-        model_.resource_list_sources[static_cast<size_t>(resource_kind)].present;
-    if (!resource_list_present) {
-        const std::string message = resource_list_unavailable_message(
-            has_model_, tr("status.resource_list_no_map"),
-            tr("status.resource_list_not_specified"),
-            tr(resource_list_name_translation_key(resource_kind)));
-        if (render_resource_list_empty_overlay(
-                message, tr("button.new_or_import_file"))) {
-            open_new_file_wizard(NewFileKind::Station);
-        }
-        ImGui::End();
-        return;
-    }
-    if (render_resource_list_source(
-            model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Station)],
-            tr("label.source_path"), tr("menu.open_in_explorer"),
-            tr("menu.change_file"), edit_actions_available())) {
-        request_resource_list_file_change(ResourceListKind::Station);
-    }
+    const ScopedTableWindow window(tr("frame.station_list") + "###StationList", show_station_list_window_, dock_right_id_);
+    if (!window || !render_resource_list_header(ResourceListKind::Station, NewFileKind::Station)) return;
     ensure_table_cache();
     auto render_station_table = [&](const char* table_id,
                                     const TableColumnDef* columns,
@@ -809,47 +809,22 @@ void App::render_station_list_window() {
         !has_editable_list_drafts(station_definition_edit_));
     if (ImGui::Button(tr("button.apply").c_str())) {
         apply_editable_list_drafts(station_definition_edit_, k_station_definition_edit_spec);
+        finish_edit_timing();
     }
     ImGui::EndDisabled();
     render_editable_list_table("station_definitions", k_station_definition_columns,
         IM_ARRAYSIZE(k_station_definition_columns), table_cache_.station_definition_rows,
         station_definition_edit_, k_station_definition_edit_spec);
-    ImGui::End();
 }
 
 void App::render_structure_models_window() {
     if (!show_structure_models_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    std::string title = tr("frame.structure_models") + "###StructureModels";
-    if (!ImGui::Begin(title.c_str(), &show_structure_models_window_)) {
-        ImGui::End();
-        return;
-    }
-    const ResourceListKind resource_kind = ResourceListKind::Structure;
-    const bool resource_list_present = has_model_ &&
-        model_.resource_list_sources[static_cast<size_t>(resource_kind)].present;
-    if (!resource_list_present) {
-        const std::string message = resource_list_unavailable_message(
-            has_model_, tr("status.resource_list_no_map"),
-            tr("status.resource_list_not_specified"),
-            tr(resource_list_name_translation_key(resource_kind)));
-        if (render_resource_list_empty_overlay(
-                message, tr("button.new_or_import_file"))) {
-            open_new_file_wizard(NewFileKind::Structure);
-        }
-        ImGui::End();
-        return;
-    }
-    if (render_resource_list_source(
-        model_.resource_list_sources[static_cast<size_t>(resource_kind)],
-        tr("label.source_path"), tr("menu.open_in_explorer"),
-        tr("menu.change_file"), edit_actions_available())) {
-        request_resource_list_file_change(ResourceListKind::Structure);
-    }
+    const ScopedTableWindow window(tr("frame.structure_models") + "###StructureModels", show_structure_models_window_, dock_right_id_);
+    if (!window || !render_resource_list_header(ResourceListKind::Structure, NewFileKind::Structure)) return;
     ensure_table_cache();
 
     render_table_find_panel(
-        toolbar_icons_, structure_model_find_,
+        toolbar_icons_, structure_model_find_, structure_model_edit_,
         "structure_model",
         tr("button.find"),
         tr("find.partial_match"),
@@ -867,6 +842,7 @@ void App::render_structure_models_window() {
     if (ImGui::Button(tr("button.apply").c_str())) {
         apply_editable_list_drafts(
             structure_model_edit_, k_structure_model_edit_spec);
+        finish_edit_timing();
     }
     ImGui::EndDisabled();
     render_editable_list_table(
@@ -876,14 +852,13 @@ void App::render_structure_models_window() {
         k_structure_model_edit_spec,
         table_cache_.structure_model_file_path_width, 0.0f,
         &structure_model_find_);
-    ImGui::End();
 }
 
 void App::render_sound_file_find_panel(bool is_3d) {
     TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
 
     render_table_find_panel(
-        toolbar_icons_, state,
+        toolbar_icons_, state, is_3d ? sound_3d_list_edit_ : sound_list_edit_,
         is_3d ? "sound_3d_file" : "sound_file",
         tr("button.find"),
         tr("find.partial_match"),
@@ -897,33 +872,8 @@ void App::render_sound_file_find_panel(bool is_3d) {
 
 void App::render_sound_list_window() {
     if (!show_sound_list_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    std::string title = tr("frame.sound_list") + "###SoundList";
-    if (!ImGui::Begin(title.c_str(), &show_sound_list_window_)) {
-        ImGui::End();
-        return;
-    }
-    const ResourceListKind resource_kind = ResourceListKind::Sound;
-    const bool resource_list_present = has_model_ &&
-        model_.resource_list_sources[static_cast<size_t>(resource_kind)].present;
-    if (!resource_list_present) {
-        const std::string message = resource_list_unavailable_message(
-            has_model_, tr("status.resource_list_no_map"),
-            tr("status.resource_list_not_specified"),
-            tr(resource_list_name_translation_key(resource_kind)));
-        if (render_resource_list_empty_overlay(
-                message, tr("button.new_or_import_file"))) {
-            open_new_file_wizard(NewFileKind::Sound);
-        }
-        ImGui::End();
-        return;
-    }
-    if (render_resource_list_source(
-        model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Sound)],
-        tr("label.source_path"), tr("menu.open_in_explorer"),
-        tr("menu.change_file"), edit_actions_available())) {
-        request_resource_list_file_change(ResourceListKind::Sound);
-    }
+    const ScopedTableWindow window(tr("frame.sound_list") + "###SoundList", show_sound_list_window_, dock_right_id_);
+    if (!window || !render_resource_list_header(ResourceListKind::Sound, NewFileKind::Sound)) return;
     ensure_table_cache();
     render_sound_file_find_panel(false);
     ImGui::BeginDisabled(
@@ -931,6 +881,7 @@ void App::render_sound_list_window() {
         !has_editable_list_drafts(sound_list_edit_));
     if (ImGui::Button(tr("button.apply").c_str())) {
         apply_editable_list_drafts(sound_list_edit_, k_sound_list_edit_spec);
+        finish_edit_timing();
     }
     ImGui::EndDisabled();
     render_editable_list_table(
@@ -938,38 +889,12 @@ void App::render_sound_list_window() {
         table_cache_.sound_list_rows, sound_list_edit_, k_sound_list_edit_spec,
         table_cache_.sound_list_file_path_width,
         table_cache_.sound_list_buffer_count_width, &sound_file_find_);
-    ImGui::End();
 }
 
 void App::render_sound_3d_list_window() {
     if (!show_sound_3d_list_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    std::string title = tr("frame.sound_3d_list") + "###Sound3DList";
-    if (!ImGui::Begin(title.c_str(), &show_sound_3d_list_window_)) {
-        ImGui::End();
-        return;
-    }
-    const ResourceListKind resource_kind = ResourceListKind::Sound3D;
-    const bool resource_list_present = has_model_ &&
-        model_.resource_list_sources[static_cast<size_t>(resource_kind)].present;
-    if (!resource_list_present) {
-        const std::string message = resource_list_unavailable_message(
-            has_model_, tr("status.resource_list_no_map"),
-            tr("status.resource_list_not_specified"),
-            tr(resource_list_name_translation_key(resource_kind)));
-        if (render_resource_list_empty_overlay(
-                message, tr("button.new_or_import_file"))) {
-            open_new_file_wizard(NewFileKind::Sound3D);
-        }
-        ImGui::End();
-        return;
-    }
-    if (render_resource_list_source(
-        model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Sound3D)],
-        tr("label.source_path"), tr("menu.open_in_explorer"),
-        tr("menu.change_file"), edit_actions_available())) {
-        request_resource_list_file_change(ResourceListKind::Sound3D);
-    }
+    const ScopedTableWindow window(tr("frame.sound_3d_list") + "###Sound3DList", show_sound_3d_list_window_, dock_right_id_);
+    if (!window || !render_resource_list_header(ResourceListKind::Sound3D, NewFileKind::Sound3D)) return;
     ensure_table_cache();
     render_sound_file_find_panel(true);
     ImGui::BeginDisabled(
@@ -979,6 +904,7 @@ void App::render_sound_3d_list_window() {
     if (ImGui::Button(tr("button.apply").c_str())) {
         apply_editable_list_drafts(
             sound_3d_list_edit_, k_sound_3d_list_edit_spec);
+        finish_edit_timing();
     }
     ImGui::EndDisabled();
     render_editable_list_table(
@@ -988,49 +914,15 @@ void App::render_sound_3d_list_window() {
         k_sound_3d_list_edit_spec,
         table_cache_.sound_3d_list_file_path_width,
         table_cache_.sound_3d_list_buffer_count_width, &sound_3d_file_find_);
-    ImGui::End();
 }
 
 void App::render_signal_aspects_window() {
     if (!show_signal_aspects_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_signal_aspects_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.signal_aspects") + "###SignalAspects";
-    if (!ImGui::Begin(title.c_str(), &show_signal_aspects_window_)) {
-        focus_signal_aspects_next_ = false;
-        ImGui::End();
-        return;
-    }
-    const ResourceListKind resource_kind = ResourceListKind::Signal;
-    const bool resource_list_present = has_model_ &&
-        model_.resource_list_sources[static_cast<size_t>(resource_kind)].present;
-    if (!resource_list_present) {
-        const std::string message = resource_list_unavailable_message(
-            has_model_, tr("status.resource_list_no_map"),
-            tr("status.resource_list_not_specified"),
-            tr(resource_list_name_translation_key(resource_kind)));
-        if (render_resource_list_empty_overlay(
-                message, tr("button.new_or_import_file"))) {
-            open_new_file_wizard(NewFileKind::Signal);
-        }
-        focus_signal_aspects_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (render_resource_list_source(
-        model_.resource_list_sources[
-            static_cast<size_t>(ResourceListKind::Signal)],
-        tr("label.source_path"), tr("menu.open_in_explorer"),
-        tr("menu.change_file"), edit_actions_available())) {
-        request_resource_list_file_change(ResourceListKind::Signal);
-    }
+    const ScopedTableWindow window(tr("frame.signal_aspects") + "###SignalAspects", show_signal_aspects_window_, dock_right_id_, &focus_signal_aspects_next_);
+    if (!window || !render_resource_list_header(ResourceListKind::Signal, NewFileKind::Signal)) return;
     ensure_table_cache();
-    const bool stale_find_results = signal_aspect_find_.has_run &&
-        signal_aspect_find_.committed != signal_aspect_find_.query;
-    if (stale_find_results) reset_signal_aspect_find_results();
-
     render_table_find_panel(
-        toolbar_icons_, signal_aspect_find_,
+        toolbar_icons_, signal_aspect_find_, signal_aspect_edit_,
         "signal_aspect",
         tr("button.find"),
         tr("find.partial_match"),
@@ -1048,6 +940,7 @@ void App::render_signal_aspects_window() {
     if (ImGui::Button(tr("button.apply").c_str())) {
         apply_editable_list_drafts(
             signal_aspect_edit_, k_signal_aspect_edit_spec);
+        finish_edit_timing();
     }
     ImGui::EndDisabled();
     const std::pair<const char*, SignalAspectColumnAction> column_actions[] = {
@@ -1068,13 +961,8 @@ void App::render_signal_aspects_window() {
     const size_t shown_columns = std::min(actual_columns, k_max_signal_aspect_structure_key_columns);
     const size_t required_columns = k_signal_aspect_structure_key_column_offset + shown_columns;
     if (actual_columns > shown_columns) {
-        std::string notice = tr("table.signal_aspect_columns_truncated");
-        const auto replace_count = [&](const char* token, size_t count) {
-            const size_t position = notice.find(token);
-            if (position != std::string::npos) notice.replace(position, std::strlen(token), std::to_string(count));
-        };
-        replace_count("{shown}", shown_columns);
-        replace_count("{total}", actual_columns);
+        const auto notice = format_truncated_table_status(
+            tr("table.signal_aspect_columns_truncated"), shown_columns, actual_columns);
         ImGui::TextWrapped("%s", notice.c_str());
     }
     render_editable_list_table(
@@ -1085,6 +973,4 @@ void App::render_signal_aspects_window() {
         &signal_aspect_column_headers(),
         &table_cache_.signal_aspect_column_widths,
         &table_cache_.signal_aspect_display_rows);
-    focus_signal_aspects_next_ = false;
-    ImGui::End();
 }

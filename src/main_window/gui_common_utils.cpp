@@ -280,12 +280,7 @@ std::string wide_to_utf8(const std::wstring& text) {
 }
 
 std::string narrow_path(const std::filesystem::path& path) {
-#if defined(__cpp_char8_t)
-    auto s = path.u8string();
-    return std::string(reinterpret_cast<const char*>(s.data()), s.size());
-#else
     return path.u8string();
-#endif
 }
 
 std::string format_double(double value, int precision) {
@@ -342,6 +337,25 @@ const MapElementEditFieldState* find_inspector_field(const MapElementInspectorSt
                                return field.key == key;
                            });
     return it == inspector.fields.end() ? nullptr : &*it;
+}
+
+std::optional<std::string> App::validated_edit_form_value(
+    MapElementEditFieldState& field, std::string_view row_kind, bool canonicalize_all) {
+    std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
+    if (field.required && value.empty()) {
+        set_program_status("status.edit.required_field");
+        return std::nullopt;
+    }
+    const bool canonicalize = canonicalize_all || value != field.original_value;
+    if (!validate_and_canonicalize_edit_field(field, canonicalize)) {
+        const bool station_margin = row_kind == "station.put" &&
+            (field.key == "margin1" || field.key == "margin2");
+        set_program_status(station_margin ? "status.edit.station_margin_invalid"
+                                          : "status.edit.invalid_number");
+        return std::nullopt;
+    }
+    if (canonicalize) value = trim_gui_ascii_copy(edit_field_buffer_text(field));
+    return value;
 }
 
 bool validate_and_canonicalize_edit_field(MapElementEditFieldState& field,

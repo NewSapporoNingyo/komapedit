@@ -10,6 +10,8 @@
 
 #include "maploader_internal.h"
 
+#include <tuple>
+
 namespace kme::maploader::detail {
 
 using kme::maploader::path_to_utf8;
@@ -38,6 +40,7 @@ class Parser {
 public:
     Parser(MapContext& context, LoadedText loaded)
         : ctx_(context), loaded_(std::move(loaded)), src_(loaded_.body), file_path_(loaded_.path) {
+        if (loaded_.line_starts.empty()) loaded_.line_starts = build_line_starts(src_);
         register_source_file(ctx_, loaded_);
         ctx_.current_file_path = loaded_.normalized_path;
         if (ctx_.include_stack.empty()) {
@@ -117,7 +120,6 @@ private:
     std::filesystem::path file_path_;
     size_t pos_ = 0;
     size_t current_statement_start_ = 0;
-    std::vector<size_t> diagnostic_line_starts_ = build_line_starts(src_);
     std::vector<PendingInclude> pending_includes_;
     std::unordered_map<std::string, size_t> include_call_occurrences_;
     size_t include_random_ordinal_ = 0;
@@ -134,8 +136,8 @@ private:
         constexpr std::string_view prefix(k_creator_message_prefix);
         if (std::string_view(src_).substr(comment_start, prefix.size()) != prefix) return;
         const auto line_it = std::upper_bound(
-            diagnostic_line_starts_.begin(), diagnostic_line_starts_.end(), comment_start);
-        const size_t line_start = line_it == diagnostic_line_starts_.begin()
+            loaded_.line_starts.begin(), loaded_.line_starts.end(), comment_start);
+        const size_t line_start = line_it == loaded_.line_starts.begin()
             ? 0 : *std::prev(line_it);
         for (size_t i = line_start; i < comment_start; ++i) {
             if (src_[i] != ' ' && src_[i] != '\t') return;
@@ -195,13 +197,13 @@ private:
     }
 
     std::pair<int, int> diagnostic_line_column(size_t position) const {
-        const auto it = std::upper_bound(diagnostic_line_starts_.begin(),
-                                         diagnostic_line_starts_.end(), position);
+        const auto it = std::upper_bound(loaded_.line_starts.begin(),
+                                         loaded_.line_starts.end(), position);
         const size_t line_index =
-            it == diagnostic_line_starts_.begin()
+            it == loaded_.line_starts.begin()
                 ? 0
-                : static_cast<size_t>(std::distance(diagnostic_line_starts_.begin(), it) - 1);
-        const size_t line_start = diagnostic_line_starts_[line_index];
+                : static_cast<size_t>(std::distance(loaded_.line_starts.begin(), it) - 1);
+        const size_t line_start = loaded_.line_starts[line_index];
         return {loaded_.body_start_line + static_cast<int>(line_index),
                 utf8_column_count(src_, line_start, position) + 1};
     }
@@ -499,7 +501,7 @@ private:
     }
 
     void queue_include(const std::string& path_text, size_t body_start, size_t body_end) {
-        std::filesystem::path child = join_path(ctx_.rootpath, path_text);
+        std::filesystem::path child = join_utf8_path(ctx_.rootpath, path_text);
         const std::string child_path = normalized_source_path(child);
         const std::string child_key = normalized_source_key(child_path);
         for (const std::string& ancestor : ctx_.include_stack) {
@@ -617,99 +619,7 @@ private:
             }
         }
         ctx_.edit_order += child.edit_order;
-        offset_row_edit_refs(child.own_track, statement_index_base);
-        offset_row_edit_refs(child.curves, statement_index_base);
-        offset_row_edit_refs(child.gradients, statement_index_base);
-        offset_row_edit_refs(child.other_track_changes, statement_index_base);
-        for (auto& row : child.station_list) offset_edit_ref(row.edit_ref, statement_index_base);
-        for (auto& row : child.station_puts) offset_row_edit_ref(row, statement_index_base);
-        for (auto& kv : child.othertrack) offset_row_edit_refs(kv.second, statement_index_base);
-        offset_row_edit_refs(child.structure_loads, statement_index_base);
-        offset_row_edit_refs(child.structure_models, statement_index_base);
-        offset_row_edit_refs(child.sound_list, statement_index_base);
-        offset_row_edit_refs(child.other_trains, statement_index_base);
-        offset_row_edit_refs(child.other_train_enables, statement_index_base);
-        offset_row_edit_refs(child.other_train_stops, statement_index_base);
-        offset_row_edit_refs(child.other_train_structure_keys, statement_index_base);
-        offset_row_edit_refs(child.other_train_sound_3d_keys, statement_index_base);
-        offset_row_edit_refs(child.map_sounds, statement_index_base);
-        offset_row_edit_refs(child.map_sound_3d, statement_index_base);
-        offset_row_edit_refs(child.rolling_noises, statement_index_base);
-        offset_row_edit_refs(child.flange_noises, statement_index_base);
-        offset_row_edit_refs(child.joint_noises, statement_index_base);
-        offset_row_edit_refs(child.structure_puts, statement_index_base);
-        offset_row_edit_refs(child.structure_betweens, statement_index_base);
-        offset_row_edit_refs(child.repeaters, statement_index_base);
-        offset_row_edit_refs(child.section_begins, statement_index_base);
-        offset_row_edit_refs(child.section_speed_limits, statement_index_base);
-        offset_row_edit_refs(child.signal_aspects, statement_index_base);
-        offset_row_edit_refs(child.signal_puts, statement_index_base);
-        offset_row_edit_refs(child.beacons, statement_index_base);
-        offset_row_edit_refs(child.pretrains, statement_index_base);
-        offset_row_edit_refs(child.irregularities, statement_index_base);
-        offset_row_edit_refs(child.backgrounds, statement_index_base);
-        offset_row_edit_refs(child.adhesions, statement_index_base);
-        offset_row_edit_refs(child.cab_illuminance, statement_index_base);
-        offset_row_edit_refs(child.fogs, statement_index_base);
-        offset_row_edit_refs(child.legacy_fogs, statement_index_base);
-        offset_row_edit_refs(child.light_ambient, statement_index_base);
-        offset_row_edit_refs(child.creator_messages, statement_index_base);
-        offset_row_edit_refs(child.light_diffuse, statement_index_base);
-        offset_row_edit_refs(child.light_direction, statement_index_base);
-        offset_row_edit_refs(child.draw_distances, statement_index_base);
-        offset_row_edit_refs(child.speedlimits, statement_index_base);
-        auto remap_source_file_index = [&](size_t& index) {
-            if (index < source_file_index_map.size()) {
-                index = source_file_index_map[index];
-            }
-        };
-        for (auto& row : child.structure_models) {
-            remap_source_file_index(row.source_file_index);
-        }
-        for (auto& row : child.sound_list) {
-            remap_source_file_index(row.source_file_index);
-        }
-
-        int order_base = ctx_.parse_order;
-        auto offset_order = [order_base](int& order) {
-            if (order > 0) order += order_base;
-        };
-        for (auto& row : child.station_puts) offset_order(row.order);
-        for (auto& row : child.curves) offset_order(row.order);
-        for (auto& row : child.gradients) offset_order(row.order);
-        for (auto& row : child.other_track_changes) offset_order(row.order);
-        for (auto& row : child.station_list) offset_order(row.order);
-        for (auto& row : child.structure_loads) offset_order(row.order);
-        for (auto& row : child.structure_puts) offset_order(row.order);
-        for (auto& row : child.structure_betweens) offset_order(row.order);
-        for (auto& row : child.other_trains) offset_order(row.order);
-        for (auto& row : child.other_train_enables) offset_order(row.order);
-        for (auto& row : child.other_train_stops) offset_order(row.order);
-        for (auto& row : child.repeaters) offset_order(row.order);
-        for (auto& row : child.section_begins) offset_order(row.order);
-        for (auto& row : child.section_speed_limits) offset_order(row.order);
-        for (auto& row : child.signal_puts) offset_order(row.order);
-        for (auto& row : child.beacons) offset_order(row.order);
-        for (auto& row : child.pretrains) offset_order(row.order);
-        for (auto& row : child.map_sounds) offset_order(row.order);
-        for (auto& row : child.map_sound_3d) offset_order(row.order);
-        for (auto& row : child.rolling_noises) offset_order(row.order);
-        for (auto& row : child.flange_noises) offset_order(row.order);
-        for (auto& row : child.joint_noises) offset_order(row.order);
-        for (auto& row : child.irregularities) offset_order(row.order);
-        for (auto& row : child.backgrounds) offset_order(row.order);
-        for (auto& row : child.adhesions) offset_order(row.order);
-        for (auto& row : child.cab_illuminance) offset_order(row.order);
-        for (auto& row : child.fogs) offset_order(row.order);
-        for (auto& row : child.legacy_fogs) offset_order(row.order);
-        for (auto& row : child.light_ambient) offset_order(row.order);
-        for (auto& row : child.creator_messages) offset_order(row.order);
-        for (auto& row : child.light_diffuse) offset_order(row.order);
-        for (auto& row : child.light_direction) offset_order(row.order);
-        for (auto& row : child.draw_distances) offset_order(row.order);
-        for (auto& row : child.speedlimits) offset_order(row.order);
-        for (auto& row : child.variable_assignments) offset_order(row.order);
-        for (auto& row : child.resource_list_loads) offset_order(row.order);
+        const int order_base = ctx_.parse_order;
         ctx_.parse_order += child.parse_order;
 
         bool parent_variable_environment_changed = false;
@@ -724,65 +634,65 @@ private:
             rebuild_variable_environment_snapshot(ctx_);
         }
 
-        for (auto& statement : child.parsed_statements) {
-            ctx_.parsed_statements.push_back(std::move(statement));
-        }
+        auto merge_rows = [&](auto adjust, auto... members) {
+            auto merge_family = [&](auto member) {
+                auto& destination = ctx_.*member;
+                for (auto& row : child.*member) {
+                    adjust(row);
+                    destination.push_back(std::move(row));
+                }
+            };
+            (merge_family(members), ...);
+        };
+        const auto offset_order = [order_base](auto& row) {
+            if (row.order > 0) row.order += order_base;
+        };
+        const auto offset_edit = [statement_index_base](auto& row) {
+            offset_edit_ref(row.edit_ref, statement_index_base);
+        };
+        merge_rows([&](auto& row) {
+            offset_edit(row);
+            offset_order(row);
+        },
+            &MapContext::station_puts, &MapContext::curves, &MapContext::gradients,
+            &MapContext::other_track_changes, &MapContext::station_list, &MapContext::structure_loads,
+            &MapContext::structure_puts, &MapContext::structure_betweens, &MapContext::other_trains,
+            &MapContext::other_train_enables, &MapContext::other_train_stops, &MapContext::repeaters,
+            &MapContext::section_begins, &MapContext::section_speed_limits, &MapContext::signal_puts,
+            &MapContext::beacons, &MapContext::pretrains, &MapContext::map_sounds,
+            &MapContext::map_sound_3d, &MapContext::rolling_noises, &MapContext::flange_noises,
+            &MapContext::joint_noises, &MapContext::irregularities, &MapContext::backgrounds,
+            &MapContext::adhesions, &MapContext::cab_illuminance, &MapContext::fogs,
+            &MapContext::legacy_fogs, &MapContext::light_ambient, &MapContext::creator_messages,
+            &MapContext::light_diffuse, &MapContext::light_direction, &MapContext::draw_distances,
+            &MapContext::speedlimits);
+        merge_rows(offset_edit,
+            &MapContext::own_track, &MapContext::other_train_structure_keys,
+            &MapContext::other_train_sound_3d_keys, &MapContext::signal_aspects);
+        merge_rows(offset_order,
+            &MapContext::variable_assignments, &MapContext::resource_list_loads);
+        merge_rows([&](auto& row) {
+            offset_edit(row);
+            if (row.source_file_index < source_file_index_map.size()) {
+                row.source_file_index = source_file_index_map[row.source_file_index];
+            }
+        },
+            &MapContext::structure_models, &MapContext::sound_list);
+
+        ctx_.parsed_statements.insert(ctx_.parsed_statements.end(),
+            std::make_move_iterator(child.parsed_statements.begin()),
+            std::make_move_iterator(child.parsed_statements.end()));
         ctx_.controlpoints.insert(ctx_.controlpoints.end(), child.controlpoints.begin(), child.controlpoints.end());
-        for (auto& row : child.own_track) ctx_.own_track.push_back(std::move(row));
-        for (auto& row : child.curves) ctx_.curves.push_back(std::move(row));
-        for (auto& row : child.gradients) ctx_.gradients.push_back(std::move(row));
-        for (auto& row : child.other_track_changes) ctx_.other_track_changes.push_back(std::move(row));
         for (auto& kv : child.station_position) ctx_.station_position[kv.first] = std::move(kv.second);
         for (auto& kv : child.station_key) ctx_.station_key[kv.first] = std::move(kv.second);
-        for (auto& row : child.station_list) ctx_.station_list.push_back(std::move(row));
-        for (auto& row : child.station_puts) ctx_.station_puts.push_back(std::move(row));
         for (const std::string& key : child.othertrack_order) {
-            ensure_othertrack(ctx_, key);
-            auto& dest = ctx_.othertrack[key];
-            auto& src = child.othertrack[key];
-            for (auto& row : src) dest.push_back(std::move(row));
+            auto& destination = ensure_othertrack(ctx_, key);
+            for (auto& row : child.othertrack.at(key)) {
+                offset_edit(row);
+                destination.push_back(std::move(row));
+            }
         }
-        for (auto& row : child.structure_loads) ctx_.structure_loads.push_back(std::move(row));
-        for (auto& row : child.structure_models) ctx_.structure_models.push_back(std::move(row));
-        for (auto& row : child.sound_list) ctx_.sound_list.push_back(std::move(row));
-        for (auto& row : child.other_trains) ctx_.other_trains.push_back(std::move(row));
-        for (auto& row : child.other_train_enables) ctx_.other_train_enables.push_back(std::move(row));
-        for (auto& row : child.other_train_stops) ctx_.other_train_stops.push_back(std::move(row));
-        for (auto& row : child.other_train_structure_keys) ctx_.other_train_structure_keys.push_back(std::move(row));
-        for (auto& row : child.other_train_sound_3d_keys) ctx_.other_train_sound_3d_keys.push_back(std::move(row));
-        ctx_.parsed_other_train_files.insert(child.parsed_other_train_files.begin(), child.parsed_other_train_files.end());
-        for (auto& row : child.map_sounds) ctx_.map_sounds.push_back(std::move(row));
-        for (auto& row : child.map_sound_3d) ctx_.map_sound_3d.push_back(std::move(row));
-        for (auto& row : child.rolling_noises) ctx_.rolling_noises.push_back(std::move(row));
-        for (auto& row : child.flange_noises) ctx_.flange_noises.push_back(std::move(row));
-        for (auto& row : child.joint_noises) ctx_.joint_noises.push_back(std::move(row));
-        for (auto& row : child.structure_puts) ctx_.structure_puts.push_back(std::move(row));
-        for (auto& row : child.structure_betweens) ctx_.structure_betweens.push_back(std::move(row));
-        for (auto& row : child.repeaters) ctx_.repeaters.push_back(std::move(row));
-        for (auto& row : child.section_begins) ctx_.section_begins.push_back(std::move(row));
-        for (auto& row : child.section_speed_limits) ctx_.section_speed_limits.push_back(std::move(row));
-        for (auto& row : child.signal_aspects) ctx_.signal_aspects.push_back(std::move(row));
-        for (auto& row : child.signal_puts) ctx_.signal_puts.push_back(std::move(row));
-        for (auto& row : child.beacons) ctx_.beacons.push_back(std::move(row));
-        for (auto& row : child.pretrains) ctx_.pretrains.push_back(std::move(row));
-        for (auto& row : child.irregularities) ctx_.irregularities.push_back(std::move(row));
-        for (auto& row : child.backgrounds) ctx_.backgrounds.push_back(std::move(row));
-        for (auto& row : child.adhesions) ctx_.adhesions.push_back(std::move(row));
-        for (auto& row : child.cab_illuminance) ctx_.cab_illuminance.push_back(std::move(row));
-        for (auto& row : child.fogs) ctx_.fogs.push_back(std::move(row));
-        for (auto& row : child.legacy_fogs) ctx_.legacy_fogs.push_back(std::move(row));
-        for (auto& row : child.light_ambient) ctx_.light_ambient.push_back(std::move(row));
-        for (auto& row : child.creator_messages) ctx_.creator_messages.push_back(std::move(row));
-        for (auto& row : child.light_diffuse) ctx_.light_diffuse.push_back(std::move(row));
-        for (auto& row : child.light_direction) ctx_.light_direction.push_back(std::move(row));
-        for (auto& row : child.draw_distances) ctx_.draw_distances.push_back(std::move(row));
-        for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
-        for (auto& row : child.variable_assignments) {
-            ctx_.variable_assignments.push_back(std::move(row));
-        }
-        for (auto& row : child.resource_list_loads) {
-            ctx_.resource_list_loads.push_back(std::move(row));
-        }
+        ctx_.parsed_other_train_files.merge(child.parsed_other_train_files);
         for (auto& diagnostic : child.diagnostics) {
             ctx_.diagnostics.push_back(std::move(diagnostic));
         }
@@ -796,7 +706,7 @@ private:
 
     void flush_pending_includes() {
         if (pending_includes_.empty()) return;
-        kme::timing::MapTiming::Stage timing("parse.include_join_merge");
+        kme::timing::MapTiming::Stage timing(kme::timing::MapStage::ParseIncludeJoinMerge);
 
         std::string first_fatal_error;
         for (auto& pending : pending_includes_) {
@@ -883,22 +793,17 @@ private:
         function.label = parse_label();
         expect('(');
         size_t args_start = pos_;
-        parse_map_args(function.args);
-        function.explicit_argument_count =
-            function.args.size() == 1 && function.args.front().is_null() &&
-                    trim_field_copy(src_.substr(args_start, pos_ - args_start - 1)).empty()
-                ? 0
-                : function.args.size();
+        function.explicit_argument_count = parse_map_args(function.args);
         size_t args_end = pos_ > args_start ? pos_ - 1 : args_start;
         function.raw_arguments = src_.substr(args_start, args_end - args_start);
         return function;
     }
 
-    void parse_map_args(std::vector<Value>& args) {
+    size_t parse_map_args(std::vector<Value>& args) {
         skip();
         if (accept(')')) {
             args.push_back(Value::null());
-            return;
+            return 0;
         }
         while (true) {
             skip();
@@ -912,6 +817,7 @@ private:
             expect(')');
             break;
         }
+        return args.size();
     }
 
     Value parse_expression(int min_prec = 0) {
@@ -1048,23 +954,30 @@ private:
 
     Value call_function(const std::string& label, const std::vector<Value>& args) {
         if (label == "rand") {
-            if (args.empty()) {
-                return Value::num(
-                    std::uniform_real_distribution<double>(0.0, 1.0)(random_engine_));
+            if (args.size() > 1) throw std::runtime_error("rand expects zero or one argument");
+            const double upper = args.empty() ? 1.0 : as_number(args.front());
+            if (!std::isfinite(upper) || upper <= 0.0) {
+                throw std::runtime_error("rand upper bound must be positive and finite");
             }
-            return Value::num(std::uniform_real_distribution<double>(
-                0.0, as_number(args[0]))(random_engine_));
+            const double sample = std::uniform_real_distribution<double>(0.0, upper)(random_engine_);
+            // Rounding can reach the upper endpoint for subnormal bounds.
+            return Value::num(sample < upper ? sample : std::nextafter(upper, 0.0));
         }
-        if (label == "abs") return Value::num(std::fabs(as_number(args.at(0))));
-        if (label == "sin") return Value::num(std::sin(as_number(args.at(0))));
-        if (label == "cos") return Value::num(std::cos(as_number(args.at(0))));
-        if (label == "atan2") return Value::num(std::atan2(as_number(args.at(0)), as_number(args.at(1))));
-        if (label == "sqrt") return Value::num(std::sqrt(as_number(args.at(0))));
-        if (label == "exp") return Value::num(std::exp(as_number(args.at(0))));
-        if (label == "log") return Value::num(std::log(as_number(args.at(0))));
-        if (label == "floor") return Value::num(std::floor(as_number(args.at(0))));
-        if (label == "ceil") return Value::num(std::ceil(as_number(args.at(0))));
-        if (label == "pow") return Value::num(std::pow(as_number(args.at(0)), as_number(args.at(1))));
+        static constexpr std::pair<std::string_view, double (*)(double)> unary[] = {
+            {"abs", std::fabs}, {"sin", std::sin}, {"cos", std::cos}, {"sqrt", std::sqrt},
+            {"exp", std::exp}, {"log", std::log}, {"floor", std::floor}, {"ceil", std::ceil},
+        };
+        for (const auto& [name, function] : unary) {
+            if (name != label) continue;
+            if (args.size() != 1) throw std::runtime_error(label + " expects one argument");
+            return Value::num(function(as_number(args.front())));
+        }
+        if (label == "atan2" || label == "pow") {
+            if (args.size() != 2) throw std::runtime_error(label + " expects two arguments");
+            const double a = as_number(args[0]);
+            const double b = as_number(args[1]);
+            return Value::num(label == "atan2" ? std::atan2(a, b) : std::pow(a, b));
+        }
         throw std::runtime_error("Unknown function: " + label);
     }
 
@@ -1584,14 +1497,14 @@ private:
 
     template <typename ParseCallback>
     void load_resource_list(const std::string& path_text,
-                            const std::string& header,
-                            double minimum_version,
+                            ResourceListLoadKind kind,
                             const std::string& statement_kind,
                             ParseCallback&& parse_callback) {
         if (path_text.empty()) return;
         try {
-            const std::filesystem::path path = join_path(ctx_.rootpath, path_text);
-            LoadedText loaded = load_header_text(ctx_, path, header, minimum_version);
+            const std::filesystem::path path = join_utf8_path(ctx_.rootpath, path_text);
+            const auto& header = resource_list_header(kind);
+            LoadedText loaded = load_header_text(ctx_, path, header.prefix, header.minimum_version);
             parse_callback(loaded);
         } catch (const std::exception& e) {
             add_warning(current_statement_start_, statement_kind,
@@ -1607,7 +1520,7 @@ private:
         row.kind = kind;
         row.evaluated_path = path_text;
         row.raw_argument = trim_field_copy(raw_argument);
-        const std::filesystem::path joined = join_path(ctx_.rootpath, path_text);
+        const std::filesystem::path joined = join_utf8_path(ctx_.rootpath, path_text);
         std::error_code ec;
         std::filesystem::path resolved = std::filesystem::absolute(joined, ec);
         if (ec) resolved = joined;
@@ -1640,7 +1553,7 @@ private:
             record_resource_list_load(ResourceListLoadKind::Station,
                                       list_path, raw_arguments,
                                       "station.load");
-            load_resource_list(list_path, "BveTs Station List ", 0.04,
+            load_resource_list(list_path, ResourceListLoadKind::Station,
                                "station.load",
                                [&](const LoadedText& loaded) { parse_station_list(loaded); });
         }
@@ -1740,8 +1653,9 @@ private:
     void parse_sound_list(const LoadedText& loaded, bool is_3d) {
         const size_t source_file_index = register_source_file_index(ctx_, loaded);
         std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
+        const char* row_kind = is_3d ? "Sound3DList.Row" : "SoundList.Row";
         for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
-                                              size_t line_end, int) {
+                                              size_t line_end, int line_number) {
             std::string trimmed = trim_field_copy(line);
             if (trimmed.empty() || trimmed[0] == '#') return;
 
@@ -1753,11 +1667,16 @@ private:
             row.is_3d = is_3d;
             if (fields.size() > 1) row.file_path = fields[1];
             if (fields.size() > 2) {
-                row.buffer_count = parse_sound_buffer_count(fields[2]);
+                const auto count = parse_sound_buffer_count(fields[2]);
+                row.buffer_count = count.value;
+                if (count.kind == SoundBufferCountKind::Invalid) {
+                    ctx_.diagnostics.push_back({loaded.normalized_path, line_number, 1, row_kind,
+                        "bufferCount must be a positive integer. Preview uses 1."});
+                }
             }
             row.source_file_index = source_file_index;
             row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack,
-                                                     is_3d ? "Sound3DList.Row" : "SoundList.Row",
+                                                     row_kind,
                                                      line_start, line_end, line, fields, true);
             ctx_.sound_list.push_back(std::move(row));
         });
@@ -1924,7 +1843,7 @@ private:
             record_resource_list_load(ResourceListLoadKind::Signal,
                                       list_path_text, raw_arguments,
                                       "signal.load");
-            load_resource_list(list_path_text, "BveTs Signal Aspects List ", 2.0,
+            load_resource_list(list_path_text, ResourceListLoadKind::Signal,
                                "signal.load",
                                [&](const LoadedText& loaded) { parse_signal_aspect_list(loaded); });
         } else if (fn == "speedlimit") {
@@ -1996,7 +1915,7 @@ private:
             record_resource_list_load(ResourceListLoadKind::Structure,
                                       list_path_text, raw_arguments,
                                       "structure.load");
-            load_resource_list(list_path_text, "BveTs Structure List ", 1.0,
+            load_resource_list(list_path_text, ResourceListLoadKind::Structure,
                                "structure.load",
                                [&](const LoadedText& loaded) { parse_structure_list(loaded); });
         } else if (fn == "put") {
@@ -2048,7 +1967,7 @@ private:
                 list_path_text, raw_arguments,
                 is_3d ? "sound3d.load" : "sound.load");
             load_resource_list(
-                list_path_text, "BveTs Sound List ", 2.0,
+                list_path_text, is_3d ? ResourceListLoadKind::Sound3D : ResourceListLoadKind::Sound,
                 is_3d ? "sound3d.load" : "sound.load",
                 [&](const LoadedText& loaded) { parse_sound_list(loaded, is_3d); });
         } else if (fn == "play") {
@@ -2090,7 +2009,7 @@ private:
 
         std::string path_text = as_text(file_path);
         if (!path_text.empty()) {
-            std::filesystem::path path = join_path(ctx_.rootpath, path_text);
+            std::filesystem::path path = join_utf8_path(ctx_.rootpath, path_text);
             std::error_code ec;
             std::filesystem::path abs = std::filesystem::absolute(path, ec);
             if (!ec) path = abs;
@@ -2615,23 +2534,21 @@ void append_deferred_key_diagnostics(MapContext& ctx) {
     }
 }
 
-void emit_diagnostics(MapContext& ctx) {
-    auto source_order = [&](const MapDiagnostic& diagnostic) {
+void emit_diagnostics(const MapContext& ctx) {
+    std::vector<std::pair<size_t, const MapDiagnostic*>> ordered;
+    ordered.reserve(ctx.diagnostics.size());
+    for (const MapDiagnostic& diagnostic : ctx.diagnostics) {
         const auto it =
             ctx.source_file_indices.find(normalized_source_key(diagnostic.file_path));
-        return it == ctx.source_file_indices.end() ? k_no_source_ref : it->second;
-    };
-    std::stable_sort(
-        ctx.diagnostics.begin(), ctx.diagnostics.end(),
-        [&](const MapDiagnostic& left, const MapDiagnostic& right) {
-            const size_t left_source = source_order(left);
-            const size_t right_source = source_order(right);
-            if (left_source != right_source) return left_source < right_source;
-            if (left.line != right.line) return left.line < right.line;
-            return left.column < right.column;
-        });
-    for (const MapDiagnostic& diagnostic : ctx.diagnostics) {
-        KME_MAPLOADER_LOG_WARN(format_diagnostic(diagnostic));
+        ordered.emplace_back(
+            it == ctx.source_file_indices.end() ? k_no_source_ref : it->second, &diagnostic);
+    }
+    std::stable_sort(ordered.begin(), ordered.end(), [](const auto& left, const auto& right) {
+        return std::tie(left.first, left.second->line, left.second->column) <
+            std::tie(right.first, right.second->line, right.second->column);
+    });
+    for (const auto& entry : ordered) {
+        KME_MAPLOADER_LOG_WARN(format_diagnostic(*entry.second));
     }
 }
 
@@ -2649,7 +2566,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
         options.has_random_seed = true;
     }
     auto ctx = std::make_unique<MapContext>();
-    kme::timing::MapTiming::Stage edit_timing("parse.setup");
+    kme::timing::MapTiming::Stage edit_timing(kme::timing::MapStage::ParseSetup);
     ctx->source_overrides = std::move(overrides);
     ctx->parse_options = options;
     ActiveTimingScope active(ctx->timing);
@@ -2664,7 +2581,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
     ctx->file_structure.push_back({k_no_source_ref, {}, ctx->entry_file_path});
 
     KME_MAPLOADER_LOG_INFO("parsing syntax tree");
-    edit_timing.next("parse.syntax_diagnostics");
+    edit_timing.next(kme::timing::MapStage::ParseSyntaxDiagnostics);
     try {
         ScopedTimer timer(&ctx->timing.parse_seconds);
         Parser parser(*ctx, std::move(loaded));
@@ -2700,12 +2617,12 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
     emit_diagnostics(*ctx);
 
     KME_MAPLOADER_LOG_INFO("sorting parsed IR");
-    edit_timing.next("parse.relocate");
+    edit_timing.next(kme::timing::MapStage::ParseRelocate);
     {
         ScopedTimer timer(&ctx->timing.relocate_seconds);
         relocate(*ctx);
     }
-    edit_timing.next("parse.geometry");
+    edit_timing.next(kme::timing::MapStage::ParseGeometry);
     generate_geometry(*ctx, unit_distance, has_arbitrary_distribution,
                       arbitrary_distribution[0], arbitrary_distribution[1],
                       arbitrary_distribution[2]);

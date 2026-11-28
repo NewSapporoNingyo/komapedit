@@ -38,6 +38,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <wincodec.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
@@ -106,89 +107,65 @@ struct DecodedRgbaImage {
     std::vector<unsigned char> pixels;
 };
 
-enum class WicDecodeDebugFault {
-    None,
-    GetSizeHresult,
-    Allocation,
-};
+#ifndef NDEBUG
+enum class WicDecodeDebugFault { None, GetSizeHresult, Allocation };
+#endif
 
-bool decode_background_image_rgba(const std::string& path,
-                                  DecodedRgbaImage& decoded,
-                                  std::string& error,
-                                  WicDecodeDebugFault debug_fault =
-                                      WicDecodeDebugFault::None) {
-    IWICImagingFactory* factory = nullptr;
-    IWICBitmapDecoder* decoder = nullptr;
-    IWICBitmapFrameDecode* frame = nullptr;
-    IWICFormatConverter* converter = nullptr;
-    auto release_wic = [&]() noexcept {
-        release_com(converter);
-        release_com(frame);
-        release_com(decoder);
-        release_com(factory);
-    };
-    auto fail = [&](const char* reason) {
-        release_wic();
+bool decode_background_image_rgba(const std::string& path, DecodedRgbaImage& decoded,
+                                  std::string& error
+#ifndef NDEBUG
+                                  , WicDecodeDebugFault debug_fault = WicDecodeDebugFault::None
+#endif
+                                  ) try {
+    using Microsoft::WRL::ComPtr;
+    const auto fail = [&](const char* reason) {
         error = reason;
         return false;
     };
+    ComPtr<IWICImagingFactory> factory;
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                   IID_PPV_ARGS(factory.GetAddressOf()));
+    if (FAILED(hr)) return fail("failed to create the WIC imaging factory");
+    ComPtr<IWICBitmapDecoder> decoder;
+    hr = factory->CreateDecoderFromFilename(
+        utf8_to_wide(path).c_str(), nullptr, GENERIC_READ,
+        WICDecodeMetadataCacheOnLoad, decoder.GetAddressOf());
+    if (FAILED(hr)) return fail("the file cannot be opened or decoded");
+    ComPtr<IWICBitmapFrameDecode> frame;
+    hr = decoder->GetFrame(0, frame.GetAddressOf());
+    if (FAILED(hr)) return fail("the first image frame cannot be decoded");
+    ComPtr<IWICFormatConverter> converter;
+    hr = factory->CreateFormatConverter(converter.GetAddressOf());
+    if (FAILED(hr)) return fail("failed to create the WIC format converter");
+    hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA,
+                               WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+    if (FAILED(hr)) return fail("the image cannot be converted to RGBA");
 
-    try {
-        HRESULT hr = CoCreateInstance(
-            CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&factory));
-        if (FAILED(hr)) return fail("failed to create the WIC imaging factory");
-        hr = factory->CreateDecoderFromFilename(
-            utf8_to_wide(path).c_str(), nullptr, GENERIC_READ,
-            WICDecodeMetadataCacheOnLoad, &decoder);
-        if (FAILED(hr)) return fail("the file cannot be opened or decoded");
-        hr = decoder->GetFrame(0, &frame);
-        if (FAILED(hr)) return fail("the first image frame cannot be decoded");
-        hr = factory->CreateFormatConverter(&converter);
-        if (FAILED(hr)) return fail("failed to create the WIC format converter");
-        hr = converter->Initialize(
-            frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone,
-            nullptr, 0.0, WICBitmapPaletteTypeCustom);
-        if (FAILED(hr)) return fail("the image cannot be converted to RGBA");
+    UINT width = 0, height = 0;
+#ifndef NDEBUG
+    if (debug_fault == WicDecodeDebugFault::GetSizeHresult) return fail("failed to read image dimensions");
+#endif
+    hr = converter->GetSize(&width, &height);
+    if (FAILED(hr)) return fail("failed to read image dimensions");
+    UINT row_stride = 0;
+    size_t pixel_bytes = 0;
+    if (!checked_rgba_image_layout(width, height, row_stride, pixel_bytes, error)) return false;
 
-        UINT width = 0;
-        UINT height = 0;
-        hr = debug_fault == WicDecodeDebugFault::GetSizeHresult
-            ? E_FAIL : converter->GetSize(&width, &height);
-        if (FAILED(hr)) return fail("failed to read image dimensions");
-        UINT row_stride = 0;
-        size_t pixel_bytes = 0;
-        if (!checked_rgba_image_layout(
-                width, height, row_stride, pixel_bytes, error)) {
-            release_wic();
-            return false;
-        }
-
-        if (debug_fault == WicDecodeDebugFault::Allocation) {
-            throw std::bad_alloc();
-        }
-        std::vector<unsigned char> pixels(pixel_bytes);
-        hr = converter->CopyPixels(
-            nullptr, row_stride, static_cast<UINT>(pixel_bytes), pixels.data());
-        if (FAILED(hr)) return fail("failed to copy image pixels");
-        release_wic();
-
-        DecodedRgbaImage next;
-        next.width = width;
-        next.height = height;
-        next.pixels = std::move(pixels);
-        decoded = std::move(next);
-        error.clear();
-        return true;
-    } catch (const std::bad_alloc&) {
-        return fail("memory allocation failed while decoding the image");
-    } catch (const std::exception& exception) {
-        release_wic();
-        error = exception.what();
-        return false;
-    } catch (...) {
-        return fail("an unknown error occurred while decoding the image");
-    }
+#ifndef NDEBUG
+    if (debug_fault == WicDecodeDebugFault::Allocation) throw std::bad_alloc();
+#endif
+    std::vector<unsigned char> pixels(pixel_bytes);
+    hr = converter->CopyPixels(nullptr, row_stride, static_cast<UINT>(pixel_bytes), pixels.data());
+    if (FAILED(hr)) return fail("failed to copy image pixels");
+    decoded = {width, height, std::move(pixels)};
+    error.clear();
+    return true;
+} catch (const std::bad_alloc&) {
+    error = "memory allocation failed while decoding the image";
+    return false;
+} catch (const std::exception& exception) {
+    error = exception.what();
+    return false;
 }
 
 } // namespace
@@ -388,7 +365,8 @@ bool App::debug_background_drag_contract(const std::filesystem::path& directory,
 
 bool App::debug_background_texture_contract(ID3D11Device* device,
                                              const std::string& image_path,
-                                             std::ostream& out) {
+                                             std::ostream& out,
+                                             bool test_pointer_drag) {
     bool passed = true;
     const auto check = [&](const char* name, bool value) {
         out << "background_" << name << '=' << (value ? "PASS" : "FAIL") << '\n';
@@ -506,8 +484,10 @@ bool App::debug_background_texture_contract(ID3D11Device* device,
             app.bg_image_.srv != previous.value && app.bg_image_.brightness == 150 &&
             pixel(app.bg_image_.srv) == std::array<unsigned char, 4>{120, 60, 30, 255});
 
-        HeldView drag_texture(app.bg_image_.srv);
-        passed = app.debug_background_drag_contract(fixture.directory, out) && passed;
+        if (test_pointer_drag) {
+            HeldView drag_texture(app.bg_image_.srv);
+            passed = app.debug_background_drag_contract(fixture.directory, out) && passed;
+        }
 
         // Same pixel data, build and Apply path for before/after measurements.
         app.bg_image_.release();
@@ -723,15 +703,18 @@ bool App::rebuild_background_texture() {
     if (bg_image_.srv && bg_image_.brightness == brightness) return true;
 
     try {
-        std::vector<unsigned char> adjusted = bg_image_.pixels_rgba;
-        const double mul = brightness / 100.0;
-        for (size_t i = 0; i + 3 < adjusted.size(); i += 4) {
-            adjusted[i + 0] = static_cast<unsigned char>(
-                std::clamp(adjusted[i + 0] * mul, 0.0, 255.0));
-            adjusted[i + 1] = static_cast<unsigned char>(
-                std::clamp(adjusted[i + 1] * mul, 0.0, 255.0));
-            adjusted[i + 2] = static_cast<unsigned char>(
-                std::clamp(adjusted[i + 2] * mul, 0.0, 255.0));
+        const unsigned char* pixels = bg_image_.pixels_rgba.data();
+        std::vector<unsigned char> adjusted;
+        if (brightness != 100.0) {
+            adjusted = bg_image_.pixels_rgba;
+            const double mul = brightness / 100.0;
+            for (size_t i = 0; i < adjusted.size(); i += 4) {
+                for (size_t channel = 0; channel < 3; ++channel) {
+                    auto& component = adjusted[i + channel];
+                    component = static_cast<unsigned char>(std::clamp(component * mul, 0.0, 255.0));
+                }
+            }
+            pixels = adjusted.data();
         }
 
         D3D11_TEXTURE2D_DESC desc = {};
@@ -744,31 +727,29 @@ bool App::rebuild_background_texture() {
         desc.Usage = D3D11_USAGE_DEFAULT;
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         D3D11_SUBRESOURCE_DATA sub = {};
-        sub.pSysMem = adjusted.data();
+        sub.pSysMem = pixels;
         sub.SysMemPitch = row_stride;
-        ID3D11Texture2D* texture = nullptr;
-        HRESULT hr = device_->CreateTexture2D(&desc, &sub, &texture);
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+        HRESULT hr = device_->CreateTexture2D(&desc, &sub, texture.GetAddressOf());
         if (FAILED(hr)) {
             KME_ADD_LOG("[ERROR] Failed to rebuild background image texture: "
                     "Direct3D texture creation failed");
             return false;
         }
 
-        ID3D11ShaderResourceView* new_srv = nullptr;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> new_srv;
         D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
         srv_desc.Format = desc.Format;
         srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         srv_desc.Texture2D.MipLevels = 1;
-        hr = device_->CreateShaderResourceView(texture, &srv_desc, &new_srv);
-        texture->Release();
+        hr = device_->CreateShaderResourceView(texture.Get(), &srv_desc, new_srv.GetAddressOf());
         if (FAILED(hr)) {
-            release_com(new_srv);
             KME_ADD_LOG("[ERROR] Failed to rebuild background image texture: "
                     "Direct3D shader-resource-view creation failed");
             return false;
         }
         release_com(bg_image_.srv);
-        bg_image_.srv = new_srv;
+        bg_image_.srv = new_srv.Detach();
         bg_image_.brightness = brightness;
         return true;
     } catch (const std::exception& error) {

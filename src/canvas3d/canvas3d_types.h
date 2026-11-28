@@ -234,16 +234,18 @@ struct SceneModelLoadGroup {
 struct ScenePutBetweenPreviewJob {
     std::uint64_t sequence = 0;
     size_t geometry_generation = 0;
-    Canvas3DPlacementEditTarget target;
     SceneModelLoadRequest request;
 };
 
 struct ScenePutBetweenPreviewResult {
+    enum class Failure { None, Allocation, Exception, WorkerExited };
+
     std::uint64_t sequence = 0;
     size_t geometry_generation = 0;
-    Canvas3DPlacementEditTarget target;
     std::shared_ptr<const CpuModelData> source;
     CpuModelData derived;
+    Failure failure = Failure::None;
+    std::exception_ptr exception;
 };
 
 struct ScenePutBetweenPreparedSource {
@@ -353,6 +355,17 @@ struct SceneGizmoHandle {
     std::array<DVec3, 3> axes{};
     std::array<bool, 3> enabled{{true, true, true}};
     std::array<SceneGizmoAxisProjection, 3> projection{};
+};
+
+struct SceneViewProjection {
+    int width;
+    int height;
+    DVec3 camera_origin;
+    Vec3 forward;
+    Mat4 view;
+    Mat4 view_projection;
+    float aspect;
+    double window_forward_m;
 };
 
 struct SceneRotationRing {

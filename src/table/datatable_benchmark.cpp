@@ -5,14 +5,15 @@
 
 #include "kme.h"
 #include "app_settings.h"
+#include "datatable_internal.h"
 #include "debug_headless.h"
 #include "maploader.h"
 #include "text_decoder.h"
 
 #include "implot.h"
 
-#include <windows.h>
-#include <objbase.h>
+#include <d3d11.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <chrono>
@@ -133,8 +134,13 @@ CacheSummary summarize_table_cache(const TableUiCache& cache) {
     hash_cached_rows(hash, cache.section_speed_limit_rows, summary);
     hash.integer(static_cast<std::uint64_t>(cache.section_begin_value_columns));
     hash.integer(static_cast<std::uint64_t>(cache.section_speed_limit_value_columns));
+    for (const auto* headers : {&cache.section_begin_value_headers, &cache.section_speed_limit_value_headers}) {
+        hash.integer(static_cast<std::uint64_t>(headers->size()));
+        for (const auto& header : *headers) hash_string(hash, header);
+    }
 
     hash.integer(static_cast<std::uint64_t>(cache.variable_rows.size()));
+    hash.byte(cache.has_multiline_variable_values ? 1 : 0);
     summary.rows += cache.variable_rows.size();
     for (const CachedVariableRow& row : cache.variable_rows) {
         hash.byte(row.group_header ? 1 : 0);
@@ -142,8 +148,10 @@ CacheSummary summarize_table_cache(const TableUiCache& cache) {
         hash_string(hash, row.value);
         hash_string(hash, row.expression);
         hash_string(hash, row.file_path);
+        hash_string(hash, row.file_name);
     }
 
+    hash_cached_rows(hash, cache.creator_message_rows, summary);
     hash_cached_rows(hash, cache.repeater_rows, summary);
     for (const CachedRepeaterRow& row : cache.repeater_rows) {
         hash.integer(static_cast<std::uint64_t>(row.structure_keys.size()));
@@ -323,18 +331,8 @@ double elapsed_ms(std::chrono::steady_clock::time_point start) {
 int App::run_debug_headless_table_cache_benchmark(
     const HeadlessTableCacheBenchmarkOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(fs::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: "
-                      << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::BinaryWithBom);
+    if (!out) return 1;
 
     *out << "komapedit debug-headless-table-cache-bench\n"
          << "build=Debug repeat=" << options.repeat
@@ -344,13 +342,18 @@ int App::run_debug_headless_table_cache_benchmark(
     out->flush();
 
     int exit_code = 0;
-    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const ScopedComApartment apartment;
     SourceBytes protected_sources;
     bool source_integrity = false;
 
     try {
-        require_benchmark(SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE,
-                          "COM initialization failed");
+        require_benchmark(apartment.ready(), "COM initialization failed");
+        Microsoft::WRL::ComPtr<ID3D11Device> device;
+        Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+        const char* driver = nullptr;
+        require_benchmark(create_headless_d3d_device(
+                              *device.GetAddressOf(), *context.GetAddressOf(), driver),
+                          "D3D11CreateDevice failed");
         ImGui::CreateContext();
         ImPlot::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
@@ -382,7 +385,7 @@ int App::run_debug_headless_table_cache_benchmark(
             UserSettings settings;
             settings.language = Language::En;
             settings.edit_mode_enabled = true;
-            App app(nullptr, settings, 1.0f, false, false);
+            App app(device.Get(), settings, 1.0f, false, false);
             *out << "stage=app-created\n";
             out->flush();
             app.handle_ = loaded.handle;
@@ -558,6 +561,52 @@ int App::run_debug_headless_table_cache_benchmark(
             print_summary("cold_cache", cold_samples);
             print_summary("hot_cache", hot_samples);
             print_summary("render", render_samples);
+
+            auto& find = app.structure_model_find_;
+            constexpr size_t key_column = datatable_internal::k_structure_model_key_column;
+            const auto check_find = [&](const std::vector<CachedTableRow>& models, std::ostream& log) {
+                const auto model = std::find_if(models.begin(), models.end(), [&](const CachedTableRow& row) {
+                    return !blank_ascii(row.cells[key_column]) && row.cells[key_column].size() < sizeof(find.query);
+                });
+                if (model == models.end()) {
+                    log << "structure_model_find=SKIP reason="
+                        << (models.empty() ? "no_structure_rows" : "no_queryable_key") << '\n';
+                    return true;
+                }
+                const auto row_index = static_cast<size_t>(model - models.begin());
+                const auto matched = [&]() {
+                    return std::find(find.matches.begin(), find.matches.end(), row_index) != find.matches.end();
+                };
+                std::string query = model->cells[key_column];
+                for (char& ch : query) {
+                    if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
+                }
+                ImGui::NewFrame();
+                datatable_internal::set_exact_table_find_query(find, query);
+                app.run_structure_model_find();
+                const bool exact_match = matched();
+                find.exact = false;
+                app.run_structure_model_find();
+                const bool partial_match = matched();
+                find.query[0] = '\0';
+                app.run_structure_model_find();
+                const bool query_reset = find.has_run && find.matches.empty() && find.current == -1;
+                ImGui::EndFrame();
+                const bool ok = exact_match && partial_match && query_reset;
+                log << "structure_model_find=" << (ok ? "PASS" : "FAIL") << '\n';
+                return ok;
+            };
+            require_benchmark(check_find(app.table_cache_.structure_model_rows, *out),
+                              "structure table search differed");
+            std::vector<CachedTableRow> long_key(1);
+            long_key.front().cells.resize(key_column + 1);
+            long_key.front().cells[key_column].assign(sizeof(find.query), 'A');
+            std::ostringstream skipped;
+            require_benchmark(check_find({}, skipped) && check_find(long_key, skipped) &&
+                skipped.str() == "structure_model_find=SKIP reason=no_structure_rows\n"
+                                 "structure_model_find=SKIP reason=no_queryable_key\n",
+                "structure table search skip differed");
+            *out << "structure_model_find_skip_contract=PASS\n";
         }
 
         source_integrity = verify_sources(protected_sources, *out);
@@ -581,7 +630,6 @@ int App::run_debug_headless_table_cache_benchmark(
 
     if (ImPlot::GetCurrentContext()) ImPlot::DestroyContext();
     if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
-    if (SUCCEEDED(apartment)) CoUninitialize();
     *out << "result=" << (exit_code == 0 ? "PASS" : "FAIL") << "\n";
     out->flush();
     return exit_code;

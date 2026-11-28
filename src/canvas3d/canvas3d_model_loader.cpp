@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <map>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <limits>
@@ -44,10 +45,20 @@ constexpr size_t k_scene_model_max_workers = 8;
 
 namespace canvas3d_detail {
 
+std::vector<GpuVertex> copy_model_vertices(const MlMeshData& data) {
+    std::vector<GpuVertex> vertices;
+    vertices.reserve(data.vertex_count);
+    for (size_t i = 0; i < data.vertex_count; ++i) {
+        const auto& vertex = data.vertices[i];
+        vertices.push_back({vertex.px, vertex.py, vertex.pz, vertex.nx, vertex.ny, vertex.nz,
+                            vertex.u, vertex.v});
+    }
+    return vertices;
+}
+
 float normalize_material_alpha(float value) {
-    float alpha = clamp_color_component(value);
     // BVE .x models commonly use 0.99/0.999999 for opaque alpha-tested textures.
-    return alpha >= k_material_opaque_alpha_threshold ? 1.0f : alpha;
+    return value >= k_material_opaque_alpha_threshold ? 1.0f : value;
 }
 static bool texture_pixels_have_alpha(const std::vector<unsigned char>& pixels) {
     for (size_t i = 3; i < pixels.size(); i += 4) {
@@ -77,18 +88,13 @@ std::string hresult_text(const char* action, HRESULT hr) {
     return message;
 }
 static std::string normalized_texture_cache_key(const std::string& path) {
-    try {
-        std::filesystem::path normalized = utf8_to_wide(path);
+    std::filesystem::path normalized = utf8_to_wide(path);
+    if (normalized.is_relative()) {
         std::error_code ec;
-        if (normalized.is_relative()) {
-            std::filesystem::path absolute = std::filesystem::absolute(normalized, ec);
-            if (!ec) normalized = std::move(absolute);
-        }
-        std::string key = wide_to_utf8(normalized.lexically_normal().wstring());
-        return key.empty() ? path : key;
-    } catch (...) {
-        return path;
+        auto absolute = std::filesystem::absolute(normalized, ec);
+        if (!ec) normalized = std::move(absolute);
     }
+    return wide_to_utf8(normalized.lexically_normal().native());
 }
 
 static size_t scene_model_worker_count_for(size_t source_count) {
@@ -196,9 +202,9 @@ bool Canvas3D::Impl::load_texture(const std::string& path,
         const size_t pixel_bytes = static_cast<size_t>(row_stride) * height;
 #ifndef NDEBUG
         int remaining =
-            debug_texture_allocation_throw_countdown.load(std::memory_order_relaxed);
+            debug_faults.texture_allocation_throw_countdown.load(std::memory_order_relaxed);
         while (remaining > 0 &&
-               !debug_texture_allocation_throw_countdown.compare_exchange_weak(
+               !debug_faults.texture_allocation_throw_countdown.compare_exchange_weak(
                    remaining, remaining - 1, std::memory_order_relaxed)) {
         }
         if (remaining == 1) throw std::bad_alloc();
@@ -308,7 +314,7 @@ void Canvas3D::Impl::release_scene_model(SceneModelGpu& model) {
     model.radius = 1.0f;
 }
 
-void Canvas3D::Impl::notify_scene_loading_progress() {
+void Canvas3D::Impl::notify_scene_loading_progress() noexcept {
     if (!wake_callback) return;
     bool expected = false;
     if (!scene_wake_pending.compare_exchange_strong(expected, true)) return;
@@ -339,9 +345,9 @@ void Canvas3D::Impl::stop_scene_loader() {
 
 CpuModelData Canvas3D::Impl::copy_cpu_model(const std::string& path, const MlMeshData& data) {
 #ifndef NDEBUG
-    int remaining = debug_copy_cpu_model_throw_countdown.load(std::memory_order_relaxed);
+    int remaining = debug_faults.copy_cpu_model_throw_countdown.load(std::memory_order_relaxed);
     while (remaining > 0 &&
-           !debug_copy_cpu_model_throw_countdown.compare_exchange_weak(
+           !debug_faults.copy_cpu_model_throw_countdown.compare_exchange_weak(
                remaining, remaining - 1, std::memory_order_relaxed)) {
     }
     if (remaining == 1) {
@@ -355,14 +361,7 @@ CpuModelData Canvas3D::Impl::copy_cpu_model(const std::string& path, const MlMes
     out.bounds_max = {data.bounds_max[0], data.bounds_max[1], data.bounds_max[2]};
     out.center = {data.center[0], data.center[1], data.center[2]};
     out.radius = data.radius;
-    out.vertices.resize(data.vertex_count);
-    for (size_t i = 0; i < data.vertex_count; ++i) {
-        out.vertices[i] = {
-            data.vertices[i].px, data.vertices[i].py, data.vertices[i].pz,
-            data.vertices[i].nx, data.vertices[i].ny, data.vertices[i].nz,
-            data.vertices[i].u, data.vertices[i].v
-        };
-    }
+    out.vertices = copy_model_vertices(data);
     out.indices.assign(data.indices, data.indices + data.index_count);
     out.parts.reserve(data.part_count);
     for (size_t i = 0; i < data.part_count; ++i) {
@@ -390,7 +389,7 @@ void Canvas3D::Impl::log_scene_worker_failure(
     std::initializer_list<std::string_view> fragments) noexcept {
     try {
 #ifndef NDEBUG
-        if (debug_scene_log_failure.exchange(false)) throw std::bad_alloc();
+        if (debug_faults.log_failure.exchange(false)) throw std::bad_alloc();
 #endif
         std::string message;
         for (std::string_view fragment : fragments) message.append(fragment);
@@ -398,12 +397,18 @@ void Canvas3D::Impl::log_scene_worker_failure(
     } catch (...) {}
 }
 
+bool Canvas3D::Impl::load_scene_model_data(const std::string& path, MlMeshData& data, std::string& error) {
+    const auto status = ModelLoaderClient::load(path, data, error);
+    if (status == ML_LOAD_WHITE_MATERIAL) log_scene_worker_failure({k_white_model_warning, path});
+    return status != ML_LOAD_FAILED;
+}
+
 void Canvas3D::Impl::build_scene_model_group(SceneModelLoadGroup& group) {
     const std::string& path = group.requests.front().source_path;
     CpuModelData source;
     {
         MlMeshData data{};
-        if (!ModelLoaderClient::load(path, data, group.error)) return;
+        if (!load_scene_model_data(path, data, group.error)) return;
         ModelDataGuard guard(data);
         source = copy_cpu_model(path, data);
     }
@@ -506,7 +511,7 @@ void Canvas3D::Impl::start_scene_model_worker(std::vector<SceneModelLoadRequest>
                 for (; started + 1 < worker_count; ++started) {
                     try {
 #ifndef NDEBUG
-                        if (started + 1 == debug_helper_start_failure_at.load()) {
+                        if (started + 1 == debug_faults.helper_start_failure_at.load()) {
                             throw std::runtime_error("debug injected helper thread start failure");
                         }
 #endif
@@ -566,133 +571,130 @@ bool Canvas3D::Impl::upload_scene_model(const CpuModelData& cpu, std::string& er
     const std::string& scene_key = cpu.scene_key.empty() ? cpu.path : cpu.scene_key;
     auto it = scene_models.find(scene_key);
     if (it == scene_models.end()) return true;
-    SceneModelGpu& model = it->second;
-    release_scene_model(model);
-    auto fail_upload = [&](const std::string& message) {
-        release_scene_model(model);
-        model.state = SceneModelGpu::State::Failed;
-        model.error = message;
-        error = message;
+    auto& current = it->second;
+    SceneModelGpu model;
+    model.preview_only = current.preview_only;
+    const auto release = [this](SceneModelGpu* pending) { release_scene_model(*pending); };
+    const std::unique_ptr<SceneModelGpu, decltype(release)> cleanup(&model, release);
+    const auto mark_failed = [&](std::string_view message) {
+        if (current.state == SceneModelGpu::State::Ready) return;
+        current.state = SceneModelGpu::State::Failed;
+        current.error = message;
+    };
+    const auto fail_upload = [&](std::string message) {
+        mark_failed(message);
+        error = std::move(message);
+        return false;
+    };
+    const auto report_exception = [&](std::string_view message) {
+        if (current.state != SceneModelGpu::State::Ready) current.state = SceneModelGpu::State::Failed;
+        log_scene_worker_failure({"[warn]canvas3D.cpp: Failed to upload scene model ", cpu.path, ": ", message});
         return false;
     };
     try {
-    if (!cpu.ok) {
-        model.state = SceneModelGpu::State::Failed;
-        model.error = cpu.error.empty() ? "model load failed" : cpu.error;
-        return true;
-    }
-    if (cpu.vertices.size() > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(GpuVertex)) ||
-        cpu.indices.size() > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(unsigned int))) {
-        model.state = SceneModelGpu::State::Failed;
-        model.error = "model is too large for a Direct3D 11 buffer";
-        return true;
-    }
-
-    const SceneModelGpu* shared_model = nullptr;
-    if (!cpu.shared_model_key.empty()) {
-        auto shared_it = scene_models.find(cpu.shared_model_key);
-        if (shared_it == scene_models.end() ||
-            shared_it->second.state != SceneModelGpu::State::Ready ||
-            !shared_it->second.index_buffer) {
-            model.state = SceneModelGpu::State::Failed;
-            model.error = "PutBetween base model is not ready";
+        if (!cpu.ok) {
+            mark_failed(cpu.error.empty() ? "model load failed" : cpu.error);
             return true;
         }
-        shared_model = &shared_it->second;
-    }
-
-    D3D11_BUFFER_DESC vb_desc = {};
-    vb_desc.ByteWidth = static_cast<UINT>(cpu.vertices.size() * sizeof(GpuVertex));
-    vb_desc.Usage = D3D11_USAGE_DEFAULT;
-    vb_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA vb_data = {};
-    vb_data.pSysMem = cpu.vertices.data();
-    HRESULT hr = device->CreateBuffer(&vb_desc, &vb_data, &model.vertex_buffer);
-    if (FAILED(hr)) {
-        return fail_upload(hresult_text("CreateBuffer(scene vertex)", hr));
-    }
-
-    if (shared_model) {
-        model.index_buffer = shared_model->index_buffer;
-        model.index_buffer->AddRef();
-        model.parts = shared_model->parts;
-        model.materials = shared_model->materials;
-        for (GpuMaterial& material : model.materials) {
-            if (material.texture) material.texture->AddRef();
+        if (cpu.vertices.size() > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(GpuVertex)) ||
+            cpu.indices.size() > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(unsigned int))) {
+            mark_failed("model is too large for a Direct3D 11 buffer");
+            return true;
         }
-        model.index_count = shared_model->index_count;
-    } else {
-        D3D11_BUFFER_DESC ib_desc = {};
-        ib_desc.ByteWidth = static_cast<UINT>(cpu.indices.size() * sizeof(unsigned int));
-        ib_desc.Usage = D3D11_USAGE_DEFAULT;
-        ib_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA ib_data = {};
-        ib_data.pSysMem = cpu.indices.data();
-#ifndef NDEBUG
-        int remaining =
-            debug_scene_index_buffer_failure_countdown.load(std::memory_order_relaxed);
-        while (remaining > 0 &&
-               !debug_scene_index_buffer_failure_countdown.compare_exchange_weak(
-                   remaining, remaining - 1, std::memory_order_relaxed)) {
+
+        const SceneModelGpu* shared_model = nullptr;
+        if (!cpu.shared_model_key.empty()) {
+            auto shared_it = scene_models.find(cpu.shared_model_key);
+            if (shared_it == scene_models.end() ||
+                shared_it->second.state != SceneModelGpu::State::Ready ||
+                !shared_it->second.index_buffer) {
+                mark_failed("PutBetween base model is not ready");
+                return true;
+            }
+            shared_model = &shared_it->second;
         }
-        hr = remaining == 1
-            ? E_FAIL
-            : device->CreateBuffer(&ib_desc, &ib_data, &model.index_buffer);
-#else
-        hr = device->CreateBuffer(&ib_desc, &ib_data, &model.index_buffer);
-#endif
+
+        D3D11_BUFFER_DESC vb_desc = {};
+        vb_desc.ByteWidth = static_cast<UINT>(cpu.vertices.size() * sizeof(GpuVertex));
+        vb_desc.Usage = D3D11_USAGE_DEFAULT;
+        vb_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vb_data = {};
+        vb_data.pSysMem = cpu.vertices.data();
+        HRESULT hr = device->CreateBuffer(&vb_desc, &vb_data, &model.vertex_buffer);
         if (FAILED(hr)) {
-            return fail_upload(hresult_text("CreateBuffer(scene index)", hr));
+            return fail_upload(hresult_text("CreateBuffer(scene vertex)", hr));
         }
 
-        model.parts = cpu.parts;
-        model.materials.resize(cpu.materials.size());
-        for (size_t i = 0; i < cpu.materials.size(); ++i) {
-            const CpuMaterial& src = cpu.materials[i];
-            GpuMaterial& material = model.materials[i];
-            std::copy_n(src.diffuse, 4, material.diffuse);
-            if (!src.texture_path.empty()) {
-                std::string texture_error;
-                bool texture_has_alpha = false;
-                if (load_scene_texture(src.texture_path, &material.texture,
-                                       texture_error, &texture_has_alpha)) {
-                    material.has_texture = true;
-                    material.texture_has_alpha = texture_has_alpha;
-                } else {
-                    if (scene_last_error.empty()) scene_last_error = texture_error;
-                    const std::string texture_key =
-                        normalized_texture_cache_key(src.texture_path);
-                    if (scene_texture_warning_keys.insert(texture_key).second) {
-                        push_scene_load_log(
-                            "[WARN]canvas3D.cpp: scene texture warning: model=" +
-                            cpu.path + "; " + texture_error);
+        if (shared_model) {
+            model.index_buffer = shared_model->index_buffer;
+            model.index_buffer->AddRef();
+            model.parts = shared_model->parts;
+            model.materials = shared_model->materials;
+            for (GpuMaterial& material : model.materials) {
+                if (material.texture) material.texture->AddRef();
+            }
+            model.index_count = shared_model->index_count;
+        } else {
+            D3D11_BUFFER_DESC ib_desc = {};
+            ib_desc.ByteWidth = static_cast<UINT>(cpu.indices.size() * sizeof(unsigned int));
+            ib_desc.Usage = D3D11_USAGE_DEFAULT;
+            ib_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+            D3D11_SUBRESOURCE_DATA ib_data = {};
+            ib_data.pSysMem = cpu.indices.data();
+#ifndef NDEBUG
+            int remaining =
+                debug_faults.index_buffer_failure_countdown.load(std::memory_order_relaxed);
+            while (remaining > 0 &&
+                   !debug_faults.index_buffer_failure_countdown.compare_exchange_weak(
+                       remaining, remaining - 1, std::memory_order_relaxed)) {
+            }
+            hr = remaining == 1
+                ? E_FAIL
+                : device->CreateBuffer(&ib_desc, &ib_data, &model.index_buffer);
+#else
+            hr = device->CreateBuffer(&ib_desc, &ib_data, &model.index_buffer);
+#endif
+            if (FAILED(hr)) {
+                return fail_upload(hresult_text("CreateBuffer(scene index)", hr));
+            }
+
+            model.parts = cpu.parts;
+            model.materials.resize(cpu.materials.size());
+            for (size_t i = 0; i < cpu.materials.size(); ++i) {
+                const CpuMaterial& src = cpu.materials[i];
+                GpuMaterial& material = model.materials[i];
+                std::copy_n(src.diffuse, 4, material.diffuse);
+                if (!src.texture_path.empty()) {
+                    std::string texture_error;
+                    bool texture_has_alpha = false;
+                    if (load_scene_texture(src.texture_path, &material.texture,
+                                           texture_error, &texture_has_alpha)) {
+                        material.has_texture = true;
+                        material.texture_has_alpha = texture_has_alpha;
+                    } else {
+                        const std::string texture_key =
+                            normalized_texture_cache_key(src.texture_path);
+                        if (scene_texture_warning_keys.insert(texture_key).second) {
+                            push_scene_load_log(
+                                "[WARN]canvas3D.cpp: scene texture warning: model=" +
+                                cpu.path + "; " + texture_error);
+                        }
                     }
                 }
             }
+            model.index_count = static_cast<UINT>(cpu.indices.size());
         }
-        model.index_count = static_cast<UINT>(cpu.indices.size());
-    }
-    model.bounds_min = cpu.bounds_min;
-    model.bounds_max = cpu.bounds_max;
-    model.center = cpu.center;
-    model.radius = std::max(cpu.radius, 0.001f);
-    model.state = SceneModelGpu::State::Ready;
-    model.error.clear();
-    return true;
+        model.bounds_min = cpu.bounds_min;
+        model.bounds_max = cpu.bounds_max;
+        model.center = cpu.center;
+        model.radius = cpu.radius;
+        model.state = SceneModelGpu::State::Ready;
+        std::swap(current, model);
+        return true;
     } catch (const std::exception& exception) {
-        release_scene_model(model);
-        model.state = SceneModelGpu::State::Failed;
-        try {
-            model.error = "scene model upload failed: " +
-                std::string(exception.what());
-            error = model.error;
-        } catch (...) {
-            model.error = "scene model upload failed";
-            error = model.error;
-        }
-        return false;
+        return report_exception(exception.what());
     } catch (...) {
-        return fail_upload("scene model upload failed: unknown error");
+        return report_exception("unknown upload error");
     }
 }
 
@@ -736,7 +738,6 @@ void Canvas3D::Impl::upload_pending_scene_models() {
                 "[warn]canvas3D.cpp: failed to deform PutBetween model: ", cpu.path, ": ", cpu.error});
             std::string error;
             if (!upload_scene_model(cpu, error) && !error.empty()) {
-                scene_last_error = error;
                 push_scene_load_log("[warn]canvas3D.cpp: failed to upload scene model: " +
                                     cpu.path + ": " + error);
             }
@@ -774,7 +775,7 @@ const ModelLoaderApi& model_loader_api() {
             FreeLibrary(library);
             throw std::runtime_error("model_loader.dll is missing required entry points");
         }
-        if (version() != 2) {
+        if (version() != ML_API_VERSION) {
             FreeLibrary(library);
             throw std::runtime_error("model_loader.dll API version is not supported");
         }
@@ -813,18 +814,19 @@ bool ModelLoaderClient::prepare(std::string& error) {
     return bind_model_loader(error) != nullptr;
 }
 
-bool ModelLoaderClient::load(const std::string& path, MlMeshData& data, std::string& error) {
+MlModelLoadStatus ModelLoaderClient::load(const std::string& path, MlMeshData& data, std::string& error) {
     const auto* api = bind_model_loader(error);
-    if (!api) return false;
-    if (!api->load(path.c_str(), &data)) {
+    if (!api) return ML_LOAD_FAILED;
+    const auto status = static_cast<MlModelLoadStatus>(api->load(path.c_str(), &data));
+    if (status == ML_LOAD_FAILED) {
         const char* reason = api->last_error();
         error = *reason ? reason : "model_loader.dll could not load the model";
-        return false;
+        return status;
     }
 #ifndef NDEBUG
     debug_successful_load_count_.fetch_add(1, std::memory_order_relaxed);
 #endif
-    return true;
+    return status;
 }
 
 void ModelLoaderClient::free_model(MlMeshData& data) noexcept {

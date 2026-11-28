@@ -172,27 +172,21 @@ void open_parent_directory_in_explorer(const std::string& file_path,
     const auto set_error = [error](std::string message) {
         if (error) *error = std::move(message);
     };
-    try {
-        std::filesystem::path path = utf8_to_wide(file_path);
-        std::error_code ec;
-        std::filesystem::path absolute = std::filesystem::absolute(path, ec);
-        if (ec) {
-            set_error("Unable to resolve parent directory: " + file_path);
-            return;
-        }
-        path = absolute;
-        std::filesystem::path directory = path.parent_path();
-        if (directory.empty() || !std::filesystem::is_directory(directory, ec) || ec) {
-            set_error("Specified file and directory do not exist: " + file_path);
-            return;
-        }
-        const INT_PTR result = reinterpret_cast<INT_PTR>(
-            ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
-        if (result <= 32) {
-            set_error("Unable to open parent directory: " + file_path);
-        }
-    } catch (...) {
+    std::error_code ec;
+    const auto absolute = std::filesystem::absolute(utf8_to_wide(file_path), ec);
+    if (ec) {
         set_error("Unable to resolve parent directory: " + file_path);
+        return;
+    }
+    const auto directory = absolute.parent_path();
+    if (directory.empty() || !std::filesystem::is_directory(directory, ec)) {
+        set_error("Specified file and directory do not exist: " + file_path);
+        return;
+    }
+    const INT_PTR result = reinterpret_cast<INT_PTR>(
+        ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    if (result <= 32) {
+        set_error("Unable to open parent directory: " + file_path);
     }
 }
 

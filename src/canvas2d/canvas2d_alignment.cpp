@@ -72,26 +72,6 @@ std::optional<ImVec2> clipped_segment_midpoint(ImVec2 a, ImVec2 b, ImVec2 origin
     return ImVec2(a.x + fraction * (b.x - a.x), a.y + fraction * (b.y - a.y));
 }
 
-std::optional<ImVec2> radius_label_anchor(const Matrix& track, const PlanScreenTransform& transform,
-                                         double start, double end, ImVec2 origin, ImVec2 size) {
-    const auto at = [&](double distance) {
-        const auto point = sample_matrix_track_point(track, distance, true);
-        return transform.model_to_screen(point->x, point->y);
-    };
-    const ImVec2 middle = at((start + end) * 0.5);
-    if (point_near_canvas(middle, origin, size, 0.0f)) return middle;
-
-    const std::size_t first = matrix_upper_bound_distance(track, start);
-    const std::size_t last = matrix_lower_bound_distance(track, end);
-    ImVec2 a = at(start);
-    for (std::size_t row = first; row < last; ++row) {
-        const ImVec2 b = transform.model_to_screen(track.at(row, 1), track.at(row, 2));
-        if (auto anchor = clipped_segment_midpoint(a, b, origin, size)) return anchor;
-        a = b;
-    }
-    return clipped_segment_midpoint(a, at(end), origin, size);
-}
-
 } // namespace
 
 AlignmentEditor::~AlignmentEditor() {
@@ -214,7 +194,7 @@ AlignmentEditor::CurveSpans AlignmentEditor::build_spans(
             (radius == 0.0 && (!transition || inherited_radius == 0.0) && !retain_zero)) {
             continue;
         }
-        spans.items.push_back({from.value.distance, end, radius, transition,
+        spans.items.push_back({from.value.distance, end, transition,
                                owner.editable_radius ? owner.edit_id : std::string{},
                                !transition || owner.editable_radius ? format_double(radius, 6) : std::string{}});
         if (!spans.items.back().label.empty()) spans.label_order.push_back(spans.items.size() - 1);
@@ -299,7 +279,7 @@ AlignmentEditor::Preview AlignmentEditor::calculate(
 void AlignmentEditor::run() {
     std::shared_ptr<const Base> cached;
     own_track_geometry::Trace trace;
-    Matrix base_samples;
+    std::shared_ptr<const Matrix> base_samples;
     std::uint64_t cached_revision = 0;
     std::shared_ptr<const Preview> cached_preview;
     const auto publish = [&](Result result, bool geometry_computed) {
@@ -336,13 +316,14 @@ void AlignmentEditor::run() {
                 events.reserve(request.base->events.size());
                 for (const SourcedEvent& event : request.base->events) events.push_back(event.value);
                 trace = {};
-                base_samples = {own_track_geometry::sample(events, request.base->distances, &trace),
-                                request.base->distances.size(), own_track_geometry::columns};
+                base_samples = std::make_shared<Matrix>(Matrix{
+                    own_track_geometry::sample(events, request.base->distances, &trace),
+                    request.base->distances.size(), own_track_geometry::columns});
                 cached = request.base;
             }
             const bool geometry_changed = request.revision != cached_revision;
             if (geometry_changed) {
-                cached_preview = std::make_shared<Preview>(calculate(request, trace, base_samples));
+                cached_preview = std::make_shared<Preview>(calculate(request, trace, *base_samples));
                 cached_revision = request.revision;
             }
             result.preview = cached_preview;
@@ -521,16 +502,49 @@ const std::vector<AlignmentRadiusLabel>& AlignmentEditor::radius_labels(
     const Matrix& track, const PlanScreenTransform& transform,
     double distance_min, double distance_max, ImVec2 origin, ImVec2 size) {
     const auto& sections = curve_spans();
+    auto& cache = radius_label_cache_;
+    const auto preview_revision = published_ ? published_->revision : 0;
+    if (cache.track != &track || cache.source_revision != source_revision_ ||
+        cache.preview_revision != preview_revision || cache.distance_min != distance_min ||
+        cache.distance_max != distance_max) {
+        cache.candidates.clear();
+        for (const std::size_t index : sections.label_order) {
+            const auto& span = sections.items[index];
+            const double start = std::max({span.start, distance_min, track.at(0, 0)});
+            const double end = std::min({span.end, distance_max, track.at(track.rows - 1, 0)});
+            if (start >= end) continue;
+            cache.candidates.push_back({index,
+                *sample_matrix_track_point(track, start, true),
+                *sample_matrix_track_point(track, (start + end) * 0.5, true),
+                *sample_matrix_track_point(track, end, true),
+                matrix_upper_bound_distance(track, start), matrix_lower_bound_distance(track, end)});
+        }
+        cache.track = &track;
+        cache.source_revision = source_revision_;
+        cache.preview_revision = preview_revision;
+        cache.distance_min = distance_min;
+        cache.distance_max = distance_max;
+    }
+
+    const auto screen = [&](const TrackPoint& point) { return transform.model_to_screen(point.x, point.y); };
+    const auto anchor = [&](const RadiusLabelCandidate& candidate) -> std::optional<ImVec2> {
+        const ImVec2 middle = screen(candidate.middle);
+        if (point_near_canvas(middle, origin, size, 0.0f)) return middle;
+        ImVec2 a = screen(candidate.start);
+        for (std::size_t row = candidate.first_row; row < candidate.last_row; ++row) {
+            const ImVec2 b = transform.model_to_screen(track.at(row, 1), track.at(row, 2));
+            if (auto visible = clipped_segment_midpoint(a, b, origin, size)) return visible;
+            a = b;
+        }
+        return clipped_segment_midpoint(a, screen(candidate.end), origin, size);
+    };
     visible_radius_labels_.clear();
     std::string_view shown_owner;
-    for (const std::size_t index : sections.label_order) {
-        const auto& span = sections.items[index];
+    for (const auto& candidate : cache.candidates) {
+        const auto& span = sections.items[candidate.span];
         if (!span.edit_id.empty() && span.edit_id == shown_owner) continue;
-        const double start = std::max({span.start, distance_min, track.at(0, 0)});
-        const double end = std::min({span.end, distance_max, track.at(track.rows - 1, 0)});
-        if (start >= end) continue;
-        if (auto anchor = radius_label_anchor(track, transform, start, end, origin, size)) {
-            visible_radius_labels_.push_back({&span, *anchor});
+        if (auto visible = anchor(candidate)) {
+            visible_radius_labels_.push_back({&span, *visible});
             shown_owner = span.edit_id;
         }
     }

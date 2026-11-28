@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <functional>
 #include <initializer_list>
 #include <list>
 #include <mutex>
@@ -88,6 +89,7 @@ struct Canvas3D::Impl {
 
     Canvas3DSceneInteractionMode scene_interaction_mode_value() const;
 
+    bool scene_is_loading() const;
     Canvas3DSceneStats scene_stats() const;
 
     std::vector<std::string> drain_scene_load_messages();
@@ -260,7 +262,7 @@ struct Canvas3D::Impl {
 
     void release_scene_marker_chunks();
 
-    void notify_scene_loading_progress();
+    void notify_scene_loading_progress() noexcept;
 
     void build_scene_model_group(canvas3d_detail::SceneModelLoadGroup& group);
     void log_scene_worker_failure(std::initializer_list<std::string_view> fragments) noexcept;
@@ -272,10 +274,14 @@ struct Canvas3D::Impl {
     void stop_scene_loader();
 
     canvas3d_detail::CpuModelData copy_cpu_model(const std::string& path, const MlMeshData& data);
+    bool load_scene_model_data(const std::string& path, MlMeshData& data, std::string& error);
 
-    void start_scene_put_between_preview_worker();
+    void run_scene_put_between_preview_worker();
+    std::uint64_t submit_scene_put_between_preview_job(
+        canvas3d_detail::ScenePutBetweenPreviewJob job);
 
     void stop_scene_put_between_preview_worker();
+    void discard_scene_put_between_preview_request();
 
     std::uint64_t queue_scene_put_between_preview(
         const Canvas3DPlacementEditTarget& target);
@@ -288,7 +294,6 @@ struct Canvas3D::Impl {
     void start_scene_model_worker(std::vector<canvas3d_detail::SceneModelLoadRequest> requests);
 
 #ifndef NDEBUG
-    void debug_record_scene_world(const std::string& path, int object, double distance, const double* world);
     bool debug_check_repeater_cache();
     bool debug_check_scene_fps_counter(std::string& error);
     bool debug_check_scene_rotation_gizmo();
@@ -299,6 +304,9 @@ struct Canvas3D::Impl {
     Canvas3DSceneLoaderContractResult debug_run_scene_loader_contract(
         const std::string& valid_model_path,
         const std::string& valid_texture_path);
+    bool debug_check_put_between_preview_worker(const std::string& valid_model_path);
+    bool debug_check_put_between_preview_refresh(const std::string& valid_model_path);
+    bool debug_check_background_order(const std::string& valid_model_path);
 #endif
 
     void maybe_log_scene_model_load_summary();
@@ -316,6 +324,7 @@ struct Canvas3D::Impl {
     void upload_pending_scene_models();
 
     bool ensure_scene_outline_pipeline(std::string& error);
+    bool ensure_scene_mesh_pipeline(std::string& error);
 
     bool ensure_scene_pick_pipeline(std::string& error);
 
@@ -647,9 +656,9 @@ struct Canvas3D::Impl {
 
     bool ensure_render_target(int width, int height, std::string& error);
 
-    bool ensure_scene_highlight_mask_target(int width, int height, std::string& error);
+    bool ensure_scene_highlight_mask_target(std::string& error);
 
-    bool ensure_scene_pick_target(int width, int height, std::string& error);
+    bool ensure_scene_pick_target(std::string& error);
 
     canvas3d_detail::Vec3 scene_forward() const;
 
@@ -759,14 +768,13 @@ struct Canvas3D::Impl {
     static float point_segment_distance_sq(ImVec2 point, ImVec2 a, ImVec2 b,
                                            float* segment_fraction = nullptr);
 
-    canvas3d_detail::Mat4 scene_gizmo_view_projection(int width, int height) const;
+    canvas3d_detail::SceneViewProjection scene_view_projection(int width, int height) const;
 
     bool update_scene_gizmo_projection(canvas3d_detail::SceneGizmoHandle& gizmo,
                                        bool visible,
-                                       int width,
-                                       int height);
+                                       const canvas3d_detail::SceneViewProjection& view);
 
-    bool update_scene_structure_gizmo_projections(int width, int height);
+    bool update_scene_structure_gizmo_projections(const canvas3d_detail::SceneViewProjection& view);
 
     canvas3d_detail::SceneGizmoHandle* scene_gizmo_handle(canvas3d_detail::SceneGizmoTarget target);
 
@@ -778,7 +786,7 @@ struct Canvas3D::Impl {
     bool scene_placement_rotation_available() const;
     std::optional<Canvas3DPlacementGizmoMode> scene_placement_gizmo_mode() const;
     bool set_scene_placement_gizmo_mode(Canvas3DPlacementGizmoMode mode);
-    bool update_scene_rotation_projection(int width, int height);
+    bool update_scene_rotation_projection(const canvas3d_detail::SceneViewProjection& view);
     struct SceneRotationHit {
         Canvas3DSceneDragAxis axis;
         float nearest_distance_sq;
@@ -804,7 +812,7 @@ struct Canvas3D::Impl {
                                  canvas3d_detail::SceneGizmoTarget target);
 
     void draw_scene_structure_gizmo(ImDrawList* draw, ImVec2 canvas_origin,
-                                    int width, int height);
+                                    const canvas3d_detail::SceneViewProjection& view);
 
     void handle_scene_input(bool hovered, bool block_left_drag);
 
@@ -816,7 +824,7 @@ struct Canvas3D::Impl {
 
     float scene_far_z(double window_forward_m) const;
 
-    void render_scene_preview_target(int width, int height, ImVec2 mouse_local,
+    void render_scene_preview_target(const canvas3d_detail::SceneViewProjection& view, ImVec2 mouse_local,
                                      bool pick_enabled,
                                      bool mileage_pick_enabled);
 
@@ -951,8 +959,6 @@ struct Canvas3D::Impl {
     UINT index_count = 0;
     int render_width = 0;
     int render_height = 0;
-    canvas3d_detail::Vec3 bounds_min;
-    canvas3d_detail::Vec3 bounds_max;
     canvas3d_detail::Vec3 center;
     float radius = 1.0f;
     float yaw = 0.0f;
@@ -963,7 +969,6 @@ struct Canvas3D::Impl {
     std::string model_path_value;
     std::vector<std::string> model_load_warnings;
     ImVec4 background_color_value = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
-    std::string last_error;
     Canvas3DScene scene_data;
     scene_track_sampling::PlacementTrackLookup scene_placement_tracks;
     size_t scene_geometry_generation = 0;
@@ -974,8 +979,7 @@ struct Canvas3D::Impl {
     size_t debug_scene_fog_draw_part_count = 0;
     mutable SceneFrameProfiler scene_frame_profiler;
     bool debug_scene_reference = false;
-    bool debug_scene_capture = false;
-    std::uint64_t debug_scene_signature = 0;
+    SceneInstanceSignature debug_scene_signature;
 #endif
     std::vector<canvas3d_detail::SceneChunk> scene_chunks;
     // Cleared with chunks, invalidated by Repeater writes (both old/new ranges)
@@ -1029,13 +1033,13 @@ struct Canvas3D::Impl {
     std::atomic<bool> scene_cancel{false};
     std::atomic<bool> scene_worker_running{false};
     std::atomic<size_t> scene_model_worker_count_value{0};
+    enum class PutBetweenPreviewWorkerState { Stopped, Running, Exited };
     std::thread scene_put_between_preview_worker;
     std::mutex scene_put_between_preview_mutex;
     std::condition_variable scene_put_between_preview_cv;
-    bool scene_put_between_preview_stop = false;
+    PutBetweenPreviewWorkerState scene_put_between_preview_state = PutBetweenPreviewWorkerState::Stopped;
     std::optional<canvas3d_detail::ScenePutBetweenPreviewJob> scene_put_between_preview_pending;
     std::optional<canvas3d_detail::ScenePutBetweenPreviewResult> scene_put_between_preview_completed;
-    std::uint64_t scene_put_between_preview_next_sequence = 0;
     std::uint64_t scene_put_between_preview_latest_sequence = 0;
     canvas3d_detail::DVec3 scene_camera_pos;
     float scene_camera_yaw = 0.0f;
@@ -1073,16 +1077,20 @@ struct Canvas3D::Impl {
     bool scene_performance_warning_enabled = true;
     size_t scene_instance_warning_threshold = 3000;
     size_t scene_instance_critical_warning_threshold = 5000;
-    std::string scene_last_error;
     Canvas3DSceneStats scene_stats_value;
     SceneFpsCounter scene_fps_counter;
 #ifndef NDEBUG
-    std::atomic<int> debug_copy_cpu_model_throw_countdown{0};
-    std::atomic<bool> debug_scene_log_failure{false};
-    std::atomic<size_t> debug_helper_start_failure_at{0};
-    std::atomic<int> debug_texture_allocation_throw_countdown{0};
-    std::atomic<int> debug_scene_index_buffer_failure_countdown{0};
-    bool debug_scene_marker_compile_failure = false;
-    int debug_scene_marker_map_failure_countdown = 0;
+    struct SceneDebugFaults {
+        bool put_between_start_failure = false;
+        std::atomic<bool> put_between_allocation_failure{false};
+        std::function<void()> put_between_job_started;
+        std::atomic<int> copy_cpu_model_throw_countdown{0};
+        std::atomic<bool> log_failure{false};
+        std::atomic<size_t> helper_start_failure_at{0};
+        std::atomic<int> texture_allocation_throw_countdown{0};
+        std::atomic<int> index_buffer_failure_countdown{0};
+        bool marker_compile_failure = false;
+        int marker_map_failure_countdown = 0;
+    } debug_faults;
 #endif
 };

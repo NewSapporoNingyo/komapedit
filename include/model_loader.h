@@ -8,14 +8,12 @@
 
 #include <stddef.h>
 
-#if defined(_WIN32)
-#  if defined(MODEL_LOADER_EXPORTS)
-#    define ML_API __declspec(dllexport)
-#  else
-#    define ML_API __declspec(dllimport)
-#  endif
+#define ML_API_VERSION 2u
+
+#if defined(MODEL_LOADER_EXPORTS)
+#  define ML_API __declspec(dllexport)
 #else
-#  define ML_API
+#  define ML_API __declspec(dllimport)
 #endif
 
 #ifdef __cplusplus
@@ -66,8 +64,15 @@ typedef struct MlMeshData {
 
 ML_API unsigned int ml_api_version(void);
 
-/* On success, fills out_model with DLL-owned allocations that the caller must
-   release with ml_free_model(). On failure, out_model is reset to empty. */
+typedef enum MlModelLoadStatus {
+    ML_LOAD_FAILED = 0,
+    ML_LOAD_OK = 1,
+    ML_LOAD_WHITE_MATERIAL = 2
+} MlModelLoadStatus;
+
+/* Both success statuses return DLL-owned allocations for ml_free_model().
+   ML_LOAD_WHITE_MATERIAL identifies renderable geometry with a generated white
+   material. ML_LOAD_FAILED resets out_model to empty. */
 ML_API int ml_load_model(const char* path, MlMeshData* out_model);
 
 /* Releases all allocations in model and resets it to an empty state.

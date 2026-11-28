@@ -45,7 +45,6 @@ struct AlignmentTarget {
 struct AlignmentSpan {
     double start;
     double end;
-    double radius;
     bool transition;
     std::string edit_id;
     std::string label;
@@ -174,6 +173,19 @@ private:
         double distance = 0.0;
         float distance_sq = std::numeric_limits<float>::infinity();
     };
+    struct RadiusLabelCandidate {
+        std::size_t span;
+        TrackPoint start, middle, end;
+        std::size_t first_row, last_row;
+    };
+    struct RadiusLabelCache {
+        const Matrix* track = nullptr;
+        std::uint64_t source_revision = 0;
+        std::uint64_t preview_revision = 0;
+        double distance_min = 0.0;
+        double distance_max = 0.0;
+        std::vector<RadiusLabelCandidate> candidates;
+    };
 
     static CurveSpans build_spans(const std::vector<SourcedEvent>& events, double route_end,
                                   const std::map<std::string, AlignmentDraft>& drafts);
@@ -214,6 +226,7 @@ private:
     std::shared_ptr<const AlignmentReprojection> marker_projection_;
     std::uint64_t marker_revision_ = 0;
     AlignmentOverlay overlay_;
+    RadiusLabelCache radius_label_cache_;
     std::vector<AlignmentRadiusLabel> visible_radius_labels_;
     std::uint64_t overlay_revision_ = 0;
     std::uint64_t overlay_plan_generation_ = 0;

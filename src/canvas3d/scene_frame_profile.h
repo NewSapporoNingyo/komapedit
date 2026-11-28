@@ -9,6 +9,29 @@
 #include <d3d11.h>
 #include <array>
 #include <chrono>
+#include <string_view>
+
+struct SceneInstanceSignature {
+    bool enabled = false;
+    std::uint64_t value = 0;
+
+    void record(std::string_view path, int object, double distance, const double* world) noexcept {
+        if (!enabled) return;
+        const auto append = [&](const void* data, size_t length) {
+            const auto* bytes = static_cast<const unsigned char*>(data);
+            for (size_t index = 0; index < length; ++index) {
+                value ^= bytes[index];
+                value *= 1099511628211ULL;
+            }
+        };
+        const size_t length = path.size();
+        append(&length, sizeof(length));
+        append(path.data(), length);
+        append(&object, sizeof(object));
+        append(&distance, sizeof(distance));
+        append(world, sizeof(double) * 16);
+    }
+};
 
 // Debug-only instrumentation. Query allocation happens before the benchmark;
 // a busy ring slot is skipped, never flushed or waited for inside a frame.

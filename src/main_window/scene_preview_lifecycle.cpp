@@ -98,8 +98,8 @@ void App::stop_scene_preview() {
 }
 
 double App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camera) {
-    GuiTiming::Activation timing_activation(edit_timing_.get());
-    GuiTiming::Stage timing("scene.rebuild");
+    GuiTiming::Activation timing_activation(active_edit_timing());
+    GuiTiming::Stage timing(kme::timing::GuiStage::SceneRebuild);
     if (!scene_preview_canvas_ || !scene_preview_started_) {
         pending_scene_preview_started_at_.reset();
         return 0.0;
@@ -126,7 +126,7 @@ double App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_cam
     options.show_own_track_markers = show_scene_owntrack_markers_;
     const auto scene_build_started_at = std::chrono::steady_clock::now();
     Canvas3DSceneBuildResult build_result = build_canvas3d_scene_preview(options);
-    timing.next("scene.gpu_models");
+    timing.next(kme::timing::GuiStage::SceneGpuModels);
     const double scene_build_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - scene_build_started_at).count();
     for (const std::string& message : build_result.log_messages) add_forwarded_log(message);
@@ -461,8 +461,8 @@ void App::render_scene_preview_window() {
         sync_scene_preview_marker_visibility();
         Canvas3DSceneFrameResult scene_result;
         {
-            GuiTiming::Activation timing_activation(edit_timing_.get());
-            GuiTiming::Stage timing_stage("scene.first_frame");
+            GuiTiming::Activation timing_activation(active_edit_timing());
+            GuiTiming::Stage timing_stage(kme::timing::GuiStage::SceneFirstFrame);
             scene_result = scene_preview_canvas_->render_scene_preview(avail, scene_ui_text, context_menu_options);
             edit_timing_wait_scene_frame_ = false;
         }
@@ -480,7 +480,7 @@ void App::render_scene_preview_window() {
         } else if (scene_action.kind == Canvas3DSceneContextActionKind::LocateSignal) {
             locate_signal_row_in_list(scene_action.row_index);
         } else if (scene_action.kind == Canvas3DSceneContextActionKind::LocateMarkerList) {
-            locate_scene_marker_row_in_list(scene_action.marker_list_kind, scene_action.row_index);
+            locate_marker_row_in_list(scene_action.marker_list_kind, scene_action.row_index);
         } else if (scene_action.kind == Canvas3DSceneContextActionKind::EditElement) {
             request_element_inspector(scene_action.edit_id, scene_action.row_kind);
         } else if (scene_action.kind == Canvas3DSceneContextActionKind::DeleteElement) {

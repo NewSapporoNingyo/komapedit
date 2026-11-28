@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(kobushi_maploader LANGUAGES CXX)
 
-if(WIN32)
-    enable_language(RC)
+if(NOT WIN32)
+    message(FATAL_ERROR "komapedit requires Windows")
 endif()
+enable_language(RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -67,14 +68,12 @@ target_include_directories(kme_text_decoder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/maploader
 )
 set_target_properties(kme_text_decoder PROPERTIES POSITION_INDEPENDENT_CODE ON)
-if(WIN32)
-    target_compile_definitions(kme_text_decoder PRIVATE
-        UNICODE
-        _UNICODE
-        NOMINMAX
-        WIN32_LEAN_AND_MEAN
-    )
-endif()
+target_compile_definitions(kme_text_decoder PRIVATE
+    UNICODE
+    _UNICODE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+)
 
 add_library(kme_own_track_geometry STATIC src/shared/own_track_geometry.cpp)
 target_compile_features(kme_own_track_geometry PRIVATE cxx_std_17)
@@ -96,6 +95,7 @@ add_library(maploader SHARED
 )
 
 target_compile_features(maploader PRIVATE cxx_std_17)
+target_compile_definitions(maploader PRIVATE NOMINMAX)
 target_include_directories(maploader PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
@@ -211,44 +211,42 @@ set_target_properties(model_loader PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${KOMAPEDIT_DLL_OUTPUT_DIRECTORY}"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
-if(WIN32)
-    set(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR "")
-    if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
-        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-            set(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
-        else()
-            set(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
-        endif()
-    elseif(CMAKE_PREFIX_PATH)
-        foreach(prefix IN LISTS CMAKE_PREFIX_PATH)
-            if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND EXISTS "${prefix}/debug/bin")
-                set(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR "${prefix}/debug/bin")
-                break()
-            elseif(EXISTS "${prefix}/bin")
-                set(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR "${prefix}/bin")
-                break()
-            endif()
-        endforeach()
+set(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR "")
+if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
+    else()
+        set(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
     endif()
-
-    if(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR AND EXISTS "${KOMAPEDIT_MODEL_RUNTIME_DLL_DIR}")
-        file(GLOB KOMAPEDIT_MODEL_RUNTIME_DLLS "${KOMAPEDIT_MODEL_RUNTIME_DLL_DIR}/*.dll")
-        if(KOMAPEDIT_MODEL_RUNTIME_DLLS)
-            add_custom_command(TARGET model_loader POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    ${KOMAPEDIT_MODEL_RUNTIME_DLLS}
-                    $<TARGET_FILE_DIR:model_loader>
-                COMMAND_EXPAND_LISTS
-            )
+elseif(CMAKE_PREFIX_PATH)
+    foreach(prefix IN LISTS CMAKE_PREFIX_PATH)
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND EXISTS "${prefix}/debug/bin")
+            set(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR "${prefix}/debug/bin")
+            break()
+        elseif(EXISTS "${prefix}/bin")
+            set(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR "${prefix}/bin")
+            break()
         endif()
-    elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
+    endforeach()
+endif()
+
+if(KOMAPEDIT_MODEL_RUNTIME_DLL_DIR AND EXISTS "${KOMAPEDIT_MODEL_RUNTIME_DLL_DIR}")
+    file(GLOB KOMAPEDIT_MODEL_RUNTIME_DLLS "${KOMAPEDIT_MODEL_RUNTIME_DLL_DIR}/*.dll")
+    if(KOMAPEDIT_MODEL_RUNTIME_DLLS)
         add_custom_command(TARGET model_loader POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_RUNTIME_DLLS:model_loader>
+                ${KOMAPEDIT_MODEL_RUNTIME_DLLS}
                 $<TARGET_FILE_DIR:model_loader>
             COMMAND_EXPAND_LISTS
         )
     endif()
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
+    add_custom_command(TARGET model_loader POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:model_loader>
+            $<TARGET_FILE_DIR:model_loader>
+        COMMAND_EXPAND_LISTS
+    )
 endif()
 
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui")
@@ -363,23 +361,21 @@ set_target_properties(komapedit PROPERTIES
     WIN32_EXECUTABLE TRUE
     RUNTIME_OUTPUT_DIRECTORY "${KOMAPEDIT_RUNTIME_OUTPUT_DIRECTORY}"
 )
-if(WIN32)
-    set(komapedit_toolbar_pngs)
-    foreach(icon IN ITEMS
-            move measure select mileage-select translate rotate edit apply
-            open reload reload-geometry add-map-element save revert
-            grid-fixed grid-movable grid-none clear copy find find-unused
-            model-list background-color reload-scene-models close)
-        foreach(size IN ITEMS 16 20 24 28 32 40 48 64 80)
-            list(APPEND komapedit_toolbar_pngs "${CMAKE_CURRENT_SOURCE_DIR}/icons/toolbar/${icon}-${size}.png")
-        endforeach()
+set(komapedit_toolbar_pngs)
+foreach(icon IN ITEMS
+        move measure select mileage-select translate rotate edit apply
+        open reload reload-geometry add-map-element save revert
+        grid-fixed grid-movable grid-none clear copy find find-unused
+        model-list background-color reload-scene-models close)
+    foreach(size IN ITEMS 16 20 24 28 32 40 48 64 80)
+        list(APPEND komapedit_toolbar_pngs "${CMAKE_CURRENT_SOURCE_DIR}/icons/toolbar/${icon}-${size}.png")
     endforeach()
-    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/komapedit.rc"
-        APPEND PROPERTY OBJECT_DEPENDS "${komapedit_toolbar_pngs}")
-    target_sources(komapedit PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/komapedit.rc
-    )
-endif()
+endforeach()
+set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/komapedit.rc"
+    APPEND PROPERTY OBJECT_DEPENDS "${komapedit_toolbar_pngs}")
+target_sources(komapedit PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/komapedit.rc
+)
 target_include_directories(komapedit PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main_window

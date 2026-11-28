@@ -287,34 +287,24 @@ bool point_in_rect(ImVec2 p, ImVec2 min, ImVec2 max) {
 
 ImVec2 pointer_pos_screen(HWND hwnd, std::uint32_t id, LPARAM fallback_l_param) {
     POINT pt = {GET_X_LPARAM(fallback_l_param), GET_Y_LPARAM(fallback_l_param)};
-#if _WIN32_WINNT >= 0x0602
     POINTER_INFO info = {};
     if (::GetPointerInfo(id, &info)) {
         pt = info.ptPixelLocation;
     } else if (hwnd) {
         ::ClientToScreen(hwnd, &pt);
     }
-#else
-    if (hwnd) {
-        ::ClientToScreen(hwnd, &pt);
-    }
-#endif
     return ImVec2(static_cast<float>(pt.x), static_cast<float>(pt.y));
 }
 
 bool pointer_is_touch(std::uint32_t id) {
-#if _WIN32_WINNT >= 0x0602
     POINTER_INPUT_TYPE type = PT_POINTER;
     if (::GetPointerType(id, &type)) return type == PT_TOUCH;
-#endif
-    (void)id;
     return true;
 }
 
 } // namespace
 
 bool handle_message(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
-#ifdef WM_POINTERDOWN
     switch (msg) {
         case WM_POINTERDOWN:
         case WM_POINTERUPDATE:
@@ -338,11 +328,6 @@ bool handle_message(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
         default:
             break;
     }
-#else
-    (void)msg;
-    (void)w_param;
-    (void)l_param;
-#endif
     return false;
 }
 

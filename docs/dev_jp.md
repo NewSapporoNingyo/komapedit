@@ -260,7 +260,7 @@ ctest --test-dir build --output-on-failure
 - **軌道状態機械**：`LastPos` は前のサンプルを保持します。`TrackPointer` は距離程に沿って自軌道イベントを進め、通常サンプルとイベント境界で半径、勾配、カント、向き、座標を提供します。
 - **曲線計算**：`rotate_xy()`、ガウス積分、フレネル級数・漸近式で局所座標を積分します。`circular_curve*()` は円曲線、`halfsin_intermediate()`、`linear_transition_curve_local()`、`transition_curve*()` はサイン半波長・直線逓減の緩和曲線を計算します。キー・ハッシュ構造で同じ曲線パラメーターの計算をキャッシュします。
 - **勾配の投影**：`constant_gradient_projection()`、`sinc()`、`gradient_transition()` は路線長から水平投影距離と標高を求めます。`build_gradient_projection_samples()` と `build_event_projected_distances()` はイベント距離程を平面位置へ対応付けます。
-- **自軌道生成**：`sorted_unique()` と `append_arange()` はイベント点と一定間隔の点を統合します。`generate_owntrack()` は距離程、XYZ、向き、半径、勾配、カントなどの列を出力し、`generate_curveradius()` は半径図のデータを作ります。
+- **自軌道生成**：`sort_unique()` と `append_arange()` はイベント点と一定間隔の点を統合します。`generate_owntrack()` は距離程、XYZ、向き、半径、勾配、カントなどの列を出力し、`generate_curveradius()` は半径図のデータを作ります。
 - **他軌道生成**：`relative_position()` は曲線に対する相対位置、`CantProcessor` はカントの Begin/End/Interpolate を扱います。`build_othertrack_buffer()` は位置、X/Y 補間、軌間、中心、カントを、自軌道に整列した行列と有効性データにまとめます。
 - **座標移動と配置**：`relocate()` は形状を安定した局所座標へ平行移動します。`build_structure_put_buffer()` は距離程でサンプリングした配置用変換を提供します。
 - **適応的なシーン制御点**：角度・行列ヘルパーと `build_scene_adaptive_controlpoints()` は、イベント、モデルの span、曲率、勾配、指定範囲に応じた密度で制御点を作ります。
@@ -407,7 +407,7 @@ ctest --test-dir build --output-on-failure
 
 #### `src/canvas2d/canvas2D.cpp`
 
-- **問い合わせと表示データ**：`nearest_own_index()`、`interp_own_z()`、`track_info_at()`、`speed_at()`、`curve_sections()` は計測・重ね表示用の値を取得します。`build_plan_data()` は自軌道・他軌道、停車場、速度制限、マーカーをまとめ、`current_plan_data()` はモデル・形状・表示リビジョンでキャッシュします。縦断面データも構築と取得を分けます。
+- **問い合わせと表示データ**：`current_plan_data()` は自軌道のサンプル、停車場、速度制限、マーカーを形状と表示設定別にキャッシュします。`fit_plan_view()` はキャッシュした範囲に表示中の他軌道と Repeater の端点・ブロックの角を加え、その長辺の 5% を四辺の余白とします。縦断面データも構築と取得を分けます。
 - **操作と描画**：計測、フォーカス、座標変換、`jump_to_distance()` は位置移動を共有します。`render_plan_canvas()` はマウス・タッチ、可視距離程の計算、背景・グリッド・軌道・Repeater・停車場・マーカー・ラベル・3D 位置・フォーカスの描画をまとめます。
 
 #### `src/canvas2d/canvas2d_view_state.h` と `src/canvas2d/canvas2d_view_state.cpp`
@@ -519,8 +519,8 @@ FPS はシーン描画の呼び出し頻度です。`canvas3d_scene_ui.cpp` は 
 
 - `invalidate_table_cache()` はリビジョンと派生行を消去し、`reset_marker_visibility()`・`sync_marker_visibility_sizes()` は 2D 表示フラグをモデルの行数に合わせます。
 - Structure・Repeater・Signal の `locate_*_on_plan/in_list/in_scene_preview()` は、平面フォーカス、テーブル強調・表示、Canvas3D ジャンプを更新します。Repeater は End と変化点の境界も扱います。
-- `locate_standard_marker_on_plan()` と `locate_standard_marker_in_list()` は Beacon、Section、Irregularity、Sound/Noise、Background、Adhesion、CabIlluminance、Fog、DrawDistance、SpeedLimit などの共通移動処理です。
-- 他列車の停止位置へ移動すると対応グループと停止行を開きます。`locate_scene_marker_row_in_list()` と `locate_scene_marker_row_in_scene_preview()` は Canvas3D の種類を正しいテーブル・ソース行へ対応付け、`can_locate_scene_preview_row()` はシーン・インデックス・表示条件を確認します。
+- `standard_marker_navigation()` は各標準マーカーを平面図キャッシュ、表示設定、一覧画面、フォーカス、スクロール、強調表示に対応付けます。`None` と `Count` の間の各種類に定義が一つあることをコンパイル時に検証します。平面図、テーブル、シーンがこの対応を共有します。
+- 他列車の停止位置へ移動すると、対応グループと停止行を開きます。`can_locate_scene_preview_row()` はシーンの準備完了を確認し、テーブルと Repeater のプロパティが共有します。
 
 ### Debug 入口と契約テスト
 
@@ -723,7 +723,7 @@ Canvas3D はシーン置換時に配置用軌道索引を作り、自軌道の�
 
 平面、シーン、自軌道編集は、Interpolate の引数 0・1・2 個、Apply/Delete/Reset、ソース識別、一意な編集マーカーの一時 Map/Include 契約を共有します。実路線は存在する対象に応じて確認し、行・イベント・マーカーが空の場合はそれらが一致することを要求します。インスタンスに依存する項目は対象外として報告します。自軌道編集は、`rand()` でソースを選ぶマップも含めて Preview→Edit 結合を確認します。
 
-`--debug-headless-table-cache-bench` は Edit メタデータと、INI 保存を無効にした ImGui/ImPlot コンテキストを使います。ウォームアップ後、コールドキャッシュ再構築、1 回のウォームヒット、全テーブルを描く 1 フレームを別々に測り、行、セル、識別、動的見出し、幅のフィンガープリントを確認します。ソースのバイト・ハッシュ検証は計測範囲外で行います。既定は 5 回（1–100）、25 m 間隔です。
+`--debug-headless-table-cache-bench` は Edit メタデータ、ツールバーのテクスチャ用の D3D11 デバイス、INI 保存を無効にした ImGui/ImPlot コンテキストを使います。各サンプルでコールドキャッシュの再構築、ウォームキャッシュ 10 万回の呼び出しにおける 1 回あたりの平均時間、全テーブルを描く 1 フレームを測ります。行、セル、識別、動的見出し、幅のフィンガープリントを確認します。ソースのバイト列とハッシュは計測範囲外で確認します。既定は 5 回（1–100）、25 m 間隔です。ストラクチャーモデルの検索は `PASS`、`FAIL`、または理由付きの `SKIP` を出力します。
 
 `--debug-headless-diagnostics-popup-bench` は 100,000 件の混在ログで、並行処理時の順序、スナップショットのリビジョンキャッシュ、クリッピング付き描画を確認します。
 

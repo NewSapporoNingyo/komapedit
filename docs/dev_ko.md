@@ -260,7 +260,7 @@ ctest --test-dir build --output-on-failure
 - **궤도 상태 머신**의 `LastPos`는 이전 표본을 담습니다. `TrackPointer`는 기준 궤도 이벤트를 거리순으로 진행하며 일정 간격과 이벤트 경계에서 반경, 구배, 캔트, 방향, 좌표를 제공합니다.
 - **곡선 계산**의 `rotate_xy()`, 가우스 적분, 프레넬 급수·점근식은 로컬 좌표를 적분합니다. `circular_curve*()`는 원곡선을, `halfsin_intermediate()`, `linear_transition_curve_local()`, `transition_curve*()`는 사인 반파장·선형 완화곡선을 계산합니다. 키와 해시 구조체는 반복되는 매개변수를 캐시합니다.
 - **구배 투영**의 `constant_gradient_projection()`, `sinc()`, `gradient_transition()`은 노선 길이로 수평 투영과 표고를 계산합니다. `build_gradient_projection_samples()`와 `build_event_projected_distances()`는 이벤트 거리를 평면 위치에 대응시킵니다.
-- **기준 궤도 생성**에서 `sorted_unique()`와 `append_arange()`는 이벤트 표본과 정규 표본을 합칩니다. `generate_owntrack()`은 거리, XYZ, 방향, 반경, 구배, 캔트 및 관련 열을 쓰며 `generate_curveradius()`는 곡선 반경도 데이터를 만듭니다.
+- **기준 궤도 생성**에서 `sort_unique()`와 `append_arange()`는 이벤트 표본과 정규 표본을 합칩니다. `generate_owntrack()`은 거리, XYZ, 방향, 반경, 구배, 캔트 및 관련 열을 쓰며 `generate_curveradius()`는 곡선 반경도 데이터를 만듭니다.
 - **다른 궤도 생성**의 `relative_position()`은 곡선 기준 오프셋을 계산합니다. `CantProcessor`는 캔트 Begin/End/Interpolate를 처리합니다. `build_othertrack_buffer()`는 위치, X/Y 보간, 궤간, 중심, 캔트를 합쳐 기준 궤도에 맞춘 행렬과 유효성 데이터를 만듭니다.
 - **좌표 이동과 배치**의 `relocate()`는 선형을 안정적인 로컬 좌표로 옮깁니다. `build_structure_put_buffer()`는 구조물 배치에 거리별 변환을 제공합니다.
 - **적응형 장면 제어점**의 각도·행렬 도우미와 `build_scene_adaptive_controlpoints()`는 이벤트, 모델 span, 곡률, 구배와 요청 범위에 맞추어 밀도가 달라지는 제어점을 만듭니다.
@@ -407,7 +407,7 @@ ctest --test-dir build --output-on-failure
 
 #### `src/canvas2d/canvas2D.cpp`
 
-- **조회와 보기 데이터**의 `nearest_own_index()`, `interp_own_z()`, `track_info_at()`, `speed_at()`, `curve_sections()`는 측정과 오버레이에 값을 샘플링합니다. `build_plan_data()`는 기준·다른 궤도, 역, 제한 속도, 마커를 합칩니다. `current_plan_data()`는 모델·선형·표시 상태 리비전별로 결과를 캐시합니다. 종단면 데이터도 생성과 현재 값 조회를 나눕니다.
+- **조회와 보기 데이터**에서 `current_plan_data()`는 기준 궤도 표본, 역, 제한 속도와 마커를 선형과 표시 상태에 따라 캐시합니다. `fit_plan_view()`는 캐시된 범위에 표시 중인 다른 궤도와 반복 구조물의 끝점 및 블록 모서리를 합칩니다. 합친 범위의 긴 변 길이의 5%만큼 네 방향에 여백을 둡니다. 종단면 데이터도 생성과 조회를 나눕니다.
 - **보기 조작과 렌더링**은 측정, 초점, 좌표 변환, `jump_to_distance()`에 공통 탐색을 사용합니다. `render_plan_canvas()`는 마우스·터치 입력, 표시 거리 계산, 배경, 격자, 궤도, 반복 구조물, 역, 마커, 레이블, 3D 위치와 초점 그리기를 조정합니다.
 
 #### `src/canvas2d/canvas2d_view_state.h`와 `src/canvas2d/canvas2d_view_state.cpp`
@@ -519,8 +519,8 @@ ctest --test-dir build --output-on-failure
 
 - `invalidate_table_cache()`는 리비전과 파생 행을 지웁니다. `reset_marker_visibility()`와 `sync_marker_visibility_sizes()`는 2D 마커 플래그를 모델 행 개수와 맞춥니다.
 - Structure, Repeater, Signal의 `locate_*_on_plan/in_list/in_scene_preview()`는 평면도 초점, 표의 강조와 창 표시, Canvas3D의 위치 이동을 갱신합니다. 반복 구조물은 종료와 변경 경계로도 이동할 수 있습니다.
-- `locate_standard_marker_on_plan()`과 `locate_standard_marker_in_list()`는 Beacon, Section, Irregularity, Sound/Noise, Background, Adhesion, CabIlluminance, Fog, DrawDistance, SpeedLimit 등의 마커가 공유하는 탐색 함수입니다.
-- 타 열차 정차 지점을 찾으면 그룹과 정차 행을 엽니다. `locate_scene_marker_row_in_list()`와 `locate_scene_marker_row_in_scene_preview()`는 Canvas3D 마커 열거형을 해당 표·원본 행과 연결합니다. `can_locate_scene_preview_row()`는 장면, 인덱스와 표시 조건을 검사합니다.
+- `standard_marker_navigation()`은 표준 마커 종류를 평면도 캐시, 표시 설정, 표 창, 초점, 스크롤, 강조 상태와 연결합니다. `None`과 `Count` 사이의 종류마다 항목이 하나인지 컴파일할 때 검사합니다. 평면도·표·장면에서 이 대응을 함께 사용합니다.
+- 타 열차 정차 지점으로 이동하면 해당 그룹과 정차 행을 엽니다. 표와 반복 구조물 속성은 `can_locate_scene_preview_row()`로 장면 준비 상태를 확인합니다.
 
 ### Debug 진입점과 계약 테스트
 
@@ -723,7 +723,7 @@ Canvas3D는 장면을 교체할 때 배치용 궤도 인덱스를 만듭니다. 
 
 평면도, 장면, 기준 궤도 편집은 임시 Map/Include 계약으로 Interpolate의 인수 0/1/2개 형식, 적용·삭제·초기화, 원본 식별 정보와 고유한 편집 마커를 검증합니다. 실제 노선에서는 사용 가능한 대상을 확인합니다. 빈 행, 이벤트, 마커 집합은 서로 일치해야 하며 인스턴스가 필요한 검사는 해당 없음으로 보고합니다. 기준 궤도 편집은 `rand()`로 원본 파일을 선택하는 맵을 포함해 Preview→Edit 병합도 검사합니다.
 
-`--debug-headless-table-cache-bench`는 편집 메타데이터와 INI 저장을 끈 ImGui/ImPlot 컨텍스트를 사용합니다. 예열 뒤 콜드 캐시 재구축, 웜 캐시 적중 한 번, 전체 표를 그리는 한 프레임을 따로 측정합니다. 행, 셀, 식별 정보, 동적 헤더, 너비의 지문을 확인합니다. 원본의 바이트·해시 검사는 측정 구간 밖에서 수행합니다. 기본값은 반복 5회(범위 1–100), 샘플 간격 25 m입니다.
+`--debug-headless-table-cache-bench`는 편집 메타데이터, 도구 모음 텍스처용 D3D11 장치와 INI 저장을 끈 ImGui/ImPlot 컨텍스트를 사용합니다. 각 샘플은 콜드 캐시 재구축, 웜 캐시 10만 회 호출의 회당 평균 시간, 전체 표를 그리는 한 프레임을 측정합니다. 행, 셀, 식별 정보, 동적 헤더, 너비의 지문을 확인합니다. 원본의 바이트와 해시는 측정 구간 밖에서 검사합니다. 기본값은 반복 5회(범위 1–100), 샘플 간격 25 m입니다. 구조물 모델 검색은 `PASS`, `FAIL`, 또는 이유와 함께 `SKIP`을 출력합니다.
 
 `--debug-headless-diagnostics-popup-bench`는 섞인 로그 100,000건으로 동시 입력 순서, 스냅샷 리비전별 캐싱, 클리핑 렌더링을 검사합니다.
 

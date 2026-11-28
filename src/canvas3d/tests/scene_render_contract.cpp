@@ -240,23 +240,6 @@ bool Canvas3D::Impl::debug_check_scene_edit_target(const Canvas3DPlacementEditTa
         world_matches(instances[location.chunk_instance_index].world, expected);
 }
 
-void Canvas3D::Impl::debug_record_scene_world(const std::string& path, int object, double distance, const double* world) {
-    if (!debug_scene_capture) return;
-    const auto append = [&](const void* data, size_t length) {
-        const auto* bytes = static_cast<const unsigned char*>(data);
-        for (size_t index = 0; index < length; ++index) {
-            debug_scene_signature ^= bytes[index];
-            debug_scene_signature *= 1099511628211ULL;
-        }
-    };
-    const size_t length = path.size();
-    append(&length, sizeof(length));
-    append(path.data(), length);
-    append(&object, sizeof(object));
-    append(&distance, sizeof(distance));
-    append(world, sizeof(double) * 16);
-}
-
 bool Canvas3D::Impl::debug_check_repeater_cache() {
     // A single-point route uses the camera window for its chunk layout. A
     // changed window must reject dynamic reuse without losing cache ownership.
@@ -332,23 +315,23 @@ bool Canvas3D::Impl::debug_check_repeater_cache() {
         placed.scene_placement_tracks.rebuild(placed.scene_data);
         std::string error;
         if (!placed.build_scene_chunks(error)) return false;
-        placed.debug_scene_capture = true;
-        placed.debug_scene_signature = 14695981039346656037ULL;
+        placed.debug_scene_signature.enabled = true;
+        placed.debug_scene_signature.value = 14695981039346656037ULL;
         for (const auto& item : expected) {
             double world[16]{};
             if (!placed.make_repeater_instance_world(repeater, item.first, world)) return false;
-            placed.debug_record_scene_world(item.second, 0, item.first, world);
+            placed.debug_scene_signature.record(item.second, 0, item.first, world);
         }
-        const auto expected_signature = placed.debug_scene_signature;
+        const auto expected_signature = placed.debug_scene_signature.value;
         for (bool reference : {false, true}) {
             placed.debug_scene_reference = reference;
-            placed.debug_scene_signature = 14695981039346656037ULL;
+            placed.debug_scene_signature.value = 14695981039346656037ULL;
             std::map<std::string, std::vector<SceneInstanceData>> instances;
             for (auto& chunk : placed.scene_chunks) {
                 placed.append_visible_repeater_instances(chunk, 0, 500, {}, identity(),
                                                          640, 480, false, instances, nullptr);
             }
-            if (placed.debug_scene_signature != expected_signature) {
+            if (placed.debug_scene_signature.value != expected_signature) {
                 throw std::runtime_error("Repeater placement sequence mismatch at Begin=" +
                     std::to_string(begin) + ", interval=" + std::to_string(interval));
             }
@@ -430,8 +413,8 @@ bool Canvas3D::Impl::debug_check_repeater_cache() {
     if (!fixture.build_scene_chunks(error)) return false;
     const auto collect = [&](bool reference, double minimum, double maximum) {
         fixture.debug_scene_reference = reference;
-        fixture.debug_scene_capture = true;
-        fixture.debug_scene_signature = 14695981039346656037ULL;
+        fixture.debug_scene_signature.enabled = true;
+        fixture.debug_scene_signature.value = 14695981039346656037ULL;
         std::map<std::string, std::vector<SceneInstanceData>> instances;
         for (auto& chunk : fixture.scene_chunks) {
             if (!fixture.scene_chunk_visible(chunk, minimum, maximum)) {
@@ -441,7 +424,7 @@ bool Canvas3D::Impl::debug_check_repeater_cache() {
             fixture.append_visible_repeater_instances(chunk, minimum, maximum, {1.0, 2.0, 3.0},
                 identity(), 640, 480, false, instances, nullptr);
         }
-        return fixture.debug_scene_signature;
+        return fixture.debug_scene_signature.value;
     };
     const auto compare = [&](double minimum, double maximum) {
         const auto cached = collect(false, minimum, maximum);
@@ -569,6 +552,7 @@ bool Canvas3D::Impl::debug_check_scene_rotation_rings() {
     Impl fixture(device, nullptr);
     auto& gizmo = fixture.scene_structure_edit.rotation_gizmo;
     gizmo.origin = {0.0, 0.0, -depth};
+    const auto view = fixture.scene_view_projection(width, height);
 
     const auto hit_axis = [&](ImVec2 point, Axis previous = Axis::None) {
         const auto hit = fixture.pick_scene_rotation_ring(point, previous);
@@ -580,7 +564,7 @@ bool Canvas3D::Impl::debug_check_scene_rotation_rings() {
         gizmo.axes = axes;
         for (size_t i = 0; i < axes.size(); ++i) {
             std::swap(gizmo.axes[i], gizmo.axes[2]);
-            if (!fixture.update_scene_rotation_projection(width, height)) return false;
+            if (!fixture.update_scene_rotation_projection(view)) return false;
             const auto& ring = gizmo.rings[i];
             if (!ring.closed || ring.point_count != ring.points.size()) return false;
             for (size_t j = 0; j + 1 < ring.point_count; ++j) {
@@ -596,7 +580,7 @@ bool Canvas3D::Impl::debug_check_scene_rotation_rings() {
     fixture.set_scene_edit_component_scale(1.0f);
     constexpr double diagonal = 0.7071067811865475;
     gizmo.axes = {{{diagonal, 0.0, diagonal}, axes[1], {-diagonal, 0.0, diagonal}}};
-    if (!fixture.update_scene_rotation_projection(width, height) || gizmo.rings[0].closed) return false;
+    if (!fixture.update_scene_rotation_projection(view) || gizmo.rings[0].closed) return false;
     const auto& oblique = gizmo.rings[0];
     const double radius = 2.0 * depth * std::tan(k_scene_camera_fov_y * 0.5) / height * 90.0;
     const double cut_depth = depth + 0.05 * radius;
@@ -606,7 +590,7 @@ bool Canvas3D::Impl::debug_check_scene_rotation_rings() {
     gizmo.rings[1].point_count = gizmo.rings[2].point_count = 0;
     ImVec2 rear;
     const DVec3 rear_point = gizmo.origin + DVec3{diagonal, 0.0, -diagonal} * radius;
-    if (!fixture.project_scene_point(rear_point, fixture.scene_gizmo_view_projection(width, height),
+    if (!fixture.project_scene_point(rear_point, view.view_projection,
                                      width, height, rear) || hit_axis(rear) != Axis::None ||
         hit_axis(oblique.points[oblique.point_count / 2].screen) != Axis::X) return false;
 
@@ -633,7 +617,7 @@ bool Canvas3D::Impl::debug_check_scene_rotation_rings() {
     for (double rz : {90.0, -90.0}) {
         auto [right, up, forward] = axes;
         apply_euler(right, up, forward, 0.0, 0.0, rz, &gizmo.axes);
-        if (!fixture.update_scene_rotation_projection(width, height) ||
+        if (!fixture.update_scene_rotation_projection(view) ||
             x.closed || y.closed || !x.edge_on || !y.edge_on ||
             x.point_count != (x.points.size() + 1) / 2 || x.point_count != y.point_count) return false;
         const bool same_direction = dot(gizmo.axes[0], gizmo.axes[1]) > 0.0;
@@ -776,11 +760,47 @@ bool Canvas3D::Impl::debug_check_scene_rotation_gizmo() {
            drag.angle_degrees(target.ry, false) == 550.25;
 }
 
+bool Canvas3D::Impl::debug_check_background_order(const std::string& model_path) {
+    MapModel model;
+    model.structure_models.emplace_back().cells = {
+        {"structureKey", "backdrop"}, {"resolvedFilePath", model_path}};
+    model.backgrounds.emplace_back().cells = {{"distance", "15"}, {"structureKey", ""}};
+    for (int i = 0; i < 32; ++i) {
+        model.backgrounds.emplace_back().cells = {{"distance", "10"}, {"structureKey", ""}};
+    }
+    model.backgrounds.emplace_back().cells = {{"distance", "10"}, {"structureKey", "backdrop"}};
+    Canvas3DScene scene;
+    scene.tracks = {{"0", {{0.0, 0.0, 0.0, 0.0}, {25.0, 0.0, 25.0, 0.0}}}};
+    Impl fixture(device, {});
+    std::string error;
+    if (!populate_canvas3d_scene_dynamic_content(scene, model, -1) ||
+        !fixture.load_scene(std::move(scene), error, false, false)) return false;
+    const auto matches = [&](double distance, const std::string& expected) {
+        fixture.scene_camera_distance = distance;
+        return fixture.current_background_path() == expected;
+    };
+    const auto same_selection = [&] {
+        return matches(9.0, {}) && matches(10.0, model_path) && matches(14.0, model_path) &&
+            matches(15.0, {}) && matches(10.0, model_path) && matches(9.0, {});
+    };
+    return same_selection() && fixture.refresh_scene_dynamic_content(model, -1, error) && same_selection();
+}
+
 Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
     Canvas3DSceneRenderContractResult result;
     std::string fps_error;
     result.fps_counter = debug_check_scene_fps_counter(fps_error);
     result.rotation_gizmo = debug_check_scene_rotation_gizmo();
+    auto source = std::find_if(scene_models.begin(), scene_models.end(), [](const auto& entry) {
+        const auto& model = entry.second;
+        return model.state == SceneModelGpu::State::Ready && model.shared_model_key.empty() &&
+            !model.preview_only && model.index_count > 0;
+    });
+    if (source != scene_models.end()) {
+        result.put_between_worker = debug_check_put_between_preview_worker(source->first);
+        result.put_between_refresh = debug_check_put_between_preview_refresh(source->first);
+        result.background_order = debug_check_background_order(source->first);
+    }
     const DVec3 saved_position = scene_camera_pos;
     const double saved_distance = scene_camera_distance;
     const float saved_yaw = scene_camera_yaw, saved_pitch = scene_camera_pitch;
@@ -810,7 +830,7 @@ Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
         std::array<std::vector<std::uint8_t>, 2> pixels;
         for (size_t pass = 0; pass < 2; ++pass) {
             debug_scene_reference = pass == 1;
-            debug_scene_capture = true;
+            debug_scene_signature.enabled = true;
             scene_interaction_mode = picking ? Canvas3DSceneInteractionMode::Select : saved_interaction;
             clear_scene_focus_highlight();
             if (focus && focus_target.object_index >= 0) {
@@ -818,8 +838,8 @@ Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
             } else if (focus && !scene_data.markers.empty()) {
                 start_scene_marker_focus_highlight(0);
             }
-            render_scene_preview_target(1260, 680, {630.0f, 500.0f}, picking, false);
-            signatures[pass] = debug_scene_signature;
+            render_scene_preview_target(scene_view_projection(1260, 680), {630.0f, 500.0f}, picking, false);
+            signatures[pass] = debug_scene_signature.value;
             objects[pass] = scene_hovered_object_index;
             markers[pass] = scene_hovered_marker_index;
             instances[pass] = scene_stats_value.drawn_instance_count;
@@ -895,7 +915,7 @@ Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
             const auto expected = counts();
             for (int fail_at : {1, 2}) {
                 const auto cleared = set_scene_marker_visibility({}, marker_error);
-                debug_scene_marker_map_failure_countdown = fail_at;
+                debug_faults.marker_map_failure_countdown = fail_at;
                 const bool failed = !set_scene_marker_visibility(all_markers, marker_error) &&
                     !marker_error.empty() && scene_marker_indices_dirty &&
                     std::all_of(scene_marker_chunks.begin(), scene_marker_chunks.end(), [](const auto& chunk) {
@@ -903,13 +923,13 @@ Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
                             std::none_of(chunk.ranges.begin(), chunk.ranges.end(),
                                          [](const auto& range) { return range.visible; });
                     });
-                debug_scene_marker_map_failure_countdown = 0;
+                debug_faults.marker_map_failure_countdown = 0;
                 const bool retried = set_scene_marker_visibility(all_markers, marker_error) &&
                     !scene_marker_indices_dirty && counts() == expected;
-                debug_scene_marker_map_failure_countdown = 1;
+                debug_faults.marker_map_failure_countdown = 1;
                 const bool cached = set_scene_marker_visibility(all_markers, marker_error) &&
-                    debug_scene_marker_map_failure_countdown == 1;
-                debug_scene_marker_map_failure_countdown = 0;
+                    debug_faults.marker_map_failure_countdown == 1;
+                debug_faults.marker_map_failure_countdown = 0;
                 result.marker_index_retry = result.marker_index_retry && initial && cleared &&
                     failed && retried && cached;
                 ++result.marker_index_retry_cases;
@@ -919,7 +939,7 @@ Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
         result.error = error.what();
     }
     debug_scene_reference = false;
-    debug_scene_capture = false;
+    debug_scene_signature.enabled = false;
     clear_scene_focus_highlight();
     reset_scene_camera_pose_at_distance(saved_distance);
     scene_camera_pos = saved_position;
@@ -936,6 +956,10 @@ Canvas3DSceneRenderContractResult Canvas3D::Impl::debug_check_scene_render() {
     if (!set_scene_track_visibility(saved_visibility, restore_error)) result.error = restore_error;
     if (!set_scene_marker_visibility(saved_marker_visibility, restore_error)) result.error = restore_error;
     if (!result.fps_counter && result.error.empty()) result.error = fps_error;
+    Impl model_preview(device, {});
+    std::string grid_error;
+    result.model_preview_reference_grid = model_preview.debug_check_model_preview_reference_grid(grid_error);
+    if (!result.model_preview_reference_grid && result.error.empty()) result.error = grid_error;
     return result;
 }
 

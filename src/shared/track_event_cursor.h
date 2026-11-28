@@ -16,6 +16,10 @@
 
 namespace own_track_geometry {
 
+inline bool interpolates_to(std::string_view previous, std::string_view next) {
+    return next == "i" || previous == "bt";
+}
+
 template <typename Event>
 class TrackPointer {
 public:
@@ -89,7 +93,7 @@ public:
         const Event& next = pointer_.event(pointer_.next());
         if (next.value.is_continue()) return cant_value_;
         const Event& last = pointer_.event(pointer_.last());
-        if (next.flag == "i" || last.flag == "bt") {
+        if (interpolates_to(last.flag, next.flag)) {
             double next_value = as_number(next.value);
             if (cant_value_ != next_value) {
                 return transition(next.distance - last.distance, cant_value_, next_value,

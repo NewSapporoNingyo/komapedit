@@ -19,10 +19,9 @@ using own_track_geometry::CantProcessor;
 using own_track_geometry::TrackPointer;
 
 
-std::vector<double> sorted_unique(std::vector<double> values) {
+static void sort_unique(std::vector<double>& values) {
     std::sort(values.begin(), values.end());
     values.erase(std::unique(values.begin(), values.end()), values.end());
-    return values;
 }
 
 namespace {
@@ -115,7 +114,7 @@ static void generate_owntrack(const MapContext& ctx, TrackGeometry& geometry, do
     const auto& [distribution_start, distribution_end, distribution_step] = geometry.distribution;
     append_arange(list_cp, distribution_start, distribution_end, distribution_step);
 
-    list_cp = sorted_unique(list_cp);
+    sort_unique(list_cp);
 
     std::vector<own_track_geometry::Event> events;
     events.reserve(ctx.own_track.size());
@@ -312,7 +311,7 @@ Matrix build_othertrack_buffer(const MapContext& ctx, const Matrix& owntrack_buf
 }
 
 void relocate(MapContext& ctx) {
-    ctx.controlpoints = sorted_unique(ctx.controlpoints);
+    sort_unique(ctx.controlpoints);
     std::stable_sort(ctx.own_track.begin(), ctx.own_track.end(),
                      [](const auto& a, const auto& b) { return a.distance < b.distance; });
     for (auto& kv : ctx.othertrack) {
@@ -472,11 +471,7 @@ static std::vector<double> build_scene_adaptive_controlpoints(const MapContext& 
         event.distance = row.distance;
         event.order = static_cast<double>(row.order);
         event.key = key_text(row.repeater_key);
-        if (row.method == "Begin" || row.method == "Begin0") {
-            event.kind = repeater_linkage::EventKind::Begin;
-        } else if (row.method == "End") {
-            event.kind = repeater_linkage::EventKind::End;
-        }
+        event.kind = repeater_linkage::event_kind(row.method);
         repeater_events.push_back(std::move(event));
     }
     for (const repeater_linkage::Segment& segment :

@@ -5,6 +5,7 @@
  */
 
 #include "kme.h"
+#include "../canvas2d/canvas2d_primitives.h"
 #include "app_settings.h"
 #include "debug_headless.h"
 #include "canvas3D.h"
@@ -26,13 +27,8 @@
 #ifndef NDEBUG
 int App::run_debug_headless_pretrain_edit(const HeadlessPreTrainEditOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::u8path(options.output_path),
-                         std::ios::binary | std::ios::trunc);
-        if (!output_file) return 1;
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::QuietBinary);
+    if (!out) return 1;
     *out << "command=debug-headless-pretrain-edit\npath=" << options.path
          << "\nmemory_apply_only=1\nstage=preview-load-start\n";
     out->flush();
@@ -173,7 +169,8 @@ int App::run_debug_headless_pretrain_edit(const HeadlessPreTrainEditOptions& opt
                 PlanData isolated;
                 isolated.pretrain_markers.push_back(marker);
                 const ImVec2 origin(0, 0), size(800, 600);
-                const auto entries = app.collect_plan_context_entries(isolated,
+                const auto entries = app.collect_plan_context_entries(isolated, nullptr,
+                    canvas2d::make_plan_transform(app.plan_view_, 0.0, origin, size),
                     app.plan_view_.world_to_screen(marker.x, marker.y, origin, size),
                     origin, size, 12.0f, 144.0, true);
                 if (std::none_of(entries.begin(), entries.end(), [&](const auto& entry) {

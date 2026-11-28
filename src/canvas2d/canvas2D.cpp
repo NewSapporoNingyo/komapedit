@@ -30,6 +30,7 @@
 #include <cctype>
 #include <cmath>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -125,12 +126,11 @@ std::optional<TrackPoint> App::track_info_at(double distance) const {
 }
 
 std::optional<SpeedLimit> App::speed_at(double distance) const {
-    std::optional<SpeedLimit> result;
-    for (const auto& s : model_.speedlimits) {
-        if (s.distance > distance) break;
-        result = s;
-    }
-    return result;
+    const auto active_end = std::upper_bound(
+        model_.speedlimits.begin(), model_.speedlimits.end(), distance,
+        [](double target, const SpeedLimit& row) { return target < row.distance; });
+    if (active_end == model_.speedlimits.begin()) return std::nullopt;
+    return *std::prev(active_end);
 }
 
 static std::vector<Section> curve_sections(
@@ -197,7 +197,7 @@ const canvas2d::AlignmentReprojection* App::alignment_reprojection() const {
         ? plan_alignment_->marker_projection() : nullptr;
 }
 
-PlanData App::build_plan_data(bool include_other_tracks) const {
+PlanData App::build_plan_data() const {
     PlanData out;
     if (!has_model_ || model_.own.empty()) return out;
 
@@ -236,11 +236,11 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     };
     for (auto& p : out.own) p = rotate_point(p);
     const auto project_point = [&](TrackPoint p) {
-        if (projection) projection->pose_at(model_.own, p.d).move(p);
+        if (projection) projection->pose_at(p.d).move(p);
         return rotate_point(p);
     };
     const auto project_xy = [&](double distance, double x, double y) {
-        if (projection) projection->pose_at(model_.own, distance).move(x, y);
+        if (projection) projection->pose_at(distance).move(x, y);
         return rotate_xy(x, y, angle);
     };
 
@@ -258,27 +258,6 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     out.xmin = 1.0;
     out.xmax = -1.0;
     for (const auto& p : out.own) extend_bounds(p.x, p.y);
-
-    if (include_other_tracks) {
-        for (size_t index = 0; index < model_.other_tracks.size(); ++index) {
-            const auto& t = model_.other_tracks[index];
-            if (!t.visible || t.points.empty()) continue;
-            const Matrix& points = projection ? projection->other_tracks[index] : t.points;
-            double rmin = std::max(dmin_, t.range_min);
-            double rmax = std::min(dmax_, t.range_max);
-            size_t first = matrix_lower_bound_distance(points, rmin);
-            size_t last = matrix_upper_bound_distance(points, rmax);
-            if (last <= first) continue;
-            size_t count = last - first;
-            size_t step = std::max<size_t>(1, count / 4096);
-            auto append_other_bounds = [&](size_t row) {
-                ImVec2 q = rotate_xy(points.at(row, 1), points.at(row, 2), angle);
-                extend_bounds(q.x, q.y);
-            };
-            for (size_t r = first; r < last; r += step) append_other_bounds(r);
-            append_other_bounds(last - 1);
-        }
-    }
 
     for (size_t row_index = 0; row_index < model_.station_positions.size(); ++row_index) {
         const Station& s = model_.station_positions[row_index];
@@ -307,14 +286,11 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
                                    s.has_speed ? format_double(s.speed, 0) : "x"});
     }
 
-    auto append_marker_bounds = [&](double x, double y) {
-        extend_bounds(x, y);
-    };
-    size_t visible_repeater_count = static_cast<size_t>(std::count_if(
+    out.visible_repeater_count = static_cast<size_t>(std::count_if(
         repeater_row_visible_.begin(), repeater_row_visible_.end(),
         [](unsigned char visible) { return visible != 0; }));
-    bool skip_dense_repeater_markers = !include_other_tracks && plan_view_.fitted &&
-        dense_repeater_overview_lod(visible_repeater_count, plan_view_.scale);
+    bool skip_dense_repeater_markers = plan_view_.fitted &&
+        dense_repeater_overview_lod(out.visible_repeater_count, plan_view_.scale);
     if (!skip_dense_repeater_markers) {
         out.repeater_markers.reserve(
             std::min(repeaters.size(), repeater_row_visible_.size()) * 2);
@@ -338,7 +314,7 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             marker.y = point.y;
             marker.row_index = row_index;
             markers.push_back(std::move(marker));
-            append_marker_bounds(point.x, point.y);
+            extend_bounds(point.x, point.y);
         }
     };
 
@@ -361,7 +337,7 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             OtherTrainPathOverlay path = source;
             for (TrackPoint& p : path.points) {
                 p = project_point(p);
-                append_marker_bounds(p.x, p.y);
+                extend_bounds(p.x, p.y);
             }
             out.other_train_paths.push_back(std::move(path));
         }
@@ -384,7 +360,7 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             marker.theta = p.theta;
             marker.row_index = i;
             out.other_train_stop_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
+            extend_bounds(p.x, p.y);
         }
     }
 
@@ -428,7 +404,7 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         if (marker.label == "CG") out.curve_gauge_markers.push_back(std::move(marker));
         else if (marker.label == "CC") out.curve_center_markers.push_back(std::move(marker));
         else out.curve_function_markers.push_back(std::move(marker));
-        append_marker_bounds(rotated.x, rotated.y);
+        extend_bounds(rotated.x, rotated.y);
     }
     if (edit_mode_enabled_) {
         for (const OtherTrackChangeMarker& source : other_track_change_marker_cache_) {
@@ -451,7 +427,7 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         marker.y = p.y;
         marker.row_index = row_index;
         out.repeater_markers.push_back(std::move(marker));
-        append_marker_bounds(p.x, p.y);
+        extend_bounds(p.x, p.y);
     };
     for (size_t i = 0; i < repeaters.size() && i < repeater_row_visible_.size(); ++i) {
         if (!repeater_row_visible_[i]) continue;
@@ -459,18 +435,6 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         if (!skip_dense_repeater_markers) {
             if (source.begin_marker) append_repeater_marker(*source.begin_marker, i);
             if (source.end_marker) append_repeater_marker(*source.end_marker, i);
-        }
-        if (include_other_tracks && source.segment.bounds_valid) {
-            for (const PlanRepeaterSegment::Chunk& chunk : source.segment.chunks) {
-                if (!chunk.bounds_valid || chunk.d_max < dmin_ || chunk.d_min > dmax_) continue;
-                ImVec2 corners[] = {
-                    rotate_xy(chunk.x_min, chunk.y_min, angle),
-                    rotate_xy(chunk.x_max, chunk.y_min, angle),
-                    rotate_xy(chunk.x_max, chunk.y_max, angle),
-                    rotate_xy(chunk.x_min, chunk.y_max, angle),
-                };
-                for (ImVec2 p : corners) append_marker_bounds(p.x, p.y);
-            }
         }
     }
 
@@ -537,9 +501,68 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         }
     }
 
-    double pad = std::max({out.xmax - out.xmin, out.ymax - out.ymin, 1.0}) * 0.05;
-    out.xmin -= pad; out.xmax += pad; out.ymin -= pad; out.ymax += pad;
     return out;
+}
+
+void App::fit_plan_view(const PlanData& data, ImVec2 size) {
+    if (data.own.empty()) {
+        plan_view_.fit(data.xmin, data.ymin, data.xmax, data.ymax, size);
+        return;
+    }
+    const auto* projection = alignment_reprojection();
+    const double angle = -data.origin_angle;
+    double xmin = data.xmin, xmax = data.xmax;
+    double ymin = data.ymin, ymax = data.ymax;
+    const auto extend_bounds = [&](ImVec2 point) {
+        xmin = std::min(xmin, static_cast<double>(point.x));
+        xmax = std::max(xmax, static_cast<double>(point.x));
+        ymin = std::min(ymin, static_cast<double>(point.y));
+        ymax = std::max(ymax, static_cast<double>(point.y));
+    };
+    for (size_t index = 0; index < model_.other_tracks.size(); ++index) {
+        const auto& t = model_.other_tracks[index];
+        if (!t.visible || t.points.empty()) continue;
+        const Matrix& points = projection ? projection->other_tracks[index] : t.points;
+        double rmin = std::max(dmin_, t.range_min);
+        double rmax = std::min(dmax_, t.range_max);
+        size_t first = matrix_lower_bound_distance(points, rmin);
+        size_t last = matrix_upper_bound_distance(points, rmax);
+        if (last <= first) continue;
+        size_t count = last - first;
+        size_t step = std::max<size_t>(1, count / 4096);
+        auto append_other_bounds = [&](size_t row) {
+            ImVec2 q = rotate_xy(points.at(row, 1), points.at(row, 2), angle);
+            extend_bounds(q);
+        };
+        for (size_t r = first; r < last; r += step) append_other_bounds(r);
+        append_other_bounds(last - 1);
+    }
+    const auto& repeaters = projection ? projection->repeaters : *repeater_marker_cache_;
+    for (size_t i = 0; i < repeaters.size() && i < repeater_row_visible_.size(); ++i) {
+        if (!repeater_row_visible_[i]) continue;
+        const auto& row = repeaters[i];
+        const auto add_endpoint = [&](const auto& marker) {
+            if (marker && marker->d >= dmin_ && marker->d <= dmax_) {
+                extend_bounds(rotate_xy(marker->x, marker->y, angle));
+            }
+        };
+        add_endpoint(row.begin_marker);
+        add_endpoint(row.end_marker);
+        if (row.segment.bounds_valid) {
+            for (const PlanRepeaterSegment::Chunk& chunk : row.segment.chunks) {
+                if (!chunk.bounds_valid || chunk.d_max < dmin_ || chunk.d_min > dmax_) continue;
+                ImVec2 corners[] = {
+                    rotate_xy(chunk.x_min, chunk.y_min, angle),
+                    rotate_xy(chunk.x_max, chunk.y_min, angle),
+                    rotate_xy(chunk.x_max, chunk.y_max, angle),
+                    rotate_xy(chunk.x_min, chunk.y_max, angle),
+                };
+                for (ImVec2 p : corners) extend_bounds(p);
+            }
+        }
+    }
+    const double pad = std::max({xmax - xmin, ymax - ymin, 1.0}) * 0.05;
+    plan_view_.fit(xmin - pad, ymin - pad, xmax + pad, ymax + pad, size);
 }
 
 const PlanData& App::current_plan_data() {
@@ -587,7 +610,7 @@ const PlanData& App::current_plan_data() {
         plan_data_cache_.other_train_path_visible == other_train_path_visible_;
     if (cache_matches) return plan_data_cache_.data;
 
-    plan_data_cache_.data = build_plan_data(false);
+    plan_data_cache_.data = build_plan_data();
     plan_data_cache_.source_revision = plan_data_source_revision_;
     plan_data_cache_.alignment_marker_revision = marker_revision;
     plan_data_cache_.has_model = has_model_;
@@ -860,7 +883,7 @@ std::optional<ImVec2> App::plan_point_from_model_xy(double x, double y) const {
 
 void App::focus_plan_at_model_point(double x, double y, std::optional<double> distance) {
     if (const auto* projection = alignment_reprojection(); projection && distance) {
-        projection->pose_at(model_.own, *distance).move(x, y);
+        projection->pose_at(*distance).move(x, y);
     }
     auto p = plan_point_from_model_xy(x, y);
     if (!p) return;
@@ -1003,9 +1026,7 @@ void App::render_plan_canvas(ImVec2 size) {
     draw->PushClipRect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), true);
 
     const auto fit_plan = [&] {
-        const PlanData fit_data = build_plan_data(true);
-        const PlanData& bounds = fit_data.own.empty() ? data : fit_data;
-        plan_view_.fit(bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax, avail);
+        fit_plan_view(current_plan_data(), avail);
     };
     if (!data.own.empty() && (!plan_view_.fitted || !keep_plan_view_)) {
         fit_plan();
@@ -1079,10 +1100,7 @@ void App::render_plan_canvas(ImVec2 size) {
         plan_view_.rotating = false;
     }
 
-    size_t selected_repeater_count = static_cast<size_t>(std::count_if(
-        repeater_row_visible_.begin(), repeater_row_visible_.end(),
-        [](unsigned char visible) { return visible != 0; }));
-    bool dense_repeater_marker_lod = dense_repeater_overview_lod(selected_repeater_count, plan_view_.scale);
+    bool dense_repeater_marker_lod = dense_repeater_overview_lod(data.visible_repeater_count, plan_view_.scale);
     bool overview_marker_lod = dense_repeater_marker_lod;
     const float marker_canvas_margin = std::max(12.0f, 12.0f * marker_size_scale);
     const double marker_hover_radius = static_cast<double>(marker_canvas_margin);
@@ -1161,14 +1179,17 @@ void App::render_plan_canvas(ImVec2 size) {
         nearest_marker_hit(data.curve_center_markers, hit_transform);
     std::optional<MarkerHit> hovered_curve_function_hit =
         nearest_marker_hit(data.curve_function_markers, hit_transform);
+    const auto visible_other_track = [&](const OtherTrackChangeMarker& marker) -> const OtherTrack* {
+        const OtherTrack& track = model_.other_tracks[marker.track_index];
+        if (!track.visible || marker.d < std::max(dmin_, track.range_min) ||
+            marker.d > std::min(dmax_, track.range_max)) return nullptr;
+        return &track;
+    };
     std::optional<MarkerHit> hovered_other_track_change_hit;
     if (marker_hits_enabled && edit_actions_available()) {
         double best = marker_hover_radius_sq;
         for (const OtherTrackChangeMarker& marker : data.other_track_change_markers) {
-            if (marker.track_index >= model_.other_tracks.size()) continue;
-            const OtherTrack& track = model_.other_tracks[marker.track_index];
-            if (!track.visible || marker.d < std::max(dmin_, track.range_min) ||
-                marker.d > std::min(dmax_, track.range_max)) continue;
+            if (!visible_other_track(marker)) continue;
             const ImVec2 point = hit_transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(point, origin, avail, marker_canvas_margin)) continue;
             const double dx = static_cast<double>(point.x - mouse.x);
@@ -1182,70 +1203,6 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
     debug_plan_stage("hit_test");
-    std::optional<size_t> hovered_station_row = hovered_station_hit
-        ? std::optional<size_t>(hovered_station_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_structure_row = hovered_structure_hit
-        ? std::optional<size_t>(hovered_structure_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_repeater_row = hovered_repeater_hit
-        ? std::optional<size_t>(hovered_repeater_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_signal_row = hovered_signal_hit
-        ? std::optional<size_t>(hovered_signal_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_section_row = hovered_section_hit
-        ? std::optional<size_t>(hovered_section_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_beacon_row = hovered_beacon_hit
-        ? std::optional<size_t>(hovered_beacon_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_pretrain_row = hovered_pretrain_hit
-        ? std::optional<size_t>(hovered_pretrain_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_other_train_stop_row = hovered_other_train_stop_hit
-        ? std::optional<size_t>(hovered_other_train_stop_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_irregularity_row = hovered_irregularity_hit
-        ? std::optional<size_t>(hovered_irregularity_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_rolling_noise_row = hovered_rolling_noise_hit
-        ? std::optional<size_t>(hovered_rolling_noise_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_map_sound_row = hovered_map_sound_hit
-        ? std::optional<size_t>(hovered_map_sound_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_map_sound_3d_row = hovered_map_sound_3d_hit
-        ? std::optional<size_t>(hovered_map_sound_3d_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_flange_noise_row = hovered_flange_noise_hit
-        ? std::optional<size_t>(hovered_flange_noise_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_joint_noise_row = hovered_joint_noise_hit
-        ? std::optional<size_t>(hovered_joint_noise_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_background_row = hovered_background_hit
-        ? std::optional<size_t>(hovered_background_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_adhesion_row = hovered_adhesion_hit
-        ? std::optional<size_t>(hovered_adhesion_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_cab_illuminance_row = hovered_cab_illuminance_hit
-        ? std::optional<size_t>(hovered_cab_illuminance_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_fog_row = hovered_fog_hit
-        ? std::optional<size_t>(hovered_fog_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_legacy_fog_row = hovered_legacy_fog_hit
-        ? std::optional<size_t>(hovered_legacy_fog_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_draw_distance_row = hovered_draw_distance_hit
-        ? std::optional<size_t>(hovered_draw_distance_hit->row_index)
-        : std::nullopt;
-    std::optional<size_t> hovered_speed_limit_row = hovered_speed_limit_hit
-        ? std::optional<size_t>(hovered_speed_limit_hit->row_index)
-        : std::nullopt;
-
     auto select_nearest_touch_marker = [&]() {
         std::optional<PlanMarkerSelection> best;
         double best_dist_sq = std::numeric_limits<double>::max();
@@ -1287,20 +1244,17 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_other_track_change_hit, PlanMarkerKind::OtherTrackChange);
         if (best) plan_marker_selection_ = *best;
     };
-    ImVec2 touch_tap_pos;
-    if (touch_input::consume_tap_in_rect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), &touch_tap_pos)) {
-        (void)touch_tap_pos;
+    const ImVec2 canvas_end(origin.x + avail.x, origin.y + avail.y);
+    if (touch_input::consume_tap_in_rect(origin, canvas_end)) {
         select_nearest_touch_marker();
     }
 
-    ImVec2 touch_long_press_pos;
-    bool touch_marker_context_requested =
-        touch_input::consume_long_press_in_rect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y),
-                                                &touch_long_press_pos);
+    const bool touch_marker_context_requested = touch_input::consume_long_press_in_rect(origin, canvas_end);
     if (!background_input && (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || touch_marker_context_requested)) {
         if (touch_marker_context_requested) plan_marker_selection_.clear();
         plan_context_menu_entries_ = collect_plan_context_entries(
-            data, mouse, origin, avail, marker_canvas_margin,
+            data, show_plan_curves ? &interpolate_markers : nullptr,
+            hit_transform, mouse, origin, avail, marker_canvas_margin,
             marker_hover_radius_sq, marker_hits_enabled);
         if (!plan_context_menu_entries_.empty()) {
             ImGui::OpenPopup("plan_marker_context");
@@ -1541,10 +1495,8 @@ void App::render_plan_canvas(ImVec2 size) {
     }
     if (edit_actions_available()) {
         for (const OtherTrackChangeMarker& marker : data.other_track_change_markers) {
-            if (marker.track_index >= model_.other_tracks.size()) continue;
-            const OtherTrack& track = model_.other_tracks[marker.track_index];
-            if (!track.visible || marker.d < std::max(dmin_, track.range_min) ||
-                marker.d > std::min(dmax_, track.range_max)) continue;
+            const OtherTrack* track = visible_other_track(marker);
+            if (!track) continue;
             const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(point, origin, avail)) continue;
             const bool hovered_marker = hovered_other_track_change_hit &&
@@ -1552,14 +1504,14 @@ void App::render_plan_canvas(ImVec2 size) {
             const bool active = marker_emphasized(
                 PlanMarkerKind::OtherTrackChange, marker.row_index,
                 hovered_marker);
-            const ImU32 color = color_u32(track.color);
+            const ImU32 color = color_u32(track->color);
             draw_selected_marker_ring(point, PlanMarkerKind::OtherTrackChange,
                                       marker.row_index, color);
             const float radius = 5.0f * marker_size_scale *
                 (active ? 1.28f : 1.0f);
             draw_map_marker_icon(
                 draw, MapMarkerVisualKind::OtherTrackChange, point,
-                (radius + 1.5f) / 0.64f, 0.0f, &track.color);
+                (radius + 1.5f) / 0.64f, 0.0f, &track->color);
             if (active) draw_plan_small_text(draw, point, color, marker.label);
         }
     }
@@ -1591,7 +1543,7 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const PlanOtherTrainStopMarker& marker : data.other_train_stop_markers) {
             ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
-            bool marker_hovered = hovered_other_train_stop_row && marker.row_index == *hovered_other_train_stop_row;
+            bool marker_hovered = hovered_other_train_stop_hit && marker.row_index == hovered_other_train_stop_hit->row_index;
             bool marker_active = marker_emphasized(PlanMarkerKind::OtherTrainStop, marker.row_index, marker_hovered);
             draw_selected_marker_ring(p, PlanMarkerKind::OtherTrainStop, marker.row_index, other_train_stop_color);
             float radius = 4.4f * marker_size_scale * (marker_active ? 1.25f : 1.0f);
@@ -1620,7 +1572,7 @@ void App::render_plan_canvas(ImVec2 size) {
             ImVec2 p = transform.plan_to_screen(st.x, st.y);
             if (!point_near_canvas(p, origin, avail)) continue;
             const bool marker_hovered =
-                hovered_station_row && st.row_index == *hovered_station_row;
+                hovered_station_hit && st.row_index == hovered_station_hit->row_index;
             const bool marker_active =
                 marker_emphasized(PlanMarkerKind::Station, st.row_index, marker_hovered);
             const ImU32 marker_color =
@@ -1648,8 +1600,8 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const auto& sp : data.speedlimits) {
             ImVec2 p = transform.plan_to_screen(sp.x, sp.y);
             if (!point_near_canvas(p, origin, avail)) continue;
-            const bool marker_hovered = hovered_speed_limit_row &&
-                sp.row_index == *hovered_speed_limit_row;
+            const bool marker_hovered = hovered_speed_limit_hit &&
+                sp.row_index == hovered_speed_limit_hit->row_index;
             const bool marker_active = marker_emphasized(
                 PlanMarkerKind::SpeedLimit, sp.row_index, marker_hovered);
             const ImU32 marker_color =
@@ -1721,7 +1673,7 @@ void App::render_plan_canvas(ImVec2 size) {
             if (!point_near_canvas(p, origin, avail)) continue;
             double dx = static_cast<double>(p.x - mouse.x);
             double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_signal_row && *hovered_signal_row == marker.row_index &&
+            bool marker_hovered = hovered_signal_hit && hovered_signal_hit->row_index == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
             bool marker_active = marker_emphasized(PlanMarkerKind::Signal, marker.row_index, marker_hovered);
             if (overview_marker_lod && !marker_active) {
@@ -1738,7 +1690,7 @@ void App::render_plan_canvas(ImVec2 size) {
 
     auto draw_colored_marker_set = [&](const std::vector<PlanMarker>& markers,
                                        PlanMarkerKind kind,
-                                       const std::optional<size_t>& hovered_row,
+                                       const std::optional<MarkerHit>& hovered_hit,
                                        MapMarkerVisualKind visual_kind,
                                        float icon_half_extent) {
         const ImU32 color = map_marker_theme_color_u32(visual_kind);
@@ -1747,7 +1699,7 @@ void App::render_plan_canvas(ImVec2 size) {
             if (!point_near_canvas(point, origin, avail)) continue;
             const double dx = static_cast<double>(point.x - mouse.x);
             const double dy = static_cast<double>(point.y - mouse.y);
-            const bool marker_hovered = hovered_row && *hovered_row == marker.row_index &&
+            const bool marker_hovered = hovered_hit && hovered_hit->row_index == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
             const bool marker_active = marker_emphasized(kind, marker.row_index, marker_hovered);
             draw_selected_marker_ring(point, kind, marker.row_index, color);
@@ -1760,12 +1712,12 @@ void App::render_plan_canvas(ImVec2 size) {
     };
 
     draw_colored_marker_set(data.section_markers, PlanMarkerKind::Section,
-                            hovered_section_row,
+                            hovered_section_hit,
                             MapMarkerVisualKind::Section, 14.0f);
     debug_plan_stage("section_markers");
 
     draw_colored_marker_set(data.beacon_markers, PlanMarkerKind::Beacon,
-                            hovered_beacon_row, MapMarkerVisualKind::Beacon, 7.0f);
+                            hovered_beacon_hit, MapMarkerVisualKind::Beacon, 7.0f);
     debug_plan_stage("beacon_markers");
 
     if (!data.pretrain_markers.empty()) {
@@ -1774,8 +1726,8 @@ void App::render_plan_canvas(ImVec2 size) {
             if (!point_near_canvas(point, origin, avail)) continue;
             const double dx = static_cast<double>(point.x - mouse.x);
             const double dy = static_cast<double>(point.y - mouse.y);
-            const bool marker_hovered = hovered_pretrain_row &&
-                *hovered_pretrain_row == marker.row_index &&
+            const bool marker_hovered = hovered_pretrain_hit &&
+                hovered_pretrain_hit->row_index == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
             const bool marker_active = marker_emphasized(
                 PlanMarkerKind::PreTrain, marker.row_index, marker_hovered);
@@ -1789,60 +1741,60 @@ void App::render_plan_canvas(ImVec2 size) {
     debug_plan_stage("pretrain_markers");
 
     draw_colored_marker_set(data.irregularity_markers, PlanMarkerKind::Irregularity,
-                            hovered_irregularity_row,
+                            hovered_irregularity_hit,
                             MapMarkerVisualKind::Irregularity, 7.0f);
     debug_plan_stage("irregularity_markers");
 
     draw_colored_marker_set(data.map_sound_markers, PlanMarkerKind::MapSound,
-                            hovered_map_sound_row,
+                            hovered_map_sound_hit,
                             MapMarkerVisualKind::MapSound, 8.0f);
     debug_plan_stage("map_sound_markers");
 
     draw_colored_marker_set(data.map_sound_3d_markers, PlanMarkerKind::MapSound3D,
-                            hovered_map_sound_3d_row,
+                            hovered_map_sound_3d_hit,
                             MapMarkerVisualKind::MapSound3D, 8.0f);
     debug_plan_stage("map_sound_3d_markers");
 
     draw_colored_marker_set(data.rolling_noise_markers, PlanMarkerKind::RollingNoise,
-                            hovered_rolling_noise_row,
+                            hovered_rolling_noise_hit,
                             MapMarkerVisualKind::RollingNoise, 7.2f);
     debug_plan_stage("rolling_noise_markers");
 
     draw_colored_marker_set(data.flange_noise_markers, PlanMarkerKind::FlangeNoise,
-                            hovered_flange_noise_row,
+                            hovered_flange_noise_hit,
                             MapMarkerVisualKind::FlangeNoise, 7.0f);
     debug_plan_stage("flange_noise_markers");
 
     draw_colored_marker_set(data.joint_noise_markers, PlanMarkerKind::JointNoise,
-                            hovered_joint_noise_row,
+                            hovered_joint_noise_hit,
                             MapMarkerVisualKind::JointNoise, 7.0f);
     debug_plan_stage("joint_noise_markers");
 
     draw_colored_marker_set(data.background_markers, PlanMarkerKind::Background,
-                            hovered_background_row,
+                            hovered_background_hit,
                             MapMarkerVisualKind::Background, 6.0f);
     debug_plan_stage("background_change_markers");
 
     draw_colored_marker_set(data.adhesion_markers, PlanMarkerKind::Adhesion,
-                            hovered_adhesion_row,
+                            hovered_adhesion_hit,
                             MapMarkerVisualKind::Adhesion, 7.2f);
     debug_plan_stage("adhesion_markers");
 
     draw_colored_marker_set(data.cab_illuminance_markers, PlanMarkerKind::CabIlluminance,
-                            hovered_cab_illuminance_row,
+                            hovered_cab_illuminance_hit,
                             MapMarkerVisualKind::CabIlluminance, 8.0f);
     debug_plan_stage("cab_illuminance_markers");
 
     draw_colored_marker_set(data.fog_markers, PlanMarkerKind::Fog,
-                            hovered_fog_row, MapMarkerVisualKind::Fog, 7.0f);
+                            hovered_fog_hit, MapMarkerVisualKind::Fog, 7.0f);
     debug_plan_stage("fog_markers");
 
     draw_colored_marker_set(data.legacy_fog_markers, PlanMarkerKind::LegacyFog,
-                            hovered_legacy_fog_row, MapMarkerVisualKind::Fog, 7.0f);
+                            hovered_legacy_fog_hit, MapMarkerVisualKind::Fog, 7.0f);
     debug_plan_stage("legacy_fog_markers");
 
     draw_colored_marker_set(data.draw_distance_markers, PlanMarkerKind::DrawDistance,
-                            hovered_draw_distance_row,
+                            hovered_draw_distance_hit,
                             MapMarkerVisualKind::DrawDistance, 7.0f);
     debug_plan_stage("draw_distance_markers");
 
@@ -1860,7 +1812,7 @@ void App::render_plan_canvas(ImVec2 size) {
                 if (!point_near_canvas(p, origin, avail)) continue;
                 double dx = static_cast<double>(p.x - mouse.x);
                 double dy = static_cast<double>(p.y - mouse.y);
-                bool marker_hovered = hovered_repeater_row && *hovered_repeater_row == marker.row_index &&
+                bool marker_hovered = hovered_repeater_hit && hovered_repeater_hit->row_index == marker.row_index &&
                     dx * dx + dy * dy <= marker_hover_radius_sq;
                 bool marker_active = marker_emphasized(PlanMarkerKind::Repeater, marker.row_index, marker_hovered);
                 draw_selected_marker_ring(p, PlanMarkerKind::Repeater, marker.row_index, repeater_color);
@@ -1877,7 +1829,7 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const auto& marker : data.structure_markers) {
             ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
-            bool marker_hovered = hovered_structure_row && *hovered_structure_row == marker.row_index;
+            bool marker_hovered = hovered_structure_hit && hovered_structure_hit->row_index == marker.row_index;
             bool marker_active = marker_emphasized(PlanMarkerKind::Structure, marker.row_index, marker_hovered);
             draw_selected_marker_ring(p, PlanMarkerKind::Structure, marker.row_index, structure_color);
             float marker_scale = marker_size_scale *

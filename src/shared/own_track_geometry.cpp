@@ -25,6 +25,7 @@ namespace {
 
 constexpr double k_inf = std::numeric_limits<double>::infinity();
 constexpr double k_pi = 3.141592653589793238462643383279502884;
+constexpr double k_straight_radius_threshold = 1e6;
 
 std::pair<double, double> rotate_xy(double x, double y, double theta) {
     return {std::cos(theta) * x - std::sin(theta) * y,
@@ -201,7 +202,7 @@ std::unordered_map<TransitionCurveKey, CurveResult, TransitionCurveKeyHash> g_tr
 double radius_from_curvature(double curvature) {
     if (curvature == 0.0) return k_inf;
     double radius = 1.0 / curvature;
-    return std::fabs(radius) > 1e6 ? k_inf : radius;
+    return std::fabs(radius) > k_straight_radius_threshold ? k_inf : radius;
 }
 
 CurveResult circular_curve_local_uncached(double R, double l_intermediate) {
@@ -283,8 +284,8 @@ HalfSinResult halfsin_intermediate(double L, double r1, double r2, double l_inte
 }
 
 CurveResult linear_transition_curve_local(double L, double r1, double r2, double l_intermediate) {
-    if (l_intermediate <= 0.0) return {0.0, 0.0, 0.0, std::fabs(r1) < 1e6 ? r1 : 0.0};
-    if (L == 0.0) return {0.0, 0.0, 0.0, std::fabs(r2) < 1e6 ? r2 : 0.0};
+    if (l_intermediate <= 0.0) return {0.0, 0.0, 0.0, std::fabs(r1) < k_straight_radius_threshold ? r1 : 0.0};
+    if (L == 0.0) return {0.0, 0.0, 0.0, std::fabs(r2) < k_straight_radius_threshold ? r2 : 0.0};
 
     const double k0 = inv_radius(r1);
     const double k1 = inv_radius(r2);
@@ -351,12 +352,12 @@ CurveResult transition_curve(double L, double r1, double r2, double theta,
                              bool half_sine, double l_intermediate) {
     r1 = r1 == 0.0 ? k_inf : r1;
     r2 = r2 == 0.0 ? k_inf : r2;
-    r1 = std::fabs(r1) > 1e6 ? k_inf : r1;
-    r2 = std::fabs(r2) > 1e6 ? k_inf : r2;
+    r1 = std::fabs(r1) > k_straight_radius_threshold ? k_inf : r1;
+    r2 = std::fabs(r2) > k_straight_radius_threshold ? k_inf : r2;
 
     CurveResult local = transition_curve_local(L, r1, r2, half_sine, l_intermediate);
     auto [x, y] = rotate_xy(local.x, local.y, theta);
-    return {x, y, local.tau, std::fabs(local.radius) < 1e6 ? local.radius : 0.0};
+    return {x, y, local.tau, std::fabs(local.radius) < k_straight_radius_threshold ? local.radius : 0.0};
 }
 
 struct GradientProjection {
@@ -442,8 +443,7 @@ std::vector<GradientProjectionSample> build_gradient_projection_samples(
         if (gradient_pointer.last() >= 0 && gradient_pointer.next() >= 0) {
             const Event& next = gradient_pointer.event(gradient_pointer.next());
             if (!next.value.is_continue() &&
-                (next.flag == "i" ||
-                 gradient_pointer.event(gradient_pointer.last()).flag == "bt") &&
+                interpolates_to(gradient_pointer.event(gradient_pointer.last()).flag, next.flag) &&
                 last_gradient != as_number(next.value)) {
                 segment = gradient_transition(next.distance - last_distance,
                                               last_gradient,
@@ -551,7 +551,7 @@ std::vector<double> sample(const std::vector<Event>& events,
             if (radius_p.last() >= 0 && radius_p.next() >= 0) {
                 const auto& next = radius_p.event(radius_p.next());
                 if (!next.value.is_continue() &&
-                    (next.flag == "i" || radius_p.event(radius_p.last()).flag == "bt")) {
+                    interpolates_to(radius_p.event(radius_p.last()).flag, next.flag)) {
                     const double next_radius = as_number(next.value);
                     if (lp.radius_anchor_value != next_radius) {
                         const double transition_start =

@@ -260,7 +260,7 @@ ctest --test-dir build --output-on-failure
 - **軌道狀態機**：`LastPos` 儲存上一取樣點，`TrackPointer` 按距離推進 own-track 事件並給出目前 radius、gradient、cant、方向與座標；它是常規取樣和事件邊界取樣的基礎。
 - **曲線數學**：`rotate_xy()`、Gauss 積分、Fresnel 級數/漸近式實作區域座標積分；`circular_curve*()` 計算圓曲線，`halfsin_intermediate()`、`linear_transition_curve_local()`、`transition_curve*()` 計算半正弦/線性緩和曲線。key/hash 結構快取重複參數的曲線結果。
 - **坡度投影**：`constant_gradient_projection()`、`sinc()`、`gradient_transition()` 計算路線長度對應的平面投影和高程；`build_gradient_projection_samples()`、`build_event_projected_distances()` 將事件里程對應到平面位置。
-- **自軌道產生**：`sorted_unique()`、`append_arange()` 匯合事件點和等間距點；`generate_owntrack()` 逐取樣寫出距離、XYZ、朝向、radius、gradient、cant 等欄；`generate_curveradius()` 形成曲率圖資料。
+- **自軌道產生**：`sort_unique()`、`append_arange()` 匯合事件點和等間距點；`generate_owntrack()` 逐取樣寫出距離、XYZ、朝向、radius、gradient、cant 等欄；`generate_curveradius()` 形成曲率圖資料。
 - **其他軌道產生**：`relative_position()` 計算曲線上的相對偏移；`CantProcessor` 處理超高 Begin/End/Interpolate；`build_othertrack_buffer()` 合併位置、X/Y 內插、軌距、中心和 cant，輸出與 own-track 對齊的矩陣及有效性。
 - **重定位與放置**：`relocate()` 統一平移幾何到穩定區域座標；`build_structure_put_buffer()` 為佈景放置提供按里程取樣的變換基礎。
 - **場景自適應控制點**：角度/矩陣輔助函式與 `build_scene_adaptive_controlpoints()` 把事件、模型跨度、曲率、坡度和請求範圍組合成密度自適應控制點。
@@ -407,7 +407,7 @@ ctest --test-dir build --output-on-failure
 
 #### `src/canvas2d/canvas2D.cpp`
 
-- **查詢與業務資料**：`nearest_own_index()`、`interp_own_z()`、`track_info_at()`、`speed_at()`、`curve_sections()` 為測量和疊加層取樣；`build_plan_data()` 合併 own/other track、站點、限速與 marker，`current_plan_data()` 以 model/geometry/visibility revision 快取；profile 資料有相同 build/current 分層。
+- **查詢與檢視資料**：`current_plan_data()` 依幾何和可見性快取自軌樣本、車站、限速及標記。`fit_plan_view()` 合併快取邊界、可見他軌道及 Repeater 端點和區塊角點，再按合併範圍長邊的 5% 向四周留白。縱斷面資料同樣分開建置與讀取。
 - **檢視操作與主流程**：測量、聚焦、座標轉換及 `jump_to_distance()` 統一導覽；`render_plan_canvas()` 編排滑鼠/觸控互動、可見里程計算，以及背景、網格、軌道、Repeater、車站、標記、標籤、3D 位置和焦點的繪製。
 
 #### `src/canvas2d/canvas2d_view_state.h` 與 `src/canvas2d/canvas2d_view_state.cpp`
@@ -519,8 +519,8 @@ ctest --test-dir build --output-on-failure
 
 - `invalidate_table_cache()` 清除 revision 與衍生列；`reset_marker_visibility()`、`sync_marker_visibility_sizes()` 保持二維 marker flags 與模型列數量同步。
 - Structure、Repeater、Signal 的 `locate_*_on_plan/in_list/in_scene_preview()` 分別更新 plan focus、table highlight/window visibility 和 Canvas3D jump；Repeater 額外處理 End/變化邊界。
-- `locate_standard_marker_on_plan()`、`locate_standard_marker_in_list()` 是 Beacon、Section、Irregularity、Sound/Noise、Background、Adhesion、CabIlluminance、Fog、DrawDistance、SpeedLimit 等成對函式的公開實作。
-- other-train stop 定位同時開啟對應分組與 stop 列。`locate_scene_marker_row_in_list()`、`locate_scene_marker_row_in_scene_preview()` 把 Canvas3D marker enum 對應回正確表格/來源列；`can_locate_scene_preview_row()` 檢查場景、索引和可見性條件。
+- `standard_marker_navigation()` 將每種標準標記對應至平面圖快取、顯示設定、清單視窗、焦點、捲動及醒目提示。編譯時檢查 `None` 和 `Count` 之間的每種類型恰好登記一次。平面圖、表格和場景共用此對應。
+- 定位其他列車停車點會開啟對應分組與列。`can_locate_scene_preview_row()` 檢查場景是否就緒，表格及 Repeater 的屬性視窗共用此條件。
 
 ### 除錯入口與契約測試
 
@@ -723,7 +723,7 @@ Canvas3D 在替換場景時建立放置軌道索引，支援自軌道別名、�
 
 plan、scene 和 own-track-edit 共用臨時 Map/Include 契約，覆蓋 Interpolate 的 0/1/2 參數、Apply/Delete/Reset、原始碼識別資訊及唯一可編輯標記。真實路線按實際存在的目標驗證；空的列、事件和標記集合須一致，需要執行個體的檢查記為不適用。own-track-edit 還檢查 Preview→Edit 合併，包括透過 `rand()` 選擇原始碼檔案的地圖。
 
-`--debug-headless-table-cache-bench` 使用 Edit 後設資料及關閉 INI 持久化的 ImGui/ImPlot context。預熱後分別測量冷快取重建、熱快取單次命中和全部表格的一影格繪製，核對列、儲存格、識別資訊、動態標題/寬度的指紋。原始碼位元組/雜湊檢查位於計時區間外。預設重複 5 次（範圍 1–100），取樣間距 25 m。
+`--debug-headless-table-cache-bench` 使用 Edit 後設資料、建立工具列紋理的 D3D11 裝置，以及關閉 INI 持久化的 ImGui/ImPlot context。每個樣本測量一次冷快取重建、10 萬次熱快取呼叫的單次平均耗時和全部表格的一影格繪製，核對列、儲存格、識別資訊、動態標題及寬度的指紋。原始碼位元組和雜湊在計時區間外檢查。預設重複 5 次（範圍 1–100），取樣間距 25 m。佈景模型搜尋輸出 `PASS`、`FAIL` 或附原因的 `SKIP`。
 
 `--debug-headless-diagnostics-popup-bench` 使用 100,000 條混合記錄檢查並列順序、快照修訂快取和裁剪算繪。
 

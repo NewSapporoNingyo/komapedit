@@ -24,6 +24,7 @@
 #include <mutex>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
 #include <string>
 #include <thread>
@@ -275,124 +276,134 @@ CpuModelData derive_put_between_model(const CpuModelData& source,
 
 } // namespace canvas3d_detail
 
-void Canvas3D::Impl::start_scene_put_between_preview_worker() {
-    if (scene_put_between_preview_worker.joinable()) return;
-    {
-        std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
-        scene_put_between_preview_stop = false;
-    }
+void Canvas3D::Impl::run_scene_put_between_preview_worker() {
+    using Failure = ScenePutBetweenPreviewResult::Failure;
     try {
-        scene_put_between_preview_worker = std::thread([this]() noexcept {
-            auto report_error = [this](std::string_view error) noexcept {
-                try {
-                    push_scene_load_log(
-                        "[warn]canvas3D.cpp: PutBetween preview worker failed: " + std::string(error));
-                } catch (...) {
-                }
-            };
-            try {
-                std::unordered_map<std::string, ScenePutBetweenPreparedSource> source_cache;
-                for (;;) {
-                    ScenePutBetweenPreviewJob job;
-                    {
-                        std::unique_lock<std::mutex> lock(scene_put_between_preview_mutex);
-                        scene_put_between_preview_cv.wait(lock, [this]() {
-                            return scene_put_between_preview_stop ||
-                                scene_put_between_preview_pending.has_value();
-                        });
-                        if (scene_put_between_preview_stop) return;
-                        job = std::move(*scene_put_between_preview_pending);
-                        scene_put_between_preview_pending.reset();
-                    }
-
-                    ScenePutBetweenPreviewResult result;
-                    result.sequence = job.sequence;
-                    result.geometry_generation = job.geometry_generation;
-                    result.target = std::move(job.target);
-                    try {
-                        auto source_it = source_cache.find(job.request.source_path);
-                        if (source_it == source_cache.end()) {
-                            if (source_cache.size() >= 4) source_cache.clear();
-                            ScenePutBetweenPreparedSource prepared;
-                            prepared.source = std::make_shared<CpuModelData>();
-                            prepared.source->path = job.request.source_path;
-                            prepared.source->scene_key = job.request.source_path;
-                            MlMeshData data = {};
-                            std::string load_error;
-                            if (ModelLoaderClient::load(job.request.source_path, data, load_error)) {
-                                ModelDataGuard data_guard(data);
-                                *prepared.source =
-                                    copy_cpu_model(job.request.source_path, data);
-                            } else {
-                                prepared.source->error = load_error;
-                            }
-                            prepared.source_template =
-                                prepare_put_between_source(*prepared.source);
-                            source_it = source_cache.emplace(
-                                job.request.source_path, std::move(prepared)).first;
-                        }
-
-                        result.source = source_it->second.source;
-                        result.derived = derive_put_between_model(
-                            *source_it->second.source,
-                            source_it->second.source_template,
-                            job.request);
-                    } catch (const std::exception& error) {
-                        auto failed = std::make_shared<CpuModelData>();
-                        failed->path = job.request.source_path;
-                        failed->scene_key = job.request.source_path;
-                        failed->error = error.what();
-                        result.source = std::move(failed);
-                        result.derived.error = error.what();
-                        report_error(error.what());
-                    } catch (...) {
-                        auto failed = std::make_shared<CpuModelData>();
-                        failed->path = job.request.source_path;
-                        failed->scene_key = job.request.source_path;
-                        failed->error = "unknown worker error";
-                        result.source = std::move(failed);
-                        result.derived.error = "unknown worker error";
-                        report_error("unknown worker error");
-                    }
-                    {
-                        std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
-                        if (!scene_put_between_preview_stop &&
-                            result.sequence == scene_put_between_preview_latest_sequence) {
-                            scene_put_between_preview_completed = std::move(result);
-                        }
-                    }
-                    notify_scene_loading_progress();
-                }
-            } catch (const std::exception& error) {
-                report_error(error.what());
-            } catch (...) {
-                report_error("unknown worker error");
+#ifndef NDEBUG
+        if (std::exchange(debug_faults.put_between_start_failure, false)) throw std::bad_alloc();
+#endif
+        std::unordered_map<std::string, ScenePutBetweenPreparedSource> source_cache;
+        for (;;) {
+            ScenePutBetweenPreviewJob job;
+            {
+                std::unique_lock<std::mutex> lock(scene_put_between_preview_mutex);
+                scene_put_between_preview_cv.wait(lock, [this]() {
+                    return scene_put_between_preview_state != PutBetweenPreviewWorkerState::Running ||
+                        scene_put_between_preview_pending.has_value();
+                });
+                if (scene_put_between_preview_state != PutBetweenPreviewWorkerState::Running) return;
+                job = std::move(*scene_put_between_preview_pending);
+                scene_put_between_preview_pending.reset();
             }
+
+            ScenePutBetweenPreviewResult result;
+            result.sequence = job.sequence;
+            result.geometry_generation = job.geometry_generation;
             try {
-                notify_scene_loading_progress();
+#ifndef NDEBUG
+                if (debug_faults.put_between_job_started) debug_faults.put_between_job_started();
+                if (debug_faults.put_between_allocation_failure.exchange(false)) throw std::bad_alloc();
+#endif
+                const auto& path = job.request.source_path;
+                auto source = source_cache.find(path);
+                if (source == source_cache.end()) {
+                    if (source_cache.size() >= 4) source_cache.clear();
+                    ScenePutBetweenPreparedSource prepared;
+                    prepared.source = std::make_shared<CpuModelData>();
+                    MlMeshData data = {};
+                    std::string load_error;
+                    if (load_scene_model_data(path, data, load_error)) {
+                        ModelDataGuard data_guard(data);
+                        *prepared.source = copy_cpu_model(path, data);
+                    } else {
+                        prepared.source->error = std::move(load_error);
+                    }
+                    prepared.source_template = prepare_put_between_source(*prepared.source);
+                    source = source_cache.emplace(path, std::move(prepared)).first;
+                }
+
+                result.source = source->second.source;
+                result.derived = derive_put_between_model(
+                    *result.source, source->second.source_template, job.request);
+            } catch (const std::bad_alloc&) {
+                result.failure = Failure::Allocation;
             } catch (...) {
+                result.failure = Failure::Exception;
+                result.exception = std::current_exception();
             }
-        });
-    } catch (const std::exception& error) {
-        push_scene_load_log(
-            "[warn]canvas3D.cpp: failed to start PutBetween preview worker: " +
-            std::string(error.what()));
+            {
+                std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
+                if (scene_put_between_preview_state == PutBetweenPreviewWorkerState::Running &&
+                    result.sequence == scene_put_between_preview_latest_sequence) {
+                    scene_put_between_preview_completed = std::move(result);
+                }
+            }
+            notify_scene_loading_progress();
+        }
+    } catch (...) {
+        bool pending_job = false;
+        {
+            std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
+            if (scene_put_between_preview_state != PutBetweenPreviewWorkerState::Running) return;
+            scene_put_between_preview_state = PutBetweenPreviewWorkerState::Exited;
+            if (scene_put_between_preview_pending) {
+                auto& result = scene_put_between_preview_completed.emplace();
+                result.sequence = scene_put_between_preview_pending->sequence;
+                result.geometry_generation = scene_put_between_preview_pending->geometry_generation;
+                result.failure = Failure::WorkerExited;
+                result.exception = std::current_exception();
+                scene_put_between_preview_pending.reset();
+                pending_job = true;
+            }
+        }
+        if (!pending_job) {
+            log_scene_worker_failure({"[warn]canvas3D.cpp: PutBetween preview worker exited"});
+        }
+        notify_scene_loading_progress();
     }
+}
+
+std::uint64_t Canvas3D::Impl::submit_scene_put_between_preview_job(ScenePutBetweenPreviewJob job) {
+    std::unique_lock<std::mutex> lock(scene_put_between_preview_mutex);
+    if (scene_put_between_preview_state == PutBetweenPreviewWorkerState::Exited) {
+        scene_put_between_preview_state = PutBetweenPreviewWorkerState::Stopped;
+        lock.unlock();
+        scene_put_between_preview_worker.join();
+        lock.lock();
+    }
+    if (scene_put_between_preview_state == PutBetweenPreviewWorkerState::Stopped) {
+        scene_put_between_preview_worker = std::thread(&Impl::run_scene_put_between_preview_worker, this);
+        scene_put_between_preview_state = PutBetweenPreviewWorkerState::Running;
+    }
+    const std::uint64_t sequence = ++scene_put_between_preview_latest_sequence;
+    job.sequence = sequence;
+    scene_put_between_preview_pending = std::move(job);
+    scene_put_between_preview_completed.reset();
+    lock.unlock();
+    scene_put_between_preview_cv.notify_one();
+    return sequence;
 }
 
 void Canvas3D::Impl::stop_scene_put_between_preview_worker() {
     {
         std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
-        scene_put_between_preview_stop = true;
+        scene_put_between_preview_state = PutBetweenPreviewWorkerState::Stopped;
         scene_put_between_preview_pending.reset();
         scene_put_between_preview_completed.reset();
     }
-    scene_put_between_preview_cv.notify_all();
+    scene_put_between_preview_cv.notify_one();
     if (scene_put_between_preview_worker.joinable()) {
         scene_put_between_preview_worker.join();
     }
+}
+
+void Canvas3D::Impl::discard_scene_put_between_preview_request() {
     std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
-    scene_put_between_preview_stop = false;
+    ++scene_put_between_preview_latest_sequence;
+    scene_put_between_preview_pending.reset();
+    scene_put_between_preview_completed.reset();
+    scene_structure_edit.preview_sequence = 0;
+    scene_structure_edit.resume_preview_after_model_reload = false;
 }
 
 std::uint64_t Canvas3D::Impl::queue_scene_put_between_preview(
@@ -410,38 +421,28 @@ std::uint64_t Canvas3D::Impl::queue_scene_put_between_preview(
         placement_track_path_for_key(target.put_between_track_key2);
     if (!own || !track1 || !track2) return 0;
 
-    start_scene_put_between_preview_worker();
-    if (!scene_put_between_preview_worker.joinable()) return 0;
-    ScenePutBetweenPreviewJob job;
-    job.geometry_generation = scene_geometry_generation;
-    job.target = target;
-    job.request.key = scene_put_between_preview_model_key(
-        target.edit_id, scene_geometry_generation);
-    job.request.source_path = target.model_path;
-    job.request.put_between.enabled = true;
-    job.request.put_between.distance = target.distance;
-    job.request.put_between.flag = target.put_between_flag & 1;
-    job.request.put_between.origin = origin;
-    job.request.put_between.own_track = own;
-    job.request.put_between.track1 = track1;
-    job.request.put_between.track2 = track2;
-    {
-        std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
-        job.sequence = ++scene_put_between_preview_next_sequence;
-        scene_put_between_preview_latest_sequence = job.sequence;
-        scene_put_between_preview_pending = std::move(job);
-        scene_put_between_preview_completed.reset();
+    try {
+        return submit_scene_put_between_preview_job({0, scene_geometry_generation, {
+            scene_put_between_preview_model_key(target.edit_id, scene_geometry_generation),
+            target.model_path,
+            {true, target.distance, target.put_between_flag & 1, origin, own, track1, track2}
+        }});
+    } catch (const std::exception& error) {
+        log_scene_worker_failure({
+            "[warn]canvas3D.cpp: could not queue PutBetween preview: ", error.what()});
+        return 0;
     }
-    scene_put_between_preview_cv.notify_one();
-    return scene_put_between_preview_latest_sequence;
 }
 
 std::optional<ScenePutBetweenPreviewResult>
 Canvas3D::Impl::take_scene_put_between_preview_result() {
-    std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
-    std::optional<ScenePutBetweenPreviewResult> result =
-        std::move(scene_put_between_preview_completed);
-    scene_put_between_preview_completed.reset();
+    std::unique_lock<std::mutex> lock(scene_put_between_preview_mutex);
+    auto result = std::exchange(scene_put_between_preview_completed, std::nullopt);
+    if (scene_put_between_preview_state == PutBetweenPreviewWorkerState::Exited) {
+        scene_put_between_preview_state = PutBetweenPreviewWorkerState::Stopped;
+        lock.unlock();
+        scene_put_between_preview_worker.join();
+    }
     return result;
 }
 
@@ -450,12 +451,6 @@ bool Canvas3D::Impl::upload_scene_put_between_preview_model(
     const std::string& preview_key,
     const SceneModelGpu& shared_model,
     std::string& error) {
-    if (!cpu.ok || cpu.vertices.empty() || !shared_model.index_buffer ||
-        shared_model.state != SceneModelGpu::State::Ready) {
-        error = cpu.error.empty()
-            ? "PutBetween preview source model is not ready" : cpu.error;
-        return false;
-    }
     if (cpu.vertices.size() >
         static_cast<size_t>(std::numeric_limits<UINT>::max() /
                             sizeof(GpuVertex))) {
@@ -463,14 +458,18 @@ bool Canvas3D::Impl::upload_scene_put_between_preview_model(
         return false;
     }
 
-    SceneModelGpu& model = scene_models[preview_key];
-    model.preview_only = true;
+    SceneModelGpu& current = scene_models[preview_key];
+    current.preview_only = true;
     const UINT vertex_count = static_cast<UINT>(cpu.vertices.size());
-    const bool rebuild = !model.dynamic_vertices ||
-        model.shared_model_key != cpu.shared_model_key ||
-        !model.vertex_buffer || model.vertex_capacity < vertex_count;
+    const bool rebuild = !current.dynamic_vertices ||
+        current.shared_model_key != cpu.shared_model_key ||
+        current.vertex_capacity < vertex_count;
+    SceneModelGpu replacement;
+    const auto release = [this](SceneModelGpu* model) { release_scene_model(*model); };
+    const std::unique_ptr<SceneModelGpu, decltype(release)> cleanup(
+        rebuild ? &replacement : nullptr, release);
+    SceneModelGpu& model = rebuild ? replacement : current;
     if (rebuild) {
-        release_scene_model(model);
         D3D11_BUFFER_DESC vb_desc = {};
         vb_desc.ByteWidth = vertex_count * sizeof(GpuVertex);
         vb_desc.Usage = D3D11_USAGE_DYNAMIC;
@@ -481,8 +480,6 @@ bool Canvas3D::Impl::upload_scene_put_between_preview_model(
             error = hresult_text("CreateBuffer(PutBetween preview vertex)", hr);
             return false;
         }
-        model.vertex_capacity = vertex_count;
-        model.dynamic_vertices = true;
         model.shared_model_key = cpu.shared_model_key;
         model.index_buffer = shared_model.index_buffer;
         model.index_buffer->AddRef();
@@ -492,6 +489,9 @@ bool Canvas3D::Impl::upload_scene_put_between_preview_model(
             if (material.texture) material.texture->AddRef();
         }
         model.index_count = shared_model.index_count;
+        model.vertex_capacity = vertex_count;
+        model.dynamic_vertices = true;
+        model.preview_only = true;
     }
 
     D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -507,9 +507,10 @@ bool Canvas3D::Impl::upload_scene_put_between_preview_model(
     model.bounds_min = cpu.bounds_min;
     model.bounds_max = cpu.bounds_max;
     model.center = cpu.center;
-    model.radius = std::max(cpu.radius, 0.001f);
+    model.radius = cpu.radius;
     model.state = SceneModelGpu::State::Ready;
     model.error.clear();
+    if (rebuild) std::swap(current, replacement);
     return true;
 }
 
@@ -519,62 +520,70 @@ void Canvas3D::Impl::apply_scene_put_between_preview_result() {
     if (std::exchange(edit.resume_preview_after_model_reload, false) && edit.preview_sequence == 0) {
         edit.preview_sequence = queue_scene_put_between_preview(edit.current);
     }
-    std::optional<ScenePutBetweenPreviewResult> pending =
-        take_scene_put_between_preview_result();
-    if (!pending) return;
-    ScenePutBetweenPreviewResult& result = *pending;
-    if (!scene_active || !scene_structure_edit.active ||
-        scene_structure_edit.kind != Canvas3DSceneEditKind::StructurePutBetween ||
-        result.geometry_generation != scene_geometry_generation ||
-        result.sequence != scene_structure_edit.preview_sequence ||
-        !same_placement_edit_target(result.target, scene_structure_edit.current)) {
+    auto pending = take_scene_put_between_preview_result();
+    if (!pending || !scene_active || !edit.active ||
+        edit.kind != Canvas3DSceneEditKind::StructurePutBetween ||
+        pending->geometry_generation != scene_geometry_generation ||
+        pending->sequence != edit.preview_sequence) {
         return;
     }
-    if (!result.source || !result.source->ok || !result.derived.ok) {
-        const std::string detail = !result.derived.error.empty()
-            ? result.derived.error
-            : result.source ? result.source->error : std::string("source model unavailable");
-        push_scene_load_log(
-            "[warn]canvas3D.cpp: PutBetween live preview failed: " + detail);
+    edit.preview_sequence = 0;
+
+    using Failure = ScenePutBetweenPreviewResult::Failure;
+    auto& result = *pending;
+    constexpr std::string_view failure_prefix = "[warn]canvas3D.cpp: PutBetween live preview failed: ";
+    if (result.failure == Failure::Allocation) {
+        log_scene_worker_failure({failure_prefix, "model allocation failed"});
+        return;
+    }
+    if (result.failure != Failure::None) {
+        const std::string_view stage = result.failure == Failure::WorkerExited
+            ? "worker exited: " : "";
+        try {
+            std::rethrow_exception(result.exception);
+        } catch (const std::exception& error) {
+            log_scene_worker_failure({failure_prefix, stage, error.what()});
+        } catch (...) {
+            log_scene_worker_failure({failure_prefix, stage, "unknown worker error"});
+        }
+        return;
+    }
+    if (!result.derived.ok) {
+        log_scene_worker_failure({failure_prefix, result.derived.error});
         return;
     }
 
-    auto [shared_it, inserted] = scene_models.try_emplace(result.source->path);
-    if (inserted) {
-        shared_it->second.preview_only = true;
-        scene_put_between_preview_base_model_keys.insert(result.source->path);
-    }
-    if (inserted || shared_it->second.state != SceneModelGpu::State::Ready) {
-        const CpuModelData& source = *result.source;
-        std::string source_error;
-        if (!upload_scene_model(source, source_error) ||
-            shared_it->second.state != SceneModelGpu::State::Ready) {
-            push_scene_load_log(
-                "[warn]canvas3D.cpp: PutBetween live preview base upload failed: " +
-                (source_error.empty() ? shared_it->second.error : source_error));
+    try {
+        Canvas3DPlacementEditTarget target = edit.current;
+        auto desired = put_between_instance_from_target(target, edit.baseline_instance);
+        auto shared = scene_models.find(result.source->path);
+        if (shared == scene_models.end()) {
+            scene_put_between_preview_base_model_keys.insert(result.source->path);
+            shared = scene_models.try_emplace(result.source->path).first;
+            shared->second.preview_only = true;
+        }
+        std::string error;
+        if (shared->second.state != SceneModelGpu::State::Ready &&
+            (!upload_scene_model(*result.source, error) ||
+             shared->second.state != SceneModelGpu::State::Ready)) {
+            log_scene_worker_failure({
+                failure_prefix, "base upload: ", error.empty() ? shared->second.error : error});
             return;
         }
-    }
 
-    const std::string preview_key = scene_put_between_preview_model_key(
-        result.target.edit_id, scene_geometry_generation);
-    std::string upload_error;
-    if (!upload_scene_put_between_preview_model(
-            result.derived, preview_key, shared_it->second, upload_error)) {
-        push_scene_load_log(
-            "[warn]canvas3D.cpp: PutBetween live preview upload failed: " +
-            upload_error);
-        return;
+        auto& preview_key = result.derived.scene_key;
+        if (!upload_scene_put_between_preview_model(result.derived, preview_key, shared->second, error)) {
+            log_scene_worker_failure({failure_prefix, error});
+            return;
+        }
+        if (!write_scene_put_between_instance(target.edit_id, std::move(desired), preview_key)) {
+            log_scene_worker_failure({failure_prefix, "instance update failed"});
+            return;
+        }
+        edit.completed = std::move(target);
+        edit.preview_model_key = std::move(preview_key);
+        release_unused_put_between_preview_base_models();
+    } catch (const std::exception& error) {
+        log_scene_worker_failure({failure_prefix, error.what()});
     }
-    Canvas3DModelInstance desired = put_between_instance_from_target(
-        result.target, scene_structure_edit.baseline_instance);
-    if (!write_scene_put_between_instance(
-            result.target.edit_id, std::move(desired), preview_key)) {
-        push_scene_load_log(
-            "[warn]canvas3D.cpp: PutBetween live preview instance update failed");
-        return;
-    }
-    scene_structure_edit.completed = result.target;
-    scene_structure_edit.preview_model_key = preview_key;
-    release_unused_put_between_preview_base_models();
 }

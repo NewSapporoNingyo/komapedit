@@ -16,6 +16,7 @@
 #include "scenario_route.h"
 
 #include <cstring>
+#include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <new>
@@ -52,6 +53,14 @@ size_t checked_scenario_size_mul(size_t left, size_t right) {
         throw std::bad_alloc();
     }
     return left * right;
+}
+
+char* append_scenario_string(char*& cursor, const std::string& value, bool nul_terminated) {
+    const size_t bytes = value.size() + static_cast<size_t>(nul_terminated);
+    char* start = cursor;
+    std::memcpy(start, value.c_str(), bytes);
+    cursor += bytes;
+    return start;
 }
 
 const KvScenarioSnapshot* allocate_scenario_snapshot(
@@ -91,9 +100,16 @@ const KvScenarioSnapshot* allocate_scenario_snapshot(
         KvStringRef reference{
             static_cast<uint64_t>(cursor - string_data),
             static_cast<uint64_t>(value.size())};
-        if (!value.empty()) std::memcpy(cursor, value.data(), value.size());
-        cursor += value.size();
+        append_scenario_string(cursor, value, false);
         return reference;
+    };
+    const auto write_rows = [&](const auto& entries, KvScenarioPathWeightRow* rows) {
+        for (size_t i = 0; i < entries.size(); ++i) {
+            const auto& entry = entries[i];
+            rows[i] = {copy_string(entry.path_text), entry.weight,
+                       entry.has_explicit_weight ? 1u : 0u, 0};
+        }
+        return entries.empty() ? nullptr : rows;
     };
 
     *snapshot = KvScenarioSnapshot{};
@@ -102,23 +118,11 @@ const KvScenarioSnapshot* allocate_scenario_snapshot(
     snapshot->string_data = string_data;
     snapshot->string_size = string_bytes;
     snapshot->title = copy_string(document.title);
-    snapshot->routes = document.routes.empty() ? nullptr : route_rows;
+    snapshot->routes = write_rows(document.routes, route_rows);
     snapshot->route_count = document.routes.size();
-    for (size_t i = 0; i < document.routes.size(); ++i) {
-        route_rows[i].path = copy_string(document.routes[i].path_text);
-        route_rows[i].weight = document.routes[i].weight;
-        route_rows[i].has_explicit_weight = document.routes[i].has_explicit_weight ? 1u : 0u;
-        route_rows[i].reserved = 0;
-    }
     snapshot->route_title = copy_string(document.route_title);
-    snapshot->vehicles = document.vehicles.empty() ? nullptr : vehicle_rows;
+    snapshot->vehicles = write_rows(document.vehicles, vehicle_rows);
     snapshot->vehicle_count = document.vehicles.size();
-    for (size_t i = 0; i < document.vehicles.size(); ++i) {
-        vehicle_rows[i].path = copy_string(document.vehicles[i].path_text);
-        vehicle_rows[i].weight = document.vehicles[i].weight;
-        vehicle_rows[i].has_explicit_weight = document.vehicles[i].has_explicit_weight ? 1u : 0u;
-        vehicle_rows[i].reserved = 0;
-    }
     snapshot->vehicle_title = copy_string(document.vehicle_title);
     snapshot->author = copy_string(document.author);
     snapshot->image = copy_string(document.image);
@@ -127,6 +131,33 @@ const KvScenarioSnapshot* allocate_scenario_snapshot(
     snapshot->present_fields = document.present_fields;
     snapshot->reserved2 = 0;
     return snapshot;
+}
+
+template<class Run>
+int run_timed_edit(const char* name, Run&& run) {
+    using Timing = kme::timing::MapTiming;
+    Timing::Trace trace;
+    const char* outcome = "failed";
+    int result = 0;
+    try {
+        Timing::Activation activation(&trace);
+        outcome = run();
+        result = 1;
+        trace.stop();
+    } catch (const std::exception& error) {
+        trace.stop();
+        set_last_error(error.what());
+    } catch (...) {
+        trace.stop();
+        set_last_error("unknown maploader error");
+    }
+
+    try {
+        KME_MAPLOADER_LOG_INFO(trace.format(name, trace.seconds(), outcome));
+    } catch (const std::exception&) {
+        std::fputs("[WARN]maploader.cpp: Edit timing output failed\n", stderr);
+    }
+    return result;
 }
 
 } // namespace
@@ -335,24 +366,17 @@ KV_API const KvScenarioRouteCandidate* kv_resolve_scenario_routes(
         // caller releases the whole result with a single free call.
         size_t string_bytes = 0;
         for (const auto& candidate : candidates) {
-            string_bytes += candidate.route_text.size() + 1 +
-                candidate.resolved_path.size() + 1;
+            string_bytes = checked_scenario_size_add(string_bytes, candidate.route_text.size() + 1);
+            string_bytes = checked_scenario_size_add(string_bytes, candidate.resolved_path.size() + 1);
         }
-        const size_t array_bytes =
-            candidates.size() * sizeof(KvScenarioRouteCandidate);
-        char* block = static_cast<char*>(std::malloc(array_bytes + string_bytes));
+        const size_t array_bytes = checked_scenario_size_mul(candidates.size(), sizeof(KvScenarioRouteCandidate));
+        char* block = static_cast<char*>(std::malloc(checked_scenario_size_add(array_bytes, string_bytes)));
         if (!block) throw std::bad_alloc();
         auto* out_array = reinterpret_cast<KvScenarioRouteCandidate*>(block);
         char* cursor = block + array_bytes;
         for (size_t i = 0; i < candidates.size(); ++i) {
-            out_array[i].route_text = cursor;
-            std::memcpy(cursor, candidates[i].route_text.c_str(),
-                        candidates[i].route_text.size() + 1);
-            cursor += candidates[i].route_text.size() + 1;
-            out_array[i].resolved_path = cursor;
-            std::memcpy(cursor, candidates[i].resolved_path.c_str(),
-                        candidates[i].resolved_path.size() + 1);
-            cursor += candidates[i].resolved_path.size() + 1;
+            out_array[i].route_text = append_scenario_string(cursor, candidates[i].route_text, true);
+            out_array[i].resolved_path = append_scenario_string(cursor, candidates[i].resolved_path, true);
         }
         *out_count = candidates.size();
         return out_array;
@@ -461,8 +485,7 @@ KV_API void kv_free_scenario_snapshot(const KvScenarioSnapshot* snapshot) {
 KV_API int kv_edit_dry_run_typed(void* handle, const KvEditBatch* batch,
                                  KvEditReportSnapshot* out_report,
                                  uint64_t out_size) {
-    try {
-        kme::timing::MapTiming::Operation timing("dll.dry_run", [](const std::string& text) { KME_MAPLOADER_LOG_INFO(text); });
+    return run_timed_edit("dll.dry_run", [&] {
         if (!handle) throw std::runtime_error("handle is null");
         if (!batch) throw std::runtime_error("edit batch is null");
         if (!out_report) throw std::runtime_error("edit report output is null");
@@ -472,27 +495,19 @@ KV_API int kv_edit_dry_run_typed(void* handle, const KvEditBatch* batch,
         auto* ctx = static_cast<MapContext*>(handle);
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
-        kme::timing::MapTiming::Stage conversion("batch.convert");
+        kme::timing::MapTiming::Stage conversion(kme::timing::MapStage::BatchConvert);
         std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
         conversion.finish();
         MapEditReport report = kme::maploader::detail::plan_staged_edit_batch(*ctx, changes);
         *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
-        timing.outcome = report.ok() ? "success" : "blocked";
-        return 1;
-    } catch (const std::exception& e) {
-        set_last_error(e.what());
-        return 0;
-    } catch (...) {
-        set_last_error("unknown maploader error");
-        return 0;
-    }
+        return report.ok() ? "success" : "blocked";
+    });
 }
 
 KV_API int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
                                          KvEditReportSnapshot* out_report,
                                          uint64_t out_size) {
-    try {
-        kme::timing::MapTiming::Operation timing("dll.apply", [](const std::string& text) { KME_MAPLOADER_LOG_INFO(text); });
+    return run_timed_edit("dll.apply", [&] {
         if (!handle) throw std::runtime_error("handle is null");
         if (!batch) throw std::runtime_error("edit batch is null");
         if (!out_report) throw std::runtime_error("edit report output is null");
@@ -502,7 +517,7 @@ KV_API int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
         auto* ctx = static_cast<MapContext*>(handle);
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
-        kme::timing::MapTiming::Stage conversion("batch.convert");
+        kme::timing::MapTiming::Stage conversion(kme::timing::MapStage::BatchConvert);
         std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
         conversion.finish();
         MapEditReport report = kme::maploader::detail::plan_staged_edit_batch(*ctx, changes);
@@ -514,41 +529,25 @@ KV_API int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
             }
         }
         *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
-        timing.outcome = report.ok() ? "success" : "blocked";
-        return 1;
-    } catch (const std::exception& e) {
-        set_last_error(e.what());
-        return 0;
-    } catch (...) {
-        set_last_error("unknown maploader error");
-        return 0;
-    }
+        return report.ok() ? "success" : "blocked";
+    });
 }
 
 KV_API int kv_edit_reset_memory(void* handle) {
-    try {
-        kme::timing::MapTiming::Operation timing("dll.reset", [](const std::string& text) { KME_MAPLOADER_LOG_INFO(text); });
+    return run_timed_edit("dll.reset", [&] {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
         kme::maploader::detail::reset_memory_edits(*ctx);
-        timing.outcome = "success";
-        return 1;
-    } catch (const std::exception& e) {
-        set_last_error(e.what());
-        return 0;
-    } catch (...) {
-        set_last_error("unknown maploader error");
-        return 0;
-    }
+        return "success";
+    });
 }
 
 KV_API int kv_edit_apply_typed(void* handle, const KvEditBatch* batch,
                                KvEditReportSnapshot* out_report,
                                uint64_t out_size) {
-    try {
-        kme::timing::MapTiming::Operation timing("dll.direct_apply", [](const std::string& text) { KME_MAPLOADER_LOG_INFO(text); });
+    return run_timed_edit("dll.direct_apply", [&] {
         if (!handle) throw std::runtime_error("handle is null");
         if (!batch) throw std::runtime_error("edit batch is null");
         if (!out_report) throw std::runtime_error("edit report output is null");
@@ -558,7 +557,7 @@ KV_API int kv_edit_apply_typed(void* handle, const KvEditBatch* batch,
         auto* ctx = static_cast<MapContext*>(handle);
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
-        kme::timing::MapTiming::Stage conversion("batch.convert");
+        kme::timing::MapTiming::Stage conversion(kme::timing::MapStage::BatchConvert);
         std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
         conversion.finish();
         MapEditReport report = kme::maploader::detail::plan_staged_edit_batch(*ctx, changes);
@@ -566,21 +565,13 @@ KV_API int kv_edit_apply_typed(void* handle, const KvEditBatch* batch,
             kme::maploader::detail::finalize_direct_disk_apply(*ctx, report);
         }
         *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
-        timing.outcome = report.ok() ? "success" : "blocked";
-        return 1;
-    } catch (const std::exception& e) {
-        set_last_error(e.what());
-        return 0;
-    } catch (...) {
-        set_last_error("unknown maploader error");
-        return 0;
-    }
+        return report.ok() ? "success" : "blocked";
+    });
 }
 
 KV_API int kv_edit_commit_typed(void* handle, KvEditReportSnapshot* out_report,
                                 uint64_t out_size) {
-    try {
-        kme::timing::MapTiming::Operation timing("dll.save", [](const std::string& text) { KME_MAPLOADER_LOG_INFO(text); });
+    return run_timed_edit("dll.save", [&] {
         if (!handle) throw std::runtime_error("handle is null");
         if (!out_report) throw std::runtime_error("edit report output is null");
         if (out_size < sizeof(KvEditReportSnapshot)) {
@@ -591,15 +582,8 @@ KV_API int kv_edit_commit_typed(void* handle, KvEditReportSnapshot* out_report,
         ctx->edit_target_snapshot.reset();
         MapEditReport report = kme::maploader::detail::commit_memory_edits(*ctx);
         *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
-        timing.outcome = report.ok() ? "success" : "blocked";
-        return 1;
-    } catch (const std::exception& e) {
-        set_last_error(e.what());
-        return 0;
-    } catch (...) {
-        set_last_error("unknown maploader error");
-        return 0;
-    }
+        return report.ok() ? "success" : "blocked";
+    });
 }
 
 KV_API const char* kv_get_last_error(void) {

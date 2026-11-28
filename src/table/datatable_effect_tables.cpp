@@ -39,8 +39,11 @@
 using namespace datatable_internal;
 
 namespace {
-template <size_t N, typename RenderSpecialCellFn, typename RowColorFn = std::nullptr_t>
-void render_event_table(const char* table_id,
+using PendingTableEdits = std::map<std::string, MapElementPendingChange>;
+
+template <size_t N, typename RenderSpecialCellFn>
+void render_event_table(const PendingTableEdits& pending_edits,
+                        const char* table_id,
                         const TableColumnDef (&columns)[N],
                         int distance_column,
                         int file_path_column,
@@ -52,8 +55,7 @@ void render_event_table(const char* table_id,
                         int& scroll_row,
                         int& highlight_row,
                         ImU32 highlight_color,
-                        RenderSpecialCellFn render_special_cell,
-                        RowColorFn pending_color = nullptr) {
+                        RenderSpecialCellFn render_special_cell) {
     if (!ImGui::BeginTable(table_id, static_cast<int>(N),
                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                            ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
@@ -85,10 +87,8 @@ void render_event_table(const char* table_id,
         for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
             const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
             ImGui::TableNextRow();
-            ImU32 color = row_index == highlight_row ? highlight_color : 0;
-            if constexpr (!std::is_same_v<RowColorFn, std::nullptr_t>) {
-                color = pending_color(row.edit_id, color);
-            }
+            const ImU32 color = pending_row_bg_color(pending_edits, row.edit_id,
+                row_index == highlight_row ? highlight_color : 0);
             if (color != 0) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, color);
             if (row_index == scroll_target_row) {
                 ImGui::SetScrollHereY(0.5f);
@@ -115,9 +115,9 @@ void render_event_table(const char* table_id,
 }
 
 template <size_t N, typename CanLocateFn, typename LocateFn, typename LocateSceneFn,
-          typename CanEditFn, typename EditFn, typename DeleteFn,
-          typename RowColorFn = std::nullptr_t>
-void render_change_point_table(const char* table_id,
+          typename CanEditFn, typename EditFn, typename DeleteFn>
+void render_change_point_table(const PendingTableEdits& pending_edits,
+                               const char* table_id,
                                const TableColumnDef (&columns)[N],
                                int distance_column,
                                int file_path_column,
@@ -140,9 +140,8 @@ void render_change_point_table(const char* table_id,
                                CanEditFn can_edit_row,
                                EditFn edit_row,
                                DeleteFn delete_row,
-                               bool double_click_opens = false,
-                               RowColorFn pending_color = nullptr) {
-    render_event_table(
+                               bool double_click_opens = false) {
+    render_event_table(pending_edits,
         table_id, columns, distance_column, file_path_column, rows,
         distance_width, file_path_width, file_name_header, open_menu_label,
         scroll_row, highlight_row, highlight_color,
@@ -150,31 +149,28 @@ void render_change_point_table(const char* table_id,
             if (column != distance_column) return false;
             const size_t marker_index = static_cast<size_t>(row_index);
             const bool can_edit = can_edit_row(marker_index);
-            const TextCellContextAction action = render_marker_text_cell_with_context(
+            const TextCellContextAction action = render_text_cell_with_context_actions(
                 value,
                 locate_on_plan_label, can_locate(marker_index),
                 locate_in_scene_label, can_locate_scene,
                 properties_label, can_edit,
                 delete_label, can_edit);
-            if (action == TextCellContextAction::Primary) {
-                locate_row_on_plan(marker_index);
-            } else if (action == TextCellContextAction::Secondary) {
-                locate_row_in_scene(marker_index);
-            } else if (action == TextCellContextAction::Tertiary) {
-                edit_row(marker_index);
-            } else if (action == TextCellContextAction::Quaternary) {
-                delete_row(marker_index);
-            }
+            dispatch_text_cell_action(action,
+                [&] { locate_row_on_plan(marker_index); },
+                [&] { locate_row_in_scene(marker_index); },
+                [&] { edit_row(marker_index); },
+                [&] { delete_row(marker_index); });
             if (double_click_opens && ImGui::IsItemHovered() &&
                 ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 edit_row(marker_index);
             }
             return true;
-        }, pending_color);
+        });
 }
 template <size_t N, typename CanLocateFn, typename LocateFn, typename LocateSceneFn, typename FindFn,
           typename CanEditFn, typename EditFn, typename DeleteFn>
-void render_map_sound_event_table(const char* table_id,
+void render_map_sound_event_table(const PendingTableEdits& pending_edits,
+                                  const char* table_id,
                                   const TableColumnDef (&columns)[N],
                                   int distance_column,
                                   int sound_key_column,
@@ -200,7 +196,7 @@ void render_map_sound_event_table(const char* table_id,
                                   CanEditFn can_edit_row,
                                   EditFn edit_row,
                                   DeleteFn delete_row) {
-    render_event_table(
+    render_event_table(pending_edits,
         table_id, columns, distance_column, file_path_column, rows,
         distance_width, file_path_width, file_name_header, open_menu_label,
         scroll_row, highlight_row, highlight_color,
@@ -209,22 +205,18 @@ void render_map_sound_event_table(const char* table_id,
                 const size_t marker_index = static_cast<size_t>(row_index);
                 const bool can_edit = can_edit_row(marker_index);
                 ImGui::PushID(column);
-                const TextCellContextAction action = render_marker_text_cell_with_context(
+                const TextCellContextAction action = render_text_cell_with_context_actions(
                     value,
                     locate_on_plan_label, can_locate(marker_index),
                     locate_in_scene_label, can_locate_scene,
                     properties_label, can_edit,
                     delete_label, can_edit);
                 ImGui::PopID();
-                if (action == TextCellContextAction::Primary) {
-                    locate_row_on_plan(marker_index);
-                } else if (action == TextCellContextAction::Secondary) {
-                    locate_row_in_scene(marker_index);
-                } else if (action == TextCellContextAction::Tertiary) {
-                    edit_row(marker_index);
-                } else if (action == TextCellContextAction::Quaternary) {
-                    delete_row(marker_index);
-                }
+                dispatch_text_cell_action(action,
+                    [&] { locate_row_on_plan(marker_index); },
+                    [&] { locate_row_in_scene(marker_index); },
+                    [&] { edit_row(marker_index); },
+                    [&] { delete_row(marker_index); });
                 return true;
             }
             if (column == sound_key_column) {
@@ -242,96 +234,56 @@ void render_map_sound_event_table(const char* table_id,
 
 void App::render_beacons_window() {
     if (!show_beacons_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_beacons_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.beacons") + "###Beacons";
-    if (!ImGui::Begin(title.c_str(), &show_beacons_window_)) {
-        focus_beacons_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_beacons_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.beacons") + "###Beacons", show_beacons_window_, dock_right_id_, &focus_beacons_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
     const auto& rows = table_cache_.beacon_rows;
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "beacons", k_beacon_columns, k_beacon_distance_column, k_beacon_file_path_column,
         rows, table_cache_.beacon_distance_width, table_cache_.beacon_file_path_width,
         tr("column.file_name"), tr("menu.locate_on_plan"), tr("menu.locate_in_scene_preview"),
         tr("menu.open_in_explorer"), beacon_list_scroll_row_, beacon_list_highlight_row_,
         table_row_highlight_color(theme_color_),
         [&](size_t index) { return index < beacon_marker_cache_.size() && beacon_marker_cache_[index].has_value(); },
-        [this](size_t index) { locate_beacon_row_on_plan(index); },
+        [this](size_t index) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::Beacon, index); },
         can_locate_scene_preview_row(),
         [this](size_t index) { locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind::Beacon, index); },
         tr("dialog.element_properties"), tr("button.delete"),
         [&](size_t index) { return edit_actions_available() && !rows[index].edit_id.empty(); },
         [&](size_t index) { request_element_inspector(rows[index].edit_id, "beacon.put"); },
         [&](size_t index) { request_element_delete(rows[index].edit_id, "beacon.put"); },
-        false, [this](const std::string& id, ImU32 highlight) { return editable_row_bg_color(id, highlight); });
-    focus_beacons_next_ = false;
-    ImGui::End();
+        false);
 }
 
 void App::render_irregularities_window() {
     if (!show_irregularities_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_irregularities_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.irregularities") + "###Irregularities";
-    if (!ImGui::Begin(title.c_str(), &show_irregularities_window_)) {
-        focus_irregularities_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_irregularities_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.irregularities") + "###Irregularities", show_irregularities_window_, dock_right_id_, &focus_irregularities_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
     const auto& rows = table_cache_.irregularity_rows;
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "irregularities", k_irregularity_columns, k_irregularity_distance_column, k_irregularity_file_path_column,
         rows, table_cache_.irregularity_distance_width, table_cache_.irregularity_file_path_width,
         tr("column.file_name"), tr("menu.locate_on_plan"), tr("menu.locate_in_scene_preview"),
         tr("menu.open_in_explorer"), irregularity_list_scroll_row_, irregularity_list_highlight_row_,
         table_row_highlight_color(theme_color_),
         [&](size_t index) { return index < irregularity_marker_cache_.size() && irregularity_marker_cache_[index].has_value(); },
-        [this](size_t index) { locate_irregularity_row_on_plan(index); },
+        [this](size_t index) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::Irregularity, index); },
         can_locate_scene_preview_row(),
         [this](size_t index) { locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind::Irregularity, index); },
         tr("dialog.element_properties"), tr("button.delete"),
         [&](size_t index) { return edit_actions_available() && !rows[index].edit_id.empty(); },
         [&](size_t index) { request_element_inspector(rows[index].edit_id, "irregularity.change"); },
         [&](size_t index) { request_element_delete(rows[index].edit_id, "irregularity.change"); },
-        true, [this](const std::string& id, ImU32 highlight) { return editable_row_bg_color(id, highlight); });
-    focus_irregularities_next_ = false;
-    ImGui::End();
+        true);
 }
 
 void App::render_rolling_noises_window() {
     if (!show_rolling_noises_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_rolling_noises_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.rolling_noises") + "###RollingNoises";
-    if (!ImGui::Begin(title.c_str(), &show_rolling_noises_window_)) {
-        focus_rolling_noises_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_rolling_noises_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.rolling_noises") + "###RollingNoises", show_rolling_noises_window_, dock_right_id_, &focus_rolling_noises_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "rolling_noises", k_rolling_noise_columns,
         k_rolling_noise_distance_column, k_rolling_noise_file_path_column,
         table_cache_.rolling_noise_rows,
@@ -348,7 +300,7 @@ void App::render_rolling_noises_window() {
             return marker_index < rolling_noise_marker_cache_.size() &&
                 rolling_noise_marker_cache_[marker_index].has_value();
         },
-        [this](size_t marker_index) { locate_rolling_noise_row_on_plan(marker_index); },
+        [this](size_t marker_index) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::RollingNoise, marker_index); },
         can_locate_scene_preview_row(),
         [this](size_t marker_index) {
             locate_scene_marker_row_in_scene_preview(
@@ -365,28 +317,14 @@ void App::render_rolling_noises_window() {
         [this](size_t row) {
             request_element_delete(model_.rolling_noises[row].edit_id, "rollingNoise.change");
         });
-    focus_rolling_noises_next_ = false;
-    ImGui::End();
 }
 
 void App::render_map_sounds_window() {
     if (!show_map_sounds_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_map_sounds_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.map_sounds") + "###MapSounds";
-    if (!ImGui::Begin(title.c_str(), &show_map_sounds_window_)) {
-        focus_map_sounds_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_map_sounds_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.map_sounds") + "###MapSounds", show_map_sounds_window_, dock_right_id_, &focus_map_sounds_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_map_sound_event_table(
+    render_map_sound_event_table(pending_edit_changes_,
         "map_sounds", k_map_sound_columns,
         k_map_sound_distance_column, k_map_sound_key_column, k_map_sound_file_path_column,
         table_cache_.map_sound_rows,
@@ -404,7 +342,7 @@ void App::render_map_sounds_window() {
             return marker_index < map_sound_marker_cache_.size() &&
                 map_sound_marker_cache_[marker_index].has_value();
         },
-        [this](size_t marker_index) { locate_map_sound_row_on_plan(marker_index); },
+        [this](size_t marker_index) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::MapSound, marker_index); },
         can_locate_scene_preview_row(),
         [this](size_t marker_index) {
             locate_scene_marker_row_in_scene_preview(
@@ -422,28 +360,14 @@ void App::render_map_sounds_window() {
         [this](size_t row) {
             request_element_delete(model_.map_sounds[row].edit_id, "mapSound.play");
         });
-    focus_map_sounds_next_ = false;
-    ImGui::End();
 }
 
 void App::render_map_sound_3d_window() {
     if (!show_map_sound_3d_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_map_sound_3d_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.map_sound_3d") + "###MapSound3D";
-    if (!ImGui::Begin(title.c_str(), &show_map_sound_3d_window_)) {
-        focus_map_sound_3d_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_map_sound_3d_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.map_sound_3d") + "###MapSound3D", show_map_sound_3d_window_, dock_right_id_, &focus_map_sound_3d_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_map_sound_event_table(
+    render_map_sound_event_table(pending_edit_changes_,
         "map_sound_3d", k_map_sound_columns,
         k_map_sound_distance_column, k_map_sound_key_column, k_map_sound_file_path_column,
         table_cache_.map_sound_3d_rows,
@@ -461,7 +385,7 @@ void App::render_map_sound_3d_window() {
             return marker_index < map_sound_3d_marker_cache_.size() &&
                 map_sound_3d_marker_cache_[marker_index].has_value();
         },
-        [this](size_t marker_index) { locate_map_sound_3d_row_on_plan(marker_index); },
+        [this](size_t marker_index) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::MapSound3D, marker_index); },
         can_locate_scene_preview_row(),
         [this](size_t marker_index) {
             locate_scene_marker_row_in_scene_preview(
@@ -479,28 +403,14 @@ void App::render_map_sound_3d_window() {
         [this](size_t row) {
             request_element_delete(model_.map_sound_3d[row].edit_id, "mapSound3D.put");
         });
-    focus_map_sound_3d_next_ = false;
-    ImGui::End();
 }
 
 void App::render_flange_noises_window() {
     if (!show_flange_noises_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_flange_noises_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.flange_noises") + "###FlangeNoises";
-    if (!ImGui::Begin(title.c_str(), &show_flange_noises_window_)) {
-        focus_flange_noises_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_flange_noises_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.flange_noises") + "###FlangeNoises", show_flange_noises_window_, dock_right_id_, &focus_flange_noises_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "flange_noises", k_flange_noise_columns,
         k_flange_noise_distance_column, k_flange_noise_file_path_column,
         table_cache_.flange_noise_rows,
@@ -517,7 +427,7 @@ void App::render_flange_noises_window() {
             return marker_index < flange_noise_marker_cache_.size() &&
                 flange_noise_marker_cache_[marker_index].has_value();
         },
-        [this](size_t marker_index) { locate_flange_noise_row_on_plan(marker_index); },
+        [this](size_t marker_index) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::FlangeNoise, marker_index); },
         can_locate_scene_preview_row(),
         [this](size_t marker_index) {
             locate_scene_marker_row_in_scene_preview(
@@ -534,28 +444,14 @@ void App::render_flange_noises_window() {
         [this](size_t row) {
             request_element_delete(model_.flange_noises[row].edit_id, "flangeNoise.change");
         });
-    focus_flange_noises_next_ = false;
-    ImGui::End();
 }
 
 void App::render_joint_noises_window() {
     if (!show_joint_noises_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_joint_noises_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.joint_noises") + "###JointNoises";
-    if (!ImGui::Begin(title.c_str(), &show_joint_noises_window_)) {
-        focus_joint_noises_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_joint_noises_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.joint_noises") + "###JointNoises", show_joint_noises_window_, dock_right_id_, &focus_joint_noises_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "joint_noises", k_joint_noise_columns,
         k_joint_noise_distance_column, k_joint_noise_file_path_column,
         table_cache_.joint_noise_rows,
@@ -572,7 +468,7 @@ void App::render_joint_noises_window() {
             return marker_index < joint_noise_marker_cache_.size() &&
                 joint_noise_marker_cache_[marker_index].has_value();
         },
-        [this](size_t marker_index) { locate_joint_noise_row_on_plan(marker_index); },
+        [this](size_t marker_index) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::JointNoise, marker_index); },
         can_locate_scene_preview_row(),
         [this](size_t marker_index) {
             locate_scene_marker_row_in_scene_preview(
@@ -589,29 +485,15 @@ void App::render_joint_noises_window() {
         [this](size_t row) {
             request_element_delete(model_.joint_noises[row].edit_id, "jointNoise.play");
         });
-    focus_joint_noises_next_ = false;
-    ImGui::End();
 }
 
 void App::render_backgrounds_window() {
     if (!show_backgrounds_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_backgrounds_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.backgrounds") + "###Backgrounds";
-    if (!ImGui::Begin(title.c_str(), &show_backgrounds_window_)) {
-        focus_backgrounds_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_backgrounds_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.backgrounds") + "###Backgrounds", show_backgrounds_window_, dock_right_id_, &focus_backgrounds_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
     const bool can_locate_scene_preview = can_locate_scene_preview_row();
-    render_event_table(
+    render_event_table(pending_edit_changes_,
         "backgrounds", k_background_columns,
         k_background_distance_column, k_background_file_path_column,
         table_cache_.background_rows,
@@ -629,24 +511,18 @@ void App::render_backgrounds_window() {
                 const bool can_edit = edit_actions_available() &&
                     marker_index < model_.backgrounds.size() &&
                     !model_.backgrounds[marker_index].edit_id.empty();
-                const TextCellContextAction action = render_marker_text_cell_with_context(
+                const TextCellContextAction action = render_text_cell_with_context_actions(
                     value,
                     tr("menu.locate_on_plan"), can_locate,
                     tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
                     tr("dialog.element_properties"), can_edit,
                     tr("button.delete"), can_edit);
-                if (action == TextCellContextAction::Primary) {
-                    locate_background_row_on_plan(marker_index);
-                } else if (action == TextCellContextAction::Secondary) {
-                    locate_scene_marker_row_in_scene_preview(
-                        Canvas3DSceneMarkerListKind::Background, marker_index);
-                } else if (action == TextCellContextAction::Tertiary) {
-                    request_element_inspector(model_.backgrounds[marker_index].edit_id,
-                                              "background.change");
-                } else if (action == TextCellContextAction::Quaternary) {
-                    request_element_delete(model_.backgrounds[marker_index].edit_id,
-                                           "background.change");
-                }
+                const auto& edit_id = table_cache_.background_rows[marker_index].edit_id;
+                dispatch_text_cell_action(action,
+                    [&] { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::Background, marker_index); },
+                    [&] { locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind::Background, marker_index); },
+                    [&] { request_element_inspector(edit_id, "background.change"); },
+                    [&] { request_element_delete(edit_id, "background.change"); });
                 return true;
             }
             if (column == k_background_structure_key_column && !value.empty()) {
@@ -659,28 +535,14 @@ void App::render_backgrounds_window() {
             }
             return false;
         });
-    focus_backgrounds_next_ = false;
-    ImGui::End();
 }
 
 void App::render_adhesions_window() {
     if (!show_adhesions_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_adhesions_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.adhesions") + "###Adhesions";
-    if (!ImGui::Begin(title.c_str(), &show_adhesions_window_)) {
-        focus_adhesions_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_adhesions_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.adhesions") + "###Adhesions", show_adhesions_window_, dock_right_id_, &focus_adhesions_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "adhesions", k_adhesion_columns,
         k_adhesion_distance_column, k_adhesion_file_path_column,
         table_cache_.adhesion_rows,
@@ -694,7 +556,7 @@ void App::render_adhesions_window() {
             return row < adhesion_marker_cache_.size() &&
                 adhesion_marker_cache_[row].has_value();
         },
-        [this](size_t row) { locate_adhesion_row_on_plan(row); },
+        [this](size_t row) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::Adhesion, row); },
         can_locate_scene_preview_row(),
         [this](size_t row) {
             locate_scene_marker_row_in_scene_preview(
@@ -711,28 +573,14 @@ void App::render_adhesions_window() {
         [this](size_t row) {
             request_element_delete(model_.adhesions[row].edit_id, "adhesion.change");
         });
-    focus_adhesions_next_ = false;
-    ImGui::End();
 }
 
 void App::render_cab_illuminance_window() {
     if (!show_cab_illuminance_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_cab_illuminance_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.cab_illuminance") + "###CabIlluminance";
-    if (!ImGui::Begin(title.c_str(), &show_cab_illuminance_window_)) {
-        focus_cab_illuminance_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_cab_illuminance_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.cab_illuminance") + "###CabIlluminance", show_cab_illuminance_window_, dock_right_id_, &focus_cab_illuminance_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "cab_illuminance", k_cab_illuminance_columns,
         k_cab_illuminance_distance_column, k_cab_illuminance_file_path_column,
         table_cache_.cab_illuminance_rows,
@@ -746,7 +594,7 @@ void App::render_cab_illuminance_window() {
             return row < cab_illuminance_marker_cache_.size() &&
                 cab_illuminance_marker_cache_[row].has_value();
         },
-        [this](size_t row) { locate_cab_illuminance_row_on_plan(row); },
+        [this](size_t row) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::CabIlluminance, row); },
         can_locate_scene_preview_row(),
         [this](size_t row) {
             locate_scene_marker_row_in_scene_preview(
@@ -765,28 +613,14 @@ void App::render_cab_illuminance_window() {
             request_element_delete(model_.cab_illuminance[row].edit_id,
                                    "cabIlluminance.change");
         });
-    focus_cab_illuminance_next_ = false;
-    ImGui::End();
 }
 
 void App::render_fogs_window() {
     if (!show_fogs_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_fogs_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.fogs") + "###Fogs";
-    if (!ImGui::Begin(title.c_str(), &show_fogs_window_)) {
-        focus_fogs_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_fogs_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.fogs") + "###Fogs", show_fogs_window_, dock_right_id_, &focus_fogs_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "fogs", k_fog_columns,
         k_fog_distance_column, k_fog_file_path_column,
         table_cache_.fog_rows,
@@ -800,7 +634,7 @@ void App::render_fogs_window() {
             return row < fog_marker_cache_.size() &&
                 fog_marker_cache_[row].has_value();
         },
-        [this](size_t row) { locate_fog_row_on_plan(row); },
+        [this](size_t row) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::Fog, row); },
         can_locate_scene_preview_row(),
         [this](size_t row) {
             locate_scene_marker_row_in_scene_preview(
@@ -817,28 +651,14 @@ void App::render_fogs_window() {
         [this](size_t row) {
             request_element_delete(model_.fogs[row].edit_id, "fog.change");
         });
-    focus_fogs_next_ = false;
-    ImGui::End();
 }
 
 void App::render_legacy_fogs_window() {
     if (!show_legacy_fogs_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_legacy_fogs_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.legacy_fogs") + "###LegacyFogs";
-    if (!ImGui::Begin(title.c_str(), &show_legacy_fogs_window_)) {
-        focus_legacy_fogs_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_legacy_fogs_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.legacy_fogs") + "###LegacyFogs", show_legacy_fogs_window_, dock_right_id_, &focus_legacy_fogs_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "legacyFogs", k_legacy_fog_columns,
         k_legacy_fog_distance_column, k_legacy_fog_file_path_column,
         table_cache_.legacy_fog_rows,
@@ -852,7 +672,7 @@ void App::render_legacy_fogs_window() {
             return row < legacy_fog_marker_cache_.size() &&
                 legacy_fog_marker_cache_[row].has_value();
         },
-        [this](size_t row) { locate_legacy_fog_row_on_plan(row); },
+        [this](size_t row) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::LegacyFog, row); },
         can_locate_scene_preview_row(),
         [this](size_t row) {
             locate_scene_marker_row_in_scene_preview(
@@ -869,8 +689,6 @@ void App::render_legacy_fogs_window() {
         [this](size_t row) {
             request_element_delete(model_.legacy_fogs[row].edit_id, "legacyFog.change");
         });
-    focus_legacy_fogs_next_ = false;
-    ImGui::End();
 }
 
 void App::sync_lighting_edit_state() {
@@ -955,19 +773,10 @@ bool App::apply_lighting_changes() {
             model_, pending_edit_changes_, state.edit_id, state.expected_source_hash, {});
 
         for (MapElementEditFieldState& field : state.fields) {
-            std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
-            if (field.required && value.empty()) {
-                set_program_status("status.edit.required_field");
-                return false;
-            }
-            const bool changed = value != field.original_value;
-            if (!validate_and_canonicalize_edit_field(field, changed)) {
-                set_program_status("status.edit.invalid_number");
-                return false;
-            }
-            value = trim_gui_ascii_copy(edit_field_buffer_text(field));
-            if (value != field.original_value) {
-                update.field_changes[field.backend_key.empty() ? field.key : field.backend_key] = value;
+            auto value = validated_edit_form_value(field, state.row_kind, false);
+            if (!value) return false;
+            if (*value != field.original_value) {
+                update.field_changes[field.backend_key.empty() ? field.key : field.backend_key] = std::move(*value);
             }
         }
 
@@ -1116,22 +925,10 @@ void App::render_lighting_window() {
 
 void App::render_draw_distances_window() {
     if (!show_draw_distances_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_draw_distances_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.draw_distances") + "###DrawDistances";
-    if (!ImGui::Begin(title.c_str(), &show_draw_distances_window_)) {
-        focus_draw_distances_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_draw_distances_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.draw_distances") + "###DrawDistances", show_draw_distances_window_, dock_right_id_, &focus_draw_distances_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "draw_distances", k_draw_distance_columns,
         k_draw_distance_distance_column, k_draw_distance_file_path_column,
         table_cache_.draw_distance_rows,
@@ -1148,7 +945,7 @@ void App::render_draw_distances_window() {
             return marker_index < draw_distance_marker_cache_.size() &&
                 draw_distance_marker_cache_[marker_index].has_value();
         },
-        [this](size_t marker_index) { locate_draw_distance_row_on_plan(marker_index); },
+        [this](size_t marker_index) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::DrawDistance, marker_index); },
         can_locate_scene_preview_row(),
         [this](size_t marker_index) {
             locate_scene_marker_row_in_scene_preview(
@@ -1165,28 +962,14 @@ void App::render_draw_distances_window() {
         [this](size_t row) {
             request_element_delete(model_.draw_distances[row].edit_id, "drawDistance.change");
         });
-    focus_draw_distances_next_ = false;
-    ImGui::End();
 }
 
 void App::render_speed_limits_window() {
     if (!show_speed_limits_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_speed_limits_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.speed_limits") + "###SpeedLimits";
-    if (!ImGui::Begin(title.c_str(), &show_speed_limits_window_)) {
-        focus_speed_limits_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_speed_limits_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(tr("frame.speed_limits") + "###SpeedLimits", show_speed_limits_window_, dock_right_id_, &focus_speed_limits_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
-    render_change_point_table(
+    render_change_point_table(pending_edit_changes_,
         "speed_limits", k_speed_limit_columns,
         k_speed_limit_distance_column, k_speed_limit_file_path_column,
         table_cache_.speed_limit_rows,
@@ -1200,7 +983,7 @@ void App::render_speed_limits_window() {
             return row < speed_limit_marker_cache_.size() &&
                 speed_limit_marker_cache_[row].has_value();
         },
-        [this](size_t row) { locate_speed_limit_row_on_plan(row); },
+        [this](size_t row) { locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::SpeedLimit, row); },
         can_locate_scene_preview_row(),
         [this](size_t row) {
             locate_scene_marker_row_in_scene_preview(
@@ -1217,7 +1000,5 @@ void App::render_speed_limits_window() {
         [this](size_t row) {
             request_element_delete(model_.speed_limit_rows[row].edit_id, "speedlimit");
         });
-    focus_speed_limits_next_ = false;
-    ImGui::End();
 }
 

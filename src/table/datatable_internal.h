@@ -32,6 +32,21 @@ inline constexpr size_t k_max_section_value_columns = 508;
 inline constexpr float k_find_input_min_width = 80.0f;
 inline constexpr float k_find_input_max_width = 280.0f;
 
+class ScopedTableWindow {
+public:
+    ScopedTableWindow(const std::string& title, bool& visible, ImGuiID dock, bool* focus = nullptr);
+    ScopedTableWindow(const ScopedTableWindow&) = delete;
+    ScopedTableWindow& operator=(const ScopedTableWindow&) = delete;
+    ~ScopedTableWindow();
+
+    explicit operator bool() const { return drawing_; }
+    bool show_map_rows(bool has_model) const;
+
+private:
+    bool* focus_;
+    bool drawing_;
+};
+
 std::string normalize_train_lookup_key(const std::string& key);
 float scroll_x_table_height_for_rows(int row_count);
 bool render_file_path_cell_with_context(
@@ -64,19 +79,25 @@ enum class TextCellContextAction {
     Quaternary,
 };
 
+template<class Primary, class Secondary, class Tertiary, class Quaternary>
+void dispatch_text_cell_action(TextCellContextAction action, Primary&& primary,
+                               Secondary&& secondary, Tertiary&& tertiary,
+                               Quaternary&& quaternary) {
+    switch (action) {
+    case TextCellContextAction::Primary: primary(); break;
+    case TextCellContextAction::Secondary: secondary(); break;
+    case TextCellContextAction::Tertiary: tertiary(); break;
+    case TextCellContextAction::Quaternary: quaternary(); break;
+    case TextCellContextAction::None: break;
+    }
+}
+
 TextCellContextAction render_text_cell_with_context_actions(
     const std::string& display_text,
     const std::string& primary_label, bool primary_enabled,
     const std::string& secondary_label, bool secondary_enabled,
     const std::string& tertiary_label = {}, bool tertiary_enabled = false,
     const std::string& quaternary_label = {}, bool quaternary_enabled = false);
-TextCellContextAction render_marker_text_cell_with_context(
-    const std::string& display_text,
-    const std::string& locate_on_plan_label, bool locate_on_plan_enabled,
-    const std::string& locate_in_scene_label, bool locate_in_scene_enabled,
-    const std::string& properties_label = {}, bool properties_enabled = false,
-    const std::string& delete_label = {}, bool delete_enabled = false);
-
 struct RepeaterTextCellContextAction {
     TextCellContextAction navigation = TextCellContextAction::None;
     RepeaterDeleteMode delete_mode = RepeaterDeleteMode::EntireChain;
@@ -99,62 +120,47 @@ std::string render_text_cell_with_submenu(
     const std::string& display_text, const std::string& menu_label,
     const std::vector<std::string>& menu_items);
 
-bool contains_ascii_case_insensitive(const std::string& text,
-                                     const std::string& query);
-bool equals_ascii_case_insensitive(const std::string& text,
-                                   const std::string& query);
-std::string ascii_case_key(const std::string& text);
-bool matches_find_query(const std::string& text, const std::string& query,
-                        bool exact_match);
 void replace_all(std::string& text, const std::string& from,
                  const std::string& to);
 std::string format_find_match_status(std::string format, size_t current,
                                      size_t total);
+std::string format_truncated_table_status(std::string format, size_t shown, size_t total);
 
-struct TableFindRowsView {
-    const std::vector<CachedTableRow>* cached_rows = nullptr;
-    const EditableListEditState* edit = nullptr;
-    const EditableListSpec* spec = nullptr;
+class TableFindRowsView {
+public:
+    explicit TableFindRowsView(const std::vector<CachedTableRow>& rows) : cached_rows_(rows) {}
+    TableFindRowsView(const std::vector<CachedTableRow>& rows,
+                      const EditableListEditState& edit, const EditableListSpec& spec)
+        : cached_rows_(rows), drafts_(edit.rows_initialized ? &edit.rows : nullptr),
+          column_offset_(spec.cache_column_offset), revision_(edit.revision) {}
 
+    std::uint64_t revision() const { return revision_; }
     size_t size() const {
-        return edit && edit->rows_initialized
-            ? edit->rows.size()
-            : cached_rows->size();
+        return drafts_ ? drafts_->size() : cached_rows_.size();
     }
 
     bool searchable(size_t row_index) const {
-        if (!edit || !edit->rows_initialized) {
-            return row_index < cached_rows->size();
-        }
-        if (row_index >= edit->rows.size()) return false;
-        return !edit->rows[row_index].deleted;
+        return !drafts_ || !(*drafts_)[row_index].deleted;
     }
 
     const std::string* cell(size_t row_index, size_t column) const {
-        if (!edit || !edit->rows_initialized) {
-            if (row_index >= cached_rows->size() ||
-                column >= (*cached_rows)[row_index].cells.size()) {
-                return nullptr;
-            }
-            return &(*cached_rows)[row_index].cells[column];
+        if (!drafts_) {
+            const auto& cells = cached_rows_[row_index].cells;
+            return column < cells.size() ? &cells[column] : nullptr;
         }
-        if (!spec || row_index >= edit->rows.size() ||
-            column < spec->cache_column_offset) {
-            return nullptr;
-        }
-        const size_t field = column - spec->cache_column_offset;
-        const auto& row = edit->rows[row_index];
-        if (row.deleted || field >= row.values.size()) {
-            return nullptr;
-        }
-        return &row.values[field];
+        if (column < column_offset_) return nullptr;
+        const auto& values = (*drafts_)[row_index].values;
+        const size_t field = column - column_offset_;
+        return field < values.size() ? &values[field] : nullptr;
     }
-};
 
-TableFindRowsView editable_table_find_rows(
-    const std::vector<CachedTableRow>& rows,
-    const EditableListEditState& edit,
-    const EditableListSpec& spec);
+private:
+    const std::vector<CachedTableRow>& cached_rows_;
+    const std::vector<EditableListDraftRow>* drafts_ = nullptr;
+    size_t column_offset_ = 0;
+    std::uint64_t revision_ = 0;
+};
+void reset_ordinary_table_find_results(TableFindState& state);
 void reset_table_find_results(TableFindState& state);
 void run_table_find(TableFindState& state,
                     const TableFindRowsView& rows,
@@ -178,6 +184,8 @@ void set_all_flags(std::vector<unsigned char>& flags, bool value);
 void set_flags_in_range(std::vector<unsigned char>& flags,
                         size_t begin, size_t count, bool value);
 ImU32 table_row_highlight_color(ImVec4 theme_color);
+ImU32 pending_row_bg_color(const std::map<std::string, MapElementPendingChange>& pending_edits,
+                           const std::string& edit_id, ImU32 highlight);
 void setup_fixed_table_header();
 bool render_find_panel_toggle(const char* id, const std::string& label,
                               bool expanded);

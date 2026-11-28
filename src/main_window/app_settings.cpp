@@ -34,40 +34,26 @@
 #include <vector>
 std::string normalized_storage_path(const std::string& path) {
     if (trim_ascii(path).empty()) return {};
-    try {
-        std::filesystem::path p = utf8_to_wide(path);
-        std::error_code ec;
-        std::filesystem::path abs = std::filesystem::absolute(p, ec);
-        if (ec) abs = p;
-        return narrow_path(abs.lexically_normal());
-    } catch (...) {
-        return path;
-    }
+    const std::filesystem::path input = utf8_to_wide(path);
+    std::error_code ec;
+    const auto absolute = std::filesystem::absolute(input, ec);
+    return narrow_path((ec ? input : absolute).lexically_normal());
 }
 
 std::string normalized_path_key(const std::string& path) {
     if (trim_ascii(path).empty()) return {};
-    try {
-        std::filesystem::path p = utf8_to_wide(path);
-        std::error_code ec;
-        std::filesystem::path abs = std::filesystem::absolute(p, ec);
-        if (ec) abs = p;
-        std::filesystem::path canonical = std::filesystem::weakly_canonical(abs, ec);
-        if (!ec) abs = canonical;
-        return ascii_lower(narrow_path(abs.lexically_normal()));
-    } catch (...) {
-        return ascii_lower(trim_ascii(path));
-    }
+    const std::filesystem::path input = utf8_to_wide(path);
+    std::error_code ec;
+    const auto absolute = std::filesystem::absolute(input, ec);
+    const auto& resolved = ec ? input : absolute;
+    const auto canonical = std::filesystem::weakly_canonical(resolved, ec);
+    return ascii_lower(narrow_path((ec ? resolved : canonical).lexically_normal()));
 }
 
 std::string display_name_from_path(const std::string& path) {
-    try {
-        std::filesystem::path p = utf8_to_wide(path);
-        std::string name = narrow_path(p.filename());
-        return name.empty() ? path : name;
-    } catch (...) {
-        return path;
-    }
+    const std::filesystem::path input = utf8_to_wide(path);
+    const std::string name = narrow_path(input.filename());
+    return name.empty() ? path : name;
 }
 
 float clamp_font_size(float value) {
@@ -468,6 +454,33 @@ static constexpr std::array<std::pair<std::string_view, bool View3DSettings::*>,
         {"scene_auto_load_on_map_open", &View3DSettings::scene_auto_load_on_map_open},
         {"scene_performance_warning_enabled", &View3DSettings::scene_performance_warning_enabled},
     }};
+
+template<class Settings, size_t N>
+static bool same_bool_settings(
+    const Settings& left, const Settings& right,
+    const std::array<std::pair<std::string_view, bool Settings::*>, N>& fields) {
+    return std::all_of(fields.begin(), fields.end(), [&](const auto& field) {
+        return left.*field.second == right.*field.second;
+    });
+}
+
+bool WindowVisibilitySettings::operator==(const WindowVisibilitySettings& other) const {
+    return same_bool_settings(*this, other, k_window_visibility_bool_fields);
+}
+
+bool View2DSettings::operator==(const View2DSettings& other) const {
+    return mode == other.mode && grid_mode == other.grid_mode &&
+        same_bool_settings(*this, other, k_view_2d_bool_fields);
+}
+
+bool View3DSettings::operator==(const View3DSettings& other) const {
+    return scene_draw_distance_m == other.scene_draw_distance_m &&
+        scene_edit_component_size_percent == other.scene_edit_component_size_percent &&
+        scene_camera_speed_percent == other.scene_camera_speed_percent &&
+        scene_instance_warning_threshold == other.scene_instance_warning_threshold &&
+        scene_instance_critical_warning_threshold == other.scene_instance_critical_warning_threshold &&
+        same_bool_settings(*this, other, k_view_3d_bool_fields);
+}
 
 static bool write_user_settings(std::ostream& out, const UserSettings& settings) {
     out << "[General]\n";

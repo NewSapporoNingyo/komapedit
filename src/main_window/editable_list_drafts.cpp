@@ -212,6 +212,7 @@ bool delete_editable_list_draft_row(
 void rebuild_editable_list_display_rows(
     EditableListEditState& edit,
     const EditableListSpec& spec) {
+    ++edit.revision;
     edit.display_rows.clear();
     edit.structure_key_columns = 0;
     if (!spec.numbered_structure_key_fields) return;
@@ -591,10 +592,14 @@ void App::commit_editable_list_active_edit(EditableListEditState& edit,
         if (row != edit.rows.end() && !row->deleted &&
             static_cast<size_t>(edit.editing_column) <
                 row->values.size()) {
-            row->values[static_cast<size_t>(edit.editing_column)] = edit.edit_buffer;
-            if (edit.editing_column == spec.path_field) {
-                row->resolved_path = resolve_list_asset_path(
-                    row->target_source_file, edit.edit_buffer);
+            auto& value = row->values[static_cast<size_t>(edit.editing_column)];
+            if (value != edit.edit_buffer) {
+                value = edit.edit_buffer;
+                ++edit.revision;
+                if (edit.editing_column == spec.path_field) {
+                    row->resolved_path = resolve_list_asset_path(
+                        row->target_source_file, edit.edit_buffer);
+                }
             }
         }
     }
@@ -905,6 +910,7 @@ bool App::clear_editable_list_cell(EditableListEditState& edit,
     EditableListDraftRow& row =
         edit.rows[static_cast<size_t>(visible_row)];
     if (column == spec.path_field) row.resolved_path.clear();
+    ++edit.revision;
     edit.selected_row = visible_row;
     return true;
 }
@@ -933,6 +939,7 @@ bool App::choose_editable_list_file(EditableListEditState& edit,
         make_list_asset_source_path(row.target_source_file, selected_file);
     row.values[static_cast<size_t>(spec.path_field)] = selected_path.source_path;
     row.resolved_path = selected_path.resolved_path;
+    ++edit.revision;
     edit.selected_row = visible_row;
     edit.selected_column =
         static_cast<int>(spec.cache_column_offset) + spec.path_field;
@@ -1101,7 +1108,7 @@ void App::rebind_other_editable_list_drafts(
 void App::apply_editable_list_drafts(EditableListEditState& edit,
                                      const EditableListSpec& spec) {
     EditTimingScope operation(*this, "apply");
-    GuiTiming::Stage timing("list.prepare_apply");
+    GuiTiming::Stage timing(kme::timing::GuiStage::ListPrepareApply);
     if (!edit_actions_available()) return;
     commit_editable_list_active_edit(edit, spec);
     if (!has_editable_list_drafts(edit)) {
@@ -1119,9 +1126,9 @@ void App::apply_editable_list_drafts(EditableListEditState& edit,
         set_program_status("status.edit.pending");
         return;
     }
-    timing.next("list.apply");
+    timing.next(kme::timing::GuiStage::ListApply);
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
-        timing.next("list.finish");
+        timing.next(kme::timing::GuiStage::ListFinish);
         EditableListEditState* applied = &edit;
         edit = EditableListEditState{};
         rebind_other_editable_list_drafts(applied);

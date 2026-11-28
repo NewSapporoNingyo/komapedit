@@ -272,7 +272,7 @@ foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
 - **轨道状态机**：`LastPos` 保存上一采样点，`TrackPointer` 按距离推进 own-track 事件并给出当前 radius、gradient、cant、方向与坐标；它是常规采样和事件边界采样的基础。
 - **曲线数学**：`rotate_xy()`、Gauss 积分、Fresnel 级数/渐近式实现局部坐标积分；`circular_curve*()` 计算圆曲线，`halfsin_intermediate()`、`linear_transition_curve_local()`、`transition_curve*()` 计算半正弦/线性缓和曲线。key/hash 结构缓存重复参数的曲线结果。
 - **坡度投影**：`constant_gradient_projection()`、`sinc()`、`gradient_transition()` 计算线路长度对应的平面投影和高程；`build_gradient_projection_samples()`、`build_event_projected_distances()` 将事件里程映射到平面位置。
-- **自轨道生成**：`sorted_unique()`、`append_arange()` 汇合事件点和等间距点；`generate_owntrack()` 逐采样写出距离、XYZ、朝向、radius、gradient、cant 等列；`generate_curveradius()` 形成曲率图数据。
+- **自轨道生成**：`sort_unique()`、`append_arange()` 汇合事件点和等间距点；`generate_owntrack()` 逐采样写出距离、XYZ、朝向、radius、gradient、cant 等列；`generate_curveradius()` 形成曲率图数据。
 - **他轨道生成**：`relative_position()` 计算曲线上的相对偏移；`CantProcessor` 处理超高 Begin/End/Interpolate；`build_othertrack_buffer()` 合并位置、X/Y 插值、轨距、中心和 cant，输出与 own-track 对齐的矩阵及有效性。
 - **重定位与放置**：`relocate()` 统一平移几何到稳定局部坐标；`build_structure_put_buffer()` 为结构放置提供按里程采样的变换基础。
 - **场景自适应控制点**：角度/矩阵帮助函数与 `build_scene_adaptive_controlpoints()` 把事件、模型跨度、曲率、坡度和请求范围组合成密度自适应控制点。
@@ -366,7 +366,7 @@ foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
 
 #### `src/main_window/runtime_paths.h` 与 `src/main_window/runtime_paths.cpp`
 
-- `executable_directory()` 首次调用 `GetModuleFileNameW()` 并缓存 exe 目录；`dll_directory()` 固定为其 `bin` 子目录；`settings_directory()` 创建并返回 `settings` 子目录。
+- `executable_directory()` 通过 `GetModuleFileNameW()` 用可扩容缓冲区读取模块路径并缓存 EXE 目录。路径读取失败时由启动入口报告 Win32 错误。EXE 目录下保存 `bin` 和 `settings` 子目录。
 - `dll_path()` 拼装 DLL 路径；`load_dll()` 以受限搜索标志从 `bin` 加载依赖，并可返回 Win32 错误码。
 
 #### `src/main_window/app_settings.h` 与 `src/main_window/app_settings.cpp`
@@ -421,7 +421,7 @@ foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
 
 #### `src/canvas2d/canvas2D.cpp`
 
-- **查询与业务数据**：`nearest_own_index()`、`interp_own_z()`、`track_info_at()`、`speed_at()`、`curve_sections()` 为测量和叠加层采样；`build_plan_data()` 合并 own/other track、站点、限速与 marker，`current_plan_data()` 以 model/geometry/visibility revision 缓存；profile 数据有相同 build/current 分层。
+- **查询与视图数据**：`nearest_own_index()`、`interp_own_z()`、`track_info_at()`、`speed_at()` 和 `curve_sections()` 为测量与叠加层采样。`current_plan_data()` 按几何与可见性输入缓存自轨采样、车站、限速和标记。`fit_plan_view()` 合并缓存边界、可见他轨以及 Repeater 端点和块角点，再按合并范围最长边的 5% 向四周留白。纵断面数据也区分构建与读取入口。
 - **视图操作与主流程**：测量、聚焦、坐标转换及 `jump_to_distance()` 统一导航；`render_plan_canvas()` 编排鼠标/触摸交互、可见里程计算，以及背景、网格、轨道、Repeater、车站、标记、标签、3D 位置和焦点的绘制。
 
 #### `src/canvas2d/canvas2d_alignment.cpp` 与 `src/shared/own_track_geometry.cpp`
@@ -473,9 +473,9 @@ foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
 | `scene_fog.cpp/.h`、`scene_shader_source.h` | CPU 雾关键帧构建/采样与场景 HLSL；CPU 逻辑及着色器编译由 `route_value_sampling_contract` 验证 |
 | `canvas3d_scene_lifecycle.cpp` | 场景替换、动态/地图/车站刷新、可见性与设置、模型请求及资源生命周期 |
 | `canvas3d_model_loader.cpp/.h` | 模型加载器 v2 客户端、WIC 纹理与缓存、CPU 模型 worker、上传队列及诊断 |
-| `canvas3d_put_between.cpp/.h` | 源模型准备与变形、异步 PutBetween 预览及经过序号检查的结果发布 |
+| `canvas3d_put_between.cpp/.h` | 源模型准备与变形、按请求序号和几何代次发布异步 PutBetween 结果，以及工作线程重启 |
 | `canvas3d_model_preview.cpp` | 单模型加载、资源清理与交互预览；应用层入口也可打开布景模型列表以外的模型 |
-| `canvas3d_d3d_resources.cpp` | HLSL、shader 管线、深度/混合/光栅化状态、渲染目标与实例缓冲 |
+| `canvas3d_d3d_resources.cpp` | HLSL、网格与场景着色器管线、深度/混合/光栅化状态、统一管理尺寸的渲染目标，以及实例缓冲 |
 | `canvas3d_scene_geometry.cpp/.h` | 场景/轨道分块、轨道放置坐标系及 Repeater 实例与缓存操作 |
 | `canvas3d_scene_markers.cpp` | 标记顶点、文字与图标、字体缓存、可见索引与标记绘制 |
 | `canvas3d_scene_camera.cpp` | 轨道采样、相机移动与跳转、聚焦目标状态 |
@@ -525,7 +525,7 @@ foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
 
 | 模块 | 职责 |
 | --- | --- |
-| `datatable.cpp` | 共享单元格/数值转换、表格 UI 基础帮助函数及场景轨道 key 语义标注 |
+| `datatable.cpp` | 共享表格窗口生命周期、停靠与焦点处理、单元格和数值转换，以及场景轨道键的语义标注 |
 | `datatable_internal.h` | 私有 inline 列定义及内部 action/view/helper 声明；窗口、缓存构建和专用模板位于各自 `.cpp` |
 | `datatable_cache.cpp` | 完整 `TableUiCache` 水合、动态 Section/Signal 列、Repeater 显示行合并、列宽测量与运行态限速缓存刷新 |
 | `datatable_find.cpp` | 不区分大小写的 find/reset/step、unused-key 搜索，以及 Structure/Signal/Sound 专用 App 查找 API |
@@ -542,15 +542,15 @@ foreach ($size in 16, 20, 24, 28, 32, 40, 48, 64, 80) {
 
 - `invalidate_table_cache()` 清除 revision 与派生行；`reset_marker_visibility()`、`sync_marker_visibility_sizes()` 保持二维 marker flags 与模型行数量同步。
 - Structure、Repeater、Signal 的 `locate_*_on_plan/in_list/in_scene_preview()` 分别更新 plan focus、table highlight/window visibility 和 Canvas3D jump；Repeater 额外处理 End/变化边界。
-- `locate_standard_marker_on_plan()`、`locate_standard_marker_in_list()` 是 Beacon、Section、Irregularity、Sound/Noise、Background、Adhesion、CabIlluminance、Fog、DrawDistance、SpeedLimit 等成对函数的公共实现。
-- other-train stop 定位同时打开对应分组与 stop 行。`locate_scene_marker_row_in_list()`、`locate_scene_marker_row_in_scene_preview()` 把 Canvas3D marker enum 映射回正确表格/源行；`can_locate_scene_preview_row()` 检查场景、索引和可见性条件。
+- `standard_marker_navigation()` 将每种标准标记绑定到平面图缓存、可见性设置、表格窗口、焦点、滚动和高亮状态。编译期检查保证 `None` 和 `Count` 之间的每种标记恰好登记一次。平面图、表格和场景的定位动作共用此映射。
+- 他列车停止点定位会打开对应分组与行。`can_locate_scene_preview_row()` 在表格或 Repeater 属性窗口发起场景定位前检查场景是否已启动、模型是否已加载完成。
 
 ### 调试入口与契约测试
 
 #### `src/main_window/debug_headless.h`
 
 - 每个 `*Options` 结构对应一个命令行模式：Map/Scenario 加载、plan/scene/open/edit/table-cache benchmark、场景 loader/相机传递、diagnostics popup、source anchor、roundtrip、distance/own/other track、Station/资源列表、Repeater、Section、Include、新建文件/元素、table find、touch 和 settings persistence。
-- 头文件声明 Debug 专用的 `run_debug_headless_*()` 入口；参数结构连接 `main()` 命令行解析与各测试实现。
+- 头文件声明 Debug 专用的 `run_debug_headless_*()` 入口。`win32_dx11_bootstrap.cpp` 的命令注册表按分派优先级选择解析器和运行函数。
 
 #### `src/main_window/debug_headless.cpp`
 
@@ -735,7 +735,7 @@ Canvas3D 在替换场景时建立放置轨道索引，支持自轨道别名、�
 
 `--profile-stages` 记录嵌套 CPU 阶段和异步 GPU 时间戳。查询提前分配、跨帧读取，仅统计有效且就绪的样本；GPU 区间包含命令间隙，CPU 父阶段包含子阶段。分段数据用于定位瓶颈，验收依据为整帧 CPU p95。
 
-计时后，场景契约对比直接计算与缓存路径的双精度实例指纹、像素和拾取，覆盖相机移动/旋转、chunk 跳转/返回、窗口、雾及轨道辅助线变化。`--debug-headless-scene-loader-contract` 使用临时模型和 headless D3D 验证：
+计时后，场景契约对比直接计算与缓存路径的双精度实例指纹、像素和拾取。用例覆盖相机移动和旋转、分块间跳转及返回、窗口变化、雾和轨道辅助线。契约也渲染模型预览参考网格，并在路线有成功加载的模型时用它验证 PutBetween 工作线程恢复。`--debug-headless-scene-loader-contract` 使用临时模型和 headless D3D 验证：
 
 - Repeater 距离/模型序列、类型化列表水合、Include 顺序、缺失项、零长度段、几何跳转锚点、tilt/span、无效间距、编辑/恢复失效、轨道替换及缓存预算。
 - 模型复制与 PutBetween worker 故障、取消、请求协调、DLL 分配/释放平衡，以及同路径模型复用与重载。
@@ -750,7 +750,7 @@ Canvas3D 在替换场景时建立放置轨道索引，支持自轨道别名、�
 
 plan、scene 和 own-track-edit 共用临时 Map/Include 契约，覆盖 Interpolate 的 0/1/2 参数、Apply/Delete/Reset、源码身份及唯一可编辑标记。真实线路按实际存在的目标验证；空的行、事件和标记集合须一致，依赖实例的检查记为不适用。own-track-edit 还检查 Preview→Edit 合并，包括通过 `rand()` 选择源码文件的地图。
 
-`--debug-headless-table-cache-bench` 使用 Edit 元数据及关闭 INI 持久化的 ImGui/ImPlot context。预热后分别测量冷缓存重建、热缓存单次命中和全部表格的一帧绘制，核对行、单元格、身份、动态标题/宽度的指纹。源码字节/哈希检查位于计时区间外。默认重复 5 次（范围 1–100），采样间距 25 m。
+`--debug-headless-table-cache-bench` 使用 Edit 元数据、为工具栏提供纹理的 D3D11 设备，以及关闭 INI 持久化的 ImGui/ImPlot 上下文。每个样本测量一次冷缓存重建、10 万次热缓存调用的单次平均耗时和全部表格的一帧绘制，并核对行、单元格、身份、动态标题和宽度的指纹。源码字节及哈希在计时区间外检查。默认重复 5 次（范围 1–100），采样间距 25 m。结构模型查找输出 `PASS`、`FAIL` 或带原因的 `SKIP`。
 
 `--debug-headless-diagnostics-popup-bench` 使用 100,000 条混合日志检查并发顺序、快照修订缓存和裁剪渲染。
 

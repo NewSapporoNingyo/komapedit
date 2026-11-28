@@ -27,7 +27,6 @@ struct TextLineSpan {
 };
 
 TextLineSpan text_line_span(std::string_view text, size_t begin) noexcept;
-size_t text_line_start_at(std::string_view text, size_t offset) noexcept;
 
 std::string path_to_utf8(const std::filesystem::path& path);
 std::filesystem::path path_from_utf8(const std::string& utf8);

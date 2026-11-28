@@ -10,6 +10,7 @@
 #endif
 
 #include "canvas2d_interaction.h"
+#include "canvas3D.h"
 
 #include <algorithm>
 #include <cmath>
@@ -262,11 +263,10 @@ std::optional<double> App::nearest_plan_measure_distance(
 }
 
 std::vector<PlanContextMenuEntry> App::collect_plan_context_entries(
-    const PlanData& data, ImVec2 mouse, ImVec2 origin, ImVec2 size,
+    const PlanData& data, const std::vector<PlanCurveInterpolateMarker>* interpolate_markers,
+    const PlanScreenTransform& hit_transform, ImVec2 mouse, ImVec2 origin, ImVec2 size,
     float marker_canvas_margin, double marker_hover_radius_sq,
     bool enabled) const {
-    const PlanScreenTransform hit_transform =
-        make_plan_transform(plan_view_, -data.origin_angle, origin, size);
     constexpr double k_plan_marker_overlap_eps = 1e-6;
     constexpr size_t k_plan_context_max_entries = 64;
     auto plan_context_kind_priority = [](PlanMarkerKind kind) -> int {
@@ -389,8 +389,8 @@ std::vector<PlanContextMenuEntry> App::collect_plan_context_entries(
         add_candidate(PlanMarkerKind::Gradient, marker.row_index, marker.x, marker.y,
                       marker.edit_id, marker.row_kind, marker);
     }
-    if (show_curve_values_) {
-        for (const PlanCurveInterpolateMarker& marker : data.curve_interpolate_markers) {
+    if (interpolate_markers) {
+        for (const PlanCurveInterpolateMarker& marker : *interpolate_markers) {
             if (marker.row_index >= model_.curve_rows.size()) continue;
             add_candidate(PlanMarkerKind::Curve, marker.row_index, marker.x, marker.y,
                           marker.edit_id, "curve");
@@ -562,12 +562,12 @@ void App::render_plan_marker_context_menu(
             case PlanMarkerKind::Section:
                 render_standard_menu_items("menu.locate_in_section_list",
                                            section_marker_cache_.size(), "section.begin",
-                                           [&](size_t row) { locate_section_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::Section, row); });
                 break;
             case PlanMarkerKind::Beacon:
                 render_standard_menu_items("menu.locate_in_beacon_list",
                                            beacon_marker_cache_.size(), "beacon.put",
-                                           [&](size_t row) { locate_beacon_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::Beacon, row); });
                 break;
             case PlanMarkerKind::PreTrain:
                 ImGui::BeginDisabled(!can_edit);
@@ -593,71 +593,71 @@ void App::render_plan_marker_context_menu(
                 render_standard_menu_items("menu.locate_in_irregularity_list",
                                            irregularity_marker_cache_.size(),
                                            "irregularity.change",
-                                           [&](size_t row) { locate_irregularity_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::Irregularity, row); });
                 break;
             case PlanMarkerKind::MapSound:
                 render_standard_menu_items("menu.locate_in_map_sound_list",
                                            map_sound_marker_cache_.size(), "mapSound.play",
-                                           [&](size_t row) { locate_map_sound_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::MapSound, row); });
                 break;
             case PlanMarkerKind::MapSound3D:
                 render_standard_menu_items("menu.locate_in_map_sound_3d_list",
                                            map_sound_3d_marker_cache_.size(), "mapSound3D.put",
-                                           [&](size_t row) { locate_map_sound_3d_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::MapSound3D, row); });
                 break;
             case PlanMarkerKind::RollingNoise:
                 render_standard_menu_items("menu.locate_in_rolling_noise_list",
                                            rolling_noise_marker_cache_.size(),
                                            "rollingNoise.change",
-                                           [&](size_t row) { locate_rolling_noise_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::RollingNoise, row); });
                 break;
             case PlanMarkerKind::FlangeNoise:
                 render_standard_menu_items("menu.locate_in_flange_noise_list",
                                            flange_noise_marker_cache_.size(),
                                            "flangeNoise.change",
-                                           [&](size_t row) { locate_flange_noise_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::FlangeNoise, row); });
                 break;
             case PlanMarkerKind::JointNoise:
                 render_standard_menu_items("menu.locate_in_joint_noise_list",
                                            joint_noise_marker_cache_.size(), "jointNoise.play",
-                                           [&](size_t row) { locate_joint_noise_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::JointNoise, row); });
                 break;
             case PlanMarkerKind::Background:
                 render_standard_menu_items("menu.locate_in_background_list",
                                            background_marker_cache_.size(), "background.change",
-                                           [&](size_t row) { locate_background_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::Background, row); });
                 break;
             case PlanMarkerKind::Adhesion:
                 render_standard_menu_items("menu.locate_in_adhesion_list",
                                            adhesion_marker_cache_.size(), "adhesion.change",
-                                           [&](size_t row) { locate_adhesion_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::Adhesion, row); });
                 break;
             case PlanMarkerKind::CabIlluminance:
                 render_standard_menu_items("menu.locate_in_cab_illuminance_list",
                                            cab_illuminance_marker_cache_.size(),
                                            "cabIlluminance.change",
-                                           [&](size_t row) { locate_cab_illuminance_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::CabIlluminance, row); });
                 break;
             case PlanMarkerKind::Fog:
                 render_standard_menu_items("menu.locate_in_fog_list",
                                            fog_marker_cache_.size(), "fog.change",
-                                           [&](size_t row) { locate_fog_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::Fog, row); });
                 break;
             case PlanMarkerKind::LegacyFog:
                 render_standard_menu_items("menu.locate_in_legacy_fog_list",
                                            legacy_fog_marker_cache_.size(), "legacyFog.change",
-                                           [&](size_t row) { locate_legacy_fog_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::LegacyFog, row); });
                 break;
             case PlanMarkerKind::DrawDistance:
                 render_standard_menu_items("menu.locate_in_draw_distance_list",
                                            draw_distance_marker_cache_.size(),
                                            "drawDistance.change",
-                                           [&](size_t row) { locate_draw_distance_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::DrawDistance, row); });
                 break;
             case PlanMarkerKind::SpeedLimit:
                 render_standard_menu_items("menu.locate_in_speed_limit_list",
                                            speed_limit_marker_cache_.size(), "speedlimit",
-                                           [&](size_t row) { locate_speed_limit_row_in_list(row); });
+                                           [&](size_t row) { locate_marker_row_in_list(Canvas3DSceneMarkerListKind::SpeedLimit, row); });
                 break;
             case PlanMarkerKind::Curve:
             case PlanMarkerKind::Gradient: {

@@ -233,7 +233,7 @@ void Canvas3D::Impl::release_scene_track_chunks() {
 }
 
 bool Canvas3D::Impl::build_scene_chunks(std::string& error) {
-    kme::timing::GuiTiming::Stage edit_timing("scene.chunks");
+    kme::timing::GuiTiming::Stage edit_timing(kme::timing::GuiStage::SceneChunks);
     scene_chunks.clear();
     scene_cached_repeater_world_count = 0;
     scene_placement_locations.clear();
@@ -698,7 +698,7 @@ void Canvas3D::Impl::append_visible_repeater_instances(SceneChunk& chunk,
                 world = cache->worlds[offset].world.data();
             } else if (!make_repeater_instance_world(repeater, distance, computed_world)) return;
 #ifndef NDEBUG
-            debug_record_scene_world(path, repeater.object_index, distance, world);
+            debug_scene_signature.record(path, repeater.object_index, distance, world);
 #endif
             SceneInstanceData data = make_instance_data_relative(world, render_origin);
 

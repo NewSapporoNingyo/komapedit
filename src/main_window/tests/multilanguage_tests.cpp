@@ -206,11 +206,11 @@ int main() {
     ok = expect_value(translation.zh, "creator_message.do_not_show", "下次不再显示") && ok;
     ok = expect_value(translation.ja, "creator_message.do_not_show", "次回から表示しない") && ok;
     ok = expect_value(translation.en, "table.section_values_truncated",
-        "Only the first {shown} parameters are shown (largest row: {total}). All parameters remain available in Properties/Edit.") && ok;
+        "Showing the first {shown} parameters. The largest row has {total}.") && ok;
     ok = expect_value(translation.zh, "table.section_values_truncated",
-        "仅显示前 {shown} 个参数（最长行有 {total} 个）。完整参数可在属性/编辑中查看。") && ok;
+        "显示前 {shown} 个参数，最长行有 {total} 个。") && ok;
     ok = expect_value(translation.ja, "table.section_values_truncated",
-        "先頭の {shown} 個のパラメータのみ表示しています（最長行: {total} 個）。すべてのパラメータはプロパティ/編集で確認できます。") && ok;
+        "先頭の {shown} 個のパラメータを表示します（最長行は {total} 個）。") && ok;
 
     ok = expect_value(translation.en, "column.field", "Field") && ok;
     ok = expect_value(translation.zh, "column.field", "字段") && ok;

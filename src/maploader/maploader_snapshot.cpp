@@ -24,26 +24,9 @@ class MapSnapshotBuilder {
 public:
     MapSnapshotBuilder(MapContext& context, MapSnapshotStorage& storage)
         : ctx_(context), storage_(storage), station_list_entries_(ordered_station_list_entries(ctx_)) {
-        const size_t row_count = ctx_.own_track.size() + ctx_.curves.size() +
-            ctx_.gradients.size() + ctx_.other_track_changes.size() +
-            ctx_.station_puts.size() +
-            ctx_.station_list.size() + ctx_.structure_loads.size() +
-            ctx_.structure_puts.size() + ctx_.structure_betweens.size() +
-            ctx_.structure_models.size() + ctx_.other_trains.size() +
-            ctx_.other_train_enables.size() + ctx_.other_train_stops.size() +
-            ctx_.section_begins.size() + ctx_.section_speed_limits.size() +
-            ctx_.signal_aspects.size() + ctx_.signal_puts.size() +
-            ctx_.beacons.size() + ctx_.pretrains.size() + ctx_.sound_list.size() +
-            ctx_.map_sounds.size() + ctx_.map_sound_3d.size() +
-            ctx_.rolling_noises.size() + ctx_.flange_noises.size() +
-            ctx_.joint_noises.size() + ctx_.repeaters.size() +
-            ctx_.irregularities.size() + ctx_.backgrounds.size() +
-            ctx_.adhesions.size() + ctx_.cab_illuminance.size() +
-            ctx_.fogs.size() + ctx_.legacy_fogs.size() +
-            ctx_.light_ambient.size() + ctx_.light_diffuse.size() +
-            ctx_.light_direction.size() +
-            ctx_.draw_distances.size() + ctx_.speedlimits.size() +
-            ctx_.creator_messages.size();
+        size_t row_count = 0;
+        visit_edit_row_families(ctx_, station_list_entries_,
+            [&](const char*, const auto& rows) { row_count += rows.size(); });
         const size_t preview_row_count =
             ctx_.variable_assignments.size() + ctx_.resource_list_loads.size();
         storage_.string_arena.reserve(
@@ -724,6 +707,19 @@ private:
         for (size_t i = 0; i < rows.size(); ++i) add_element(row_kind, i, rows[i].edit_ref);
     }
 
+    void add_elements(const char* kind, const std::vector<const StationListEntry*>& rows) {
+        for (size_t i = 0; i < rows.size(); ++i) add_element(kind, i, rows[i]->edit_ref);
+    }
+
+    void add_elements(const char* kind, const std::vector<SoundListEntry>& rows) {
+        size_t sound_index = 0;
+        size_t sound_3d_index = 0;
+        for (const SoundListEntry& row : rows) {
+            add_element(row.is_3d ? "sound3D.list" : kind,
+                        row.is_3d ? sound_3d_index++ : sound_index++, row.edit_ref);
+        }
+    }
+
     void add_edit_registry() {
         storage_.statements.reserve(ctx_.parsed_statements.size());
         for (ParsedStatement& input : ctx_.parsed_statements) {
@@ -750,55 +746,8 @@ private:
             storage_.statements.push_back(row);
         }
 
-        add_elements("own_track", ctx_.own_track);
-        add_elements("curve", ctx_.curves);
-        add_elements("gradient", ctx_.gradients);
-        add_elements("otherTrack.change", ctx_.other_track_changes);
-        add_elements("station.put", ctx_.station_puts);
-        for (size_t station_index = 0; station_index < station_list_entries_.size(); ++station_index) {
-            add_element("station.list", station_index,
-                        station_list_entries_[station_index]->edit_ref);
-        }
-        add_elements("structure.load", ctx_.structure_loads);
-        add_elements("structure.put", ctx_.structure_puts);
-        add_elements("structure.between", ctx_.structure_betweens);
-        add_elements("structure.model", ctx_.structure_models);
-        add_elements("otherTrain.definition", ctx_.other_trains);
-        add_elements("otherTrain.structureKey", ctx_.other_train_structure_keys);
-        add_elements("otherTrain.sound3DKey", ctx_.other_train_sound_3d_keys);
-        add_elements("otherTrain.enable", ctx_.other_train_enables);
-        add_elements("otherTrain.stop", ctx_.other_train_stops);
-        add_elements("section.begin", ctx_.section_begins);
-        add_elements("section.speedLimit", ctx_.section_speed_limits);
-        add_elements("signal.aspect", ctx_.signal_aspects);
-        add_elements("signal.put", ctx_.signal_puts);
-        add_elements("beacon.put", ctx_.beacons);
-        add_elements("preTrain.pass", ctx_.pretrains);
-        size_t sound_index = 0;
-        size_t sound_3d_index = 0;
-        for (const SoundListEntry& row : ctx_.sound_list) {
-            const bool is_3d = row.is_3d;
-            add_element(is_3d ? "sound3D.list" : "sound.list",
-                        is_3d ? sound_3d_index++ : sound_index++, row.edit_ref);
-        }
-        add_elements("mapSound.play", ctx_.map_sounds);
-        add_elements("mapSound3D.put", ctx_.map_sound_3d);
-        add_elements("rollingNoise.change", ctx_.rolling_noises);
-        add_elements("flangeNoise.change", ctx_.flange_noises);
-        add_elements("jointNoise.play", ctx_.joint_noises);
-        add_elements("repeater", ctx_.repeaters);
-        add_elements("irregularity.change", ctx_.irregularities);
-        add_elements("background.change", ctx_.backgrounds);
-        add_elements("adhesion.change", ctx_.adhesions);
-        add_elements("cabIlluminance.change", ctx_.cab_illuminance);
-        add_elements("fog.change", ctx_.fogs);
-        add_elements("light.ambient", ctx_.light_ambient);
-        add_elements("creator.message", ctx_.creator_messages);
-        add_elements("light.diffuse", ctx_.light_diffuse);
-        add_elements("light.direction", ctx_.light_direction);
-        add_elements("legacyFog.change", ctx_.legacy_fogs);
-        add_elements("drawDistance.change", ctx_.draw_distances);
-        add_elements("speedlimit", ctx_.speedlimits);
+        visit_edit_row_families(ctx_, station_list_entries_,
+            [&](const char* kind, const auto& rows) { add_elements(kind, rows); });
     }
 
     template <typename T>
@@ -925,7 +874,7 @@ const KvMapSnapshot& build_map_snapshot(MapContext& ctx) {
     }
     const auto started_at = SteadyClock::now();
     auto storage = std::make_unique<MapSnapshotStorage>();
-    kme::timing::MapTiming::Stage edit_timing("typed.snapshot_build");
+    kme::timing::MapTiming::Stage edit_timing(kme::timing::MapStage::TypedSnapshotBuild);
     MapSnapshotBuilder(ctx, *storage).build();
     const double elapsed = elapsed_seconds_since(started_at);
     storage->view.build_seconds = elapsed;

@@ -77,17 +77,8 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 int App::run_debug_headless_curve_parameter_edit(
     const HeadlessCurveParameterEditOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: "
-                      << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-curve-parameter-edit\n"
          << "path=" << options.path << "\n"
          << "memory_apply_only=1\n"
@@ -418,16 +409,8 @@ int App::run_debug_headless_curve_parameter_edit(
 int App::run_debug_headless_light_edit(
     const HeadlessLightEditOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-light-edit\n"
          << "path=" << options.path << "\n"
          << "memory_apply_only=1\n"
@@ -761,16 +744,8 @@ int App::run_debug_headless_light_edit(
 int App::run_debug_headless_station_put_margin_edit(
     const HeadlessStationPutMarginEditOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-station-put-margin-edit\n"
          << "path=" << options.path << "\n"
          << "memory_apply_only=1\n"
@@ -1001,16 +976,8 @@ int App::run_debug_headless_station_put_margin_edit(
 int App::run_debug_headless_new_element_edit(
     const HeadlessNewElementEditOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-new-element-edit\n"
          << "path=" << options.path << "\n"
          << "commit=" << (options.commit ? 1 : 0) << "\n"
@@ -2854,16 +2821,8 @@ int App::run_debug_headless_new_element_edit(
 int App::run_debug_headless_sparse_new_element(
     const HeadlessSparseNewElementOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-sparse-new-element\n"
          << "path=" << options.path << "\n"
          << "memory_apply_only=1\n"
@@ -3136,17 +3095,8 @@ int App::run_debug_headless_sparse_new_element(
 int App::run_debug_headless_auto_insert_diagnostics(
     const HeadlessAutoInsertDiagnosticsOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: "
-                      << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
 
     std::error_code path_error;
     std::filesystem::path fixture_directory = std::filesystem::absolute(
@@ -4039,16 +3989,8 @@ int App::run_debug_headless_auto_insert_diagnostics(
 int App::run_debug_headless_resource_list_replace(
     const HeadlessResourceListReplaceOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-resource-list-replace\n"
          << "map_path=" << options.path << "\n"
          << "memory_apply_only=1\n"
@@ -4215,16 +4157,8 @@ int App::run_debug_headless_resource_list_replace(
 int App::run_debug_headless_resource_list_insert(
     const HeadlessResourceListInsertOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-resource-list-insert\n"
          << "map_path=" << options.path << "\n"
          << "kind=" << options.kind << "\n"
@@ -4515,16 +4449,8 @@ int App::run_debug_headless_resource_list_insert(
 int App::run_debug_headless_new_file_wizard(
     const HeadlessNewFileWizardOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-new-file-wizard\n"
          << "map_path=" << options.path << "\n";
 
@@ -4790,16 +4716,8 @@ int App::run_debug_headless_new_file_wizard(
 int App::run_debug_headless_scenario_create(
     const HeadlessScenarioCreateOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-scenario-create\n"
          << "scenario_path=" << options.path << "\n"
          << "route_map=" << options.route << "\n";
@@ -4999,13 +4917,8 @@ int App::run_debug_headless_scenario_create(
 
 int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) return 1;
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path, HeadlessOutputMode::QuietBinary);
+    if (!out) return 1;
     *out << "command=debug-headless-scenario-lifecycle\nscenario_path=" << options.path << "\n";
     std::error_code error;
     const auto temp_root = std::filesystem::temp_directory_path(error);
@@ -5552,16 +5465,8 @@ int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOp
 int App::run_debug_headless_fresh_resource_list_workflow(
     const HeadlessFreshResourceListWorkflowOptions& options) {
     std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
-                         std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        out = &output_file;
-    }
+    std::ostream* out = open_headless_output(output_file, options.output_path);
+    if (!out) return 1;
     *out << "command=debug-headless-fresh-resource-list-workflow\n"
          << "map_path=" << options.path << "\n";
 

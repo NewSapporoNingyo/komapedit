@@ -39,9 +39,9 @@ using namespace datatable_internal;
 
 void App::render_othertracks_window() {
     if (!show_othertracks_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
     std::string title = tr("frame.othertracks") + "###OtherTracks";
-    if (ImGui::Begin(title.c_str(), &show_othertracks_window_)) {
+    const ScopedTableWindow window(title, show_othertracks_window_, dock_right_id_);
+    if (window) {
         if (!has_model_) {
             ImGui::TextDisabled("-");
         } else {
@@ -107,22 +107,16 @@ void App::render_othertracks_window() {
             }
         }
     }
-    ImGui::End();
 }
 
 void App::render_structure_rows_window(bool put_between) {
     bool& show_window = put_between ? show_structures_between_window_ : show_structures_window_;
     if (!show_window) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
     bool& focus_next = put_between ? focus_structures_between_next_ : focus_structures_next_;
-    if (focus_next) ImGui::SetNextWindowFocus();
     std::string title = tr(put_between ? "frame.structures_put_between" : "frame.structures") +
         (put_between ? "###StructuresPutBetween" : "###Structures");
-    if (!ImGui::Begin(title.c_str(), &show_window)) {
-        focus_next = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(title, show_window, dock_right_id_, &focus_next);
+    if (!window) return;
 
     sync_marker_visibility_sizes();
     ensure_table_cache();
@@ -136,6 +130,7 @@ void App::render_structure_rows_window(bool put_between) {
     const float file_path_width =
         put_between ? table_cache_.structure_between_file_path_width : table_cache_.structure_file_path_width;
     const size_t source_row_base = put_between ? table_cache_.structure_rows.size() : 0;
+    const auto& file_name_header = tr("column.file_name");
     const size_t source_row_end = source_row_base + rows.size();
 
     const size_t total_structure_rows =
@@ -174,7 +169,7 @@ void App::render_structure_rows_window(bool put_between) {
         for (int i = 0; i < column_count; ++i) {
             float width = columns[i].width;
             if (i == file_path_column) width = file_path_width;
-            ImGui::TableSetupColumn(columns[i].header,
+            ImGui::TableSetupColumn(i == file_path_column ? file_name_header.c_str() : columns[i].header,
                                     width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0,
                                     width);
         }
@@ -193,16 +188,12 @@ void App::render_structure_rows_window(bool put_between) {
                 const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
                 const size_t marker_index = source_row_base + static_cast<size_t>(row_index);
                 ImGui::TableNextRow();
-                if (row_is_pending_delete(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
-                } else if (row_has_pending_edit(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
-                } else if (row.invalid_track_key) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_invalid_track_key_row_color);
-                } else if (structure_list_highlight_row_ >= 0 &&
-                           marker_index == static_cast<size_t>(structure_list_highlight_row_)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
-                }
+                const bool highlighted = structure_list_highlight_row_ >= 0 &&
+                    marker_index == static_cast<size_t>(structure_list_highlight_row_);
+                const ImU32 base_color = row.invalid_track_key ? k_invalid_track_key_row_color
+                    : highlighted ? highlight_color : 0;
+                const ImU32 color = editable_row_bg_color(row.edit_id, base_color);
+                if (color != 0) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, color);
                 if (row_index == scroll_target_row) {
                     ImGui::SetScrollHereY(0.5f);
                     structure_list_scroll_row_ = -1;
@@ -233,18 +224,14 @@ void App::render_structure_rows_window(bool put_between) {
                             edit_actions_available() && !row.edit_id.empty(),
                             tr("button.delete"),
                             edit_actions_available() && !row.edit_id.empty());
-                        if (action == TextCellContextAction::Primary) {
-                            locate_structure_row_on_plan(marker_index);
-                        } else if (action == TextCellContextAction::Secondary) {
-                            locate_structure_row_in_scene_preview(marker_index);
-                        } else if (action == TextCellContextAction::Tertiary) {
-                            request_element_inspector(row.edit_id, put_between ? "structure.between" : "structure.put");
-                        } else if (action == TextCellContextAction::Quaternary) {
-                            request_element_delete(row.edit_id,
-                                                   put_between ? "structure.between" : "structure.put");
-                        }
+                        const char* row_kind = put_between ? "structure.between" : "structure.put";
+                        dispatch_text_cell_action(action,
+                            [&] { locate_structure_row_on_plan(marker_index); },
+                            [&] { locate_structure_row_in_scene_preview(marker_index); },
+                            [&] { request_element_inspector(row.edit_id, row_kind); },
+                            [&] { request_element_delete(row.edit_id, row_kind); });
                         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                            request_element_inspector(row.edit_id, put_between ? "structure.between" : "structure.put");
+                            request_element_inspector(row.edit_id, row_kind);
                         }
                         continue;
                     }
@@ -268,8 +255,6 @@ void App::render_structure_rows_window(bool put_between) {
         ImGui::EndTable();
     }
 
-    focus_next = false;
-    ImGui::End();
 }
 
 void App::render_structures_window() {
@@ -282,20 +267,9 @@ void App::render_structures_between_window() {
 
 void App::render_other_trains_window() {
     if (!show_other_trains_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_other_trains_next_) ImGui::SetNextWindowFocus();
     std::string title = tr("frame.other_trains") + "###OtherTrains";
-    if (!ImGui::Begin(title.c_str(), &show_other_trains_window_)) {
-        focus_other_trains_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        focus_other_trains_next_ = false;
-        ImGui::TextDisabled("-");
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(title, show_other_trains_window_, dock_right_id_, &focus_other_trains_next_);
+    if (!window.show_map_rows(has_model_)) return;
     sync_marker_visibility_sizes();
     bool all_visible = all_flags_set(other_train_path_visible_);
     ImGui::BeginDisabled(other_train_path_visible_.empty());
@@ -305,6 +279,7 @@ void App::render_other_trains_window() {
     ImGui::EndDisabled();
     ensure_table_cache();
     const bool has_stop_rows = !table_cache_.other_train_stop_rows.empty();
+    const auto& file_name_header = tr("column.file_name");
     if (has_stop_rows) {
         ImGui::TextUnformatted(tr("frame.other_train_definitions").c_str());
     }
@@ -319,7 +294,8 @@ void App::render_other_trains_window() {
             float width = k_other_train_columns[i].width;
             if (i == k_other_train_distance_column) width = table_cache_.other_train_distance_width;
             if (i == k_other_train_file_path_column) width = table_cache_.other_train_file_path_width;
-            ImGui::TableSetupColumn(k_other_train_columns[i].header,
+            ImGui::TableSetupColumn(i == k_other_train_file_path_column
+                                    ? file_name_header.c_str() : k_other_train_columns[i].header,
                                     width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0,
                                     width);
         }
@@ -396,7 +372,8 @@ void App::render_other_trains_window() {
                 float width = k_other_train_stop_columns[i].width;
                 if (i == k_other_train_stop_distance_column) width = table_cache_.other_train_stop_distance_width;
                 if (i == k_other_train_stop_file_path_column) width = table_cache_.other_train_stop_file_path_width;
-                ImGui::TableSetupColumn(k_other_train_stop_columns[i].header,
+                ImGui::TableSetupColumn(i == k_other_train_stop_file_path_column
+                                        ? file_name_header.c_str() : k_other_train_stop_columns[i].header,
                                         width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0,
                                         width);
             }
@@ -454,20 +431,13 @@ void App::render_other_trains_window() {
             ImGui::EndTable();
         }
     }
-    focus_other_trains_next_ = false;
-    ImGui::End();
 }
 
 void App::render_repeaters_window() {
     if (!show_repeaters_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_repeaters_next_) ImGui::SetNextWindowFocus();
     std::string title = tr("frame.repeaters") + "###Repeaters";
-    if (!ImGui::Begin(title.c_str(), &show_repeaters_window_)) {
-        focus_repeaters_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(title, show_repeaters_window_, dock_right_id_, &focus_repeaters_next_);
+    if (!window) return;
     sync_marker_visibility_sizes();
     bool all_visible = all_flags_set(repeater_row_visible_);
     ImGui::BeginDisabled(repeater_row_visible_.empty());
@@ -478,12 +448,14 @@ void App::render_repeaters_window() {
     ensure_table_cache();
     if (ImGui::BeginTable("repeaters", IM_ARRAYSIZE(k_repeater_columns) + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
         ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, k_show_column_width);
+        const auto& file_name_header = tr("column.file_name");
         for (int i = 0; i < IM_ARRAYSIZE(k_repeater_columns); ++i) {
             float width = k_repeater_columns[i].width;
             if (i == k_repeater_distance_column) width = table_cache_.repeater_distance_width;
             if (i == k_repeater_interval_column) width = table_cache_.repeater_interval_width;
             if (i == k_repeater_file_path_column) width = table_cache_.repeater_file_path_width;
-            ImGui::TableSetupColumn(k_repeater_columns[i].header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+            ImGui::TableSetupColumn(i == k_repeater_file_path_column ? file_name_header.c_str() : k_repeater_columns[i].header,
+                width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
@@ -579,20 +551,13 @@ void App::render_repeaters_window() {
         }
         ImGui::EndTable();
     }
-    focus_repeaters_next_ = false;
-    ImGui::End();
 }
 
 void App::render_signals_window() {
     if (!show_signals_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_signals_next_) ImGui::SetNextWindowFocus();
     std::string title = tr("frame.signals") + "###Signals";
-    if (!ImGui::Begin(title.c_str(), &show_signals_window_)) {
-        focus_signals_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(title, show_signals_window_, dock_right_id_, &focus_signals_next_);
+    if (!window) return;
     sync_marker_visibility_sizes();
     bool all_visible = all_flags_set(signal_row_visible_);
     ImGui::BeginDisabled(signal_row_visible_.empty());
@@ -663,15 +628,11 @@ void App::render_signals_window() {
                             edit_actions_available() && !row.edit_id.empty(),
                             tr("button.delete"),
                             edit_actions_available() && !row.edit_id.empty());
-                        if (action == TextCellContextAction::Primary) {
-                            locate_signal_row_on_plan(marker_index);
-                        } else if (action == TextCellContextAction::Secondary) {
-                            locate_signal_row_in_scene_preview(marker_index);
-                        } else if (action == TextCellContextAction::Tertiary) {
-                            request_element_inspector(row.edit_id, "signal.put");
-                        } else if (action == TextCellContextAction::Quaternary) {
-                            request_element_delete(row.edit_id, "signal.put");
-                        }
+                        dispatch_text_cell_action(action,
+                            [&] { locate_signal_row_on_plan(marker_index); },
+                            [&] { locate_signal_row_in_scene_preview(marker_index); },
+                            [&] { request_element_inspector(row.edit_id, "signal.put"); },
+                            [&] { request_element_delete(row.edit_id, "signal.put"); });
                         continue;
                     }
                     if (value.empty()) continue;
@@ -694,27 +655,13 @@ void App::render_signals_window() {
         }
         ImGui::EndTable();
     }
-    focus_signals_next_ = false;
-    ImGui::End();
 }
 
 void App::render_sections_window() {
     if (!show_sections_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(
-        dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_sections_next_) ImGui::SetNextWindowFocus();
     std::string title = tr("frame.sections") + "###Sections";
-    if (!ImGui::Begin(title.c_str(), &show_sections_window_)) {
-        focus_sections_next_ = false;
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        focus_sections_next_ = false;
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(title, show_sections_window_, dock_right_id_, &focus_sections_next_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
     const bool can_locate_scene = can_locate_scene_preview_row();
     auto render_section_table = [&](const char* table_id,
@@ -727,9 +674,8 @@ void App::render_sections_window() {
         ImGui::TextUnformatted(heading.c_str());
         const size_t displayed_value_columns = value_headers.size();
         if (value_columns > displayed_value_columns) {
-            std::string notice = tr("table.section_values_truncated");
-            replace_all(notice, "{shown}", std::to_string(displayed_value_columns));
-            replace_all(notice, "{total}", std::to_string(value_columns));
+            const auto notice = format_truncated_table_status(
+                tr("table.section_values_truncated"), displayed_value_columns, value_columns);
             ImGui::TextWrapped("%s", notice.c_str());
         }
         const int column_count = static_cast<int>(3 + displayed_value_columns);
@@ -747,7 +693,7 @@ void App::render_sections_window() {
         for (const auto& header : value_headers) {
             ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_WidthFixed, 80.0f);
         }
-        ImGui::TableSetupColumn("filePath", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+        ImGui::TableSetupColumn(tr("column.file_name").c_str(), ImGuiTableColumnFlags_WidthFixed, 200.0f);
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
         const int row_count = static_cast<int>(rows.size());
@@ -786,23 +732,17 @@ void App::render_sections_window() {
                             render_text_cell_with_context_actions(
                                 value, locate_on_plan, true, locate_in_scene,
                                 has_markers && can_locate_scene, properties, can_edit, delete_label, can_edit);
-                        if (action == TextCellContextAction::Primary) {
-                            if (has_markers) {
-                                locate_section_row_on_plan(row_index);
-                            } else {
-                                focus_plan_at_distance(
-                                    std::strtod(value.c_str(), nullptr));
-                            }
-                        } else if (action == TextCellContextAction::Secondary) {
-                            locate_scene_marker_row_in_scene_preview(
-                                Canvas3DSceneMarkerListKind::Section, row_index);
-                        } else if (action == TextCellContextAction::Tertiary) {
-                            request_element_inspector(
-                                row.edit_id, row_kind);
-                        } else if (action == TextCellContextAction::Quaternary) {
-                            request_element_delete(
-                                row.edit_id, row_kind);
-                        }
+                        dispatch_text_cell_action(action,
+                            [&] {
+                                if (has_markers) {
+                                    locate_marker_row_on_plan(Canvas3DSceneMarkerListKind::Section, row_index);
+                                } else {
+                                    focus_plan_at_distance(std::strtod(value.c_str(), nullptr));
+                                }
+                            },
+                            [&] { locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind::Section, row_index); },
+                            [&] { request_element_inspector(row.edit_id, row_kind); },
+                            [&] { request_element_delete(row.edit_id, row_kind); });
                     } else if (column == column_count - 1) {
                         render_file_path_cell_with_context(
                             value, row.open_path, open_file,
@@ -828,24 +768,13 @@ void App::render_sections_window() {
         table_cache_.section_speed_limit_rows,
         table_cache_.section_speed_limit_value_columns, table_cache_.section_speed_limit_value_headers,
         false, "section.speedLimit");
-    focus_sections_next_ = false;
-    ImGui::End();
 }
 
 void App::render_variables_window() {
     if (!show_variables_window_) return;
-    if (dock_right_id_) ImGui::SetNextWindowDockID(
-        dock_right_id_, ImGuiCond_FirstUseEver);
     std::string title = tr("frame.variables") + "###Variables";
-    if (!ImGui::Begin(title.c_str(), &show_variables_window_)) {
-        ImGui::End();
-        return;
-    }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
-        ImGui::End();
-        return;
-    }
+    const ScopedTableWindow window(title, show_variables_window_, dock_right_id_);
+    if (!window.show_map_rows(has_model_)) return;
     ensure_table_cache();
     if (ImGui::BeginTable(
             "variables", 3,
@@ -853,7 +782,7 @@ void App::render_variables_window() {
             ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
         ImGui::TableSetupColumn(tr("column.variable").c_str());
         ImGui::TableSetupColumn(tr("column.value").c_str());
-        ImGui::TableSetupColumn("filePath");
+        ImGui::TableSetupColumn(tr("column.file_name").c_str());
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
         const std::string open_file = tr("menu.open_in_explorer");
@@ -889,6 +818,5 @@ void App::render_variables_window() {
         }
         ImGui::EndTable();
     }
-    ImGui::End();
 }
 

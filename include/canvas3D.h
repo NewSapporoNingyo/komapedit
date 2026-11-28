@@ -302,6 +302,10 @@ struct Canvas3DSceneRenderContractResult {
     bool fps_counter = true;
     bool rotation_gizmo = true;
     bool marker_index_retry = true;
+    bool model_preview_reference_grid = true;
+    std::optional<bool> put_between_worker;
+    std::optional<bool> put_between_refresh;
+    std::optional<bool> background_order;
     size_t marker_index_retry_cases = 0;
     size_t cases = 0;
     size_t peak_cached_worlds = 0;

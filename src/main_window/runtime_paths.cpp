@@ -15,18 +15,17 @@ namespace runtime_paths {
 const std::filesystem::path& executable_directory() {
     static const std::filesystem::path directory = [] {
         std::vector<wchar_t> buffer(MAX_PATH);
-        while (true) {
-            DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-            if (length == 0) break;
-            if (length < buffer.size() - 1) {
-                return std::filesystem::path(std::wstring(buffer.data(), length)).parent_path();
+        for (;;) {
+            const DWORD length = GetModuleFileNameW(
+                nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+            if (length == 0) {
+                throw std::system_error(GetLastError(), std::system_category(), "GetModuleFileNameW");
+            }
+            if (length < buffer.size()) {
+                return std::filesystem::path(std::wstring_view(buffer.data(), length)).parent_path();
             }
             buffer.resize(buffer.size() * 2);
         }
-
-        std::error_code ec;
-        std::filesystem::path current = std::filesystem::current_path(ec);
-        return ec ? std::filesystem::path(L".") : current;
     }();
     return directory;
 }

@@ -233,20 +233,22 @@ void AlignmentPoseChange::move(TrackPoint& point) const {
     point.theta += theta;
 }
 
-AlignmentPoseChange AlignmentReprojection::pose_at(const Matrix& applied, double distance) const {
-    const std::size_t row = matrix_lower_bound_distance(applied, distance);
+AlignmentPoseChange AlignmentReprojection::pose_at(double distance) const {
+    const std::size_t row = matrix_lower_bound_distance(*applied, distance);
     if (row == 0) return poses.front();
-    if (row == applied.rows) return poses.back();
-    if (applied.at(row, 0) == distance) return poses[row];
-    return pose_change(*sample_matrix_track_point(applied, distance, true),
+    if (row == applied->rows) return poses.back();
+    if (applied->at(row, 0) == distance) return poses[row];
+    return pose_change(*sample_matrix_track_point(*applied, distance, true),
                        *sample_matrix_track_point(*own, distance, true));
 }
 
 AlignmentReprojection reproject_plan_geometry(
-    const Matrix& applied, std::shared_ptr<const Matrix> own,
+    std::shared_ptr<const Matrix> applied_geometry, std::shared_ptr<const Matrix> own,
     const std::vector<Matrix>& other_tracks, const std::vector<RepeaterOverlayRow>& repeaters) {
     AlignmentReprojection out;
+    out.applied = std::move(applied_geometry);
     out.own = std::move(own);
+    const Matrix& applied = *out.applied;
     out.poses.reserve(applied.rows);
     std::size_t draft_row = 0;
     for (std::size_t row = 0; row < applied.rows; ++row) {
@@ -262,22 +264,22 @@ AlignmentReprojection reproject_plan_geometry(
             double* point = points.data.data() + row * points.cols;
             while (pose_row + 1 < applied.rows && applied.at(pose_row, 0) < point[0]) ++pose_row;
             const auto pose = applied.at(pose_row, 0) == point[0]
-                ? out.poses[pose_row] : out.pose_at(applied, point[0]);
+                ? out.poses[pose_row] : out.pose_at(point[0]);
             pose.move(point[1], point[2]);
             point[3] += pose.z;
         }
     }
     out.repeaters = repeaters;
     const auto move_marker = [&](std::optional<PlanRepeaterMarker>& marker) {
-        if (marker) out.pose_at(applied, marker->d).move(marker->x, marker->y);
+        if (marker) out.pose_at(marker->d).move(marker->x, marker->y);
     };
     for (RepeaterOverlayRow& row : out.repeaters) {
         move_marker(row.begin_marker);
         move_marker(row.end_marker);
         auto& segment = row.segment;
         if (!segment.endpoints_valid) continue;
-        out.pose_at(applied, segment.first_point.d).move(segment.first_point);
-        out.pose_at(applied, segment.last_point.d).move(segment.last_point);
+        out.pose_at(segment.first_point.d).move(segment.first_point);
+        out.pose_at(segment.last_point.d).move(segment.last_point);
         segment.bounds_valid = false;
         for (auto& chunk : segment.chunks) {
             chunk.bounds_valid = false;
@@ -285,7 +287,7 @@ AlignmentReprojection reproject_plan_geometry(
             for (TrackPoint& point : chunk.points) {
                 while (pose_row < applied.rows && applied.at(pose_row, 0) < point.d) ++pose_row;
                 const auto pose = pose_row < applied.rows && applied.at(pose_row, 0) == point.d
-                    ? out.poses[pose_row] : out.pose_at(applied, point.d);
+                    ? out.poses[pose_row] : out.pose_at(point.d);
                 pose.move(point);
                 include_repeater_bounds(chunk, point);
                 include_repeater_bounds(segment, point);
@@ -319,7 +321,7 @@ void App::rebuild_speed_limit_marker_overlay_cache() {
 }
 
 void App::rebuild_marker_overlay_cache() {
-    GuiTiming::Stage edit_timing("plan.markers");
+    GuiTiming::Stage edit_timing(kme::timing::GuiStage::PlanMarkers);
     using namespace canvas2d;
 
     plan_data_cache_.valid = false;
@@ -355,7 +357,7 @@ void App::rebuild_marker_overlay_cache() {
     std::map<std::string, TrackSource> track_sources;
     TrackSource own_source{&model_.own, true};
     for (const char* key : k_own_track_lookup_aliases) {
-        track_sources[normalize_track_lookup_key(key)] = own_source;
+        track_sources.emplace(key, own_source);
     }
 
     auto append_own_track_edit_markers = [&](const std::vector<TableRow>& rows,
@@ -458,44 +460,29 @@ void App::rebuild_marker_overlay_cache() {
         other_track_change_marker_cache_.push_back(std::move(marker));
     }
 
-    auto find_track_source = [&](const std::string& normalized_key)
-        -> std::optional<TrackSource> {
+    auto find_track_source = [&](const std::string& normalized_key) -> const TrackSource* {
         const auto it = track_sources.find(normalized_key);
-        if (it == track_sources.end() || !it->second.points) return std::nullopt;
-        return it->second;
+        return it == track_sources.end() ? nullptr : &it->second;
     };
 
-    auto sample_track_base = [&](const std::string& key, double distance)
+    auto sample_registered_track = [&](const TrackSource& source, double distance, bool own_alias)
         -> std::optional<TrackPoint> {
-        const std::string normalized_key = normalize_track_lookup_key(key);
-        if (auto source = find_track_source(normalized_key)) {
-            auto sampled = sample_matrix_track_point(
-                *source->points, distance, source->has_theta_column);
-            if (sampled) return sampled;
+        auto sampled = sample_matrix_track_point(
+            *source.points, distance, source.has_theta_column);
+        if (!sampled && source.points != own_source.points && own_alias) {
+            return sample_matrix_track_point(model_.own, distance, true);
         }
-        if (is_own_track_lookup_alias(normalized_key)) {
-            return sample_matrix_track_point(
-                *own_source.points, distance, own_source.has_theta_column);
-        }
-        return std::nullopt;
-    };
-
-    auto sample_track = [&](const std::string& key, double distance,
-                            double lateral, double forward)
-        -> std::optional<TrackPoint> {
-        auto sampled = sample_track_base(key, distance);
-        if (!sampled) return std::nullopt;
-        return offset_track_point(*sampled, lateral, forward);
+        return sampled;
     };
 
     auto sample_placement_track = [&](const std::string& key, double distance,
                                       double lateral, double forward)
         -> std::optional<TrackPoint> {
         const std::string normalized_key = normalize_track_lookup_key(key);
-        std::optional<TrackSource> source = is_own_track_placement_key(normalized_key)
-            ? std::optional<TrackSource>{own_source}
+        const TrackSource* source = is_own_track_placement_key(normalized_key)
+            ? &own_source
             : find_track_source(normalized_key);
-        if (!source) source = own_source;
+        if (!source) source = &own_source;
         auto sampled = sample_matrix_track_point(
             *source->points, distance, source->has_theta_column);
         if (!sampled) return std::nullopt;
@@ -552,6 +539,7 @@ void App::rebuild_marker_overlay_cache() {
             structure_marker_cache_.size()));
     }
 
+    const TrackSource& standard_marker_track = track_sources.at("");
     auto build_standard_markers = [&](const std::vector<TableRow>& rows,
                                       auto& cache,
                                       const std::string& label_key,
@@ -563,7 +551,7 @@ void App::rebuild_marker_overlay_cache() {
                 ? sample_placement_track(
                       table_cell(row, "trackKey"), distance,
                       table_cell_number(row, "x"), table_cell_number(row, "z"))
-                : sample_track("", distance, 0.0, 0.0);
+                : sample_registered_track(standard_marker_track, distance, true);
             if (!point) {
                 cache.push_back(std::nullopt);
                 continue;
@@ -601,9 +589,8 @@ void App::rebuild_marker_overlay_cache() {
         std::vector<TrackPoint> points;
         if (end < start) std::swap(start, end);
         const std::string normalized_key = normalize_track_lookup_key(key);
-        auto source = find_track_source(normalized_key);
-        if (!source && is_own_track_lookup_alias(normalized_key)) source = own_source;
-        if (!source || !source->points || source->points->empty() ||
+        const auto* source = find_track_source(normalized_key);
+        if (!source || source->points->empty() ||
             source->points->cols < 3) {
             return points;
         }
@@ -719,7 +706,10 @@ void App::rebuild_marker_overlay_cache() {
         for (size_t stop_row_index : definition.stop_rows) {
             const TableRow& stop_row = model_.other_train_stops[stop_row_index];
             const double distance = table_cell_number(stop_row, "distance");
-            auto point = sample_track_base(definition.track_key, distance);
+            const auto normalized_key = normalize_track_lookup_key(definition.track_key);
+            const auto* source = find_track_source(normalized_key);
+            if (!source) continue;
+            auto point = sample_registered_track(*source, distance, is_own_track_lookup_alias(normalized_key));
             if (!point) continue;
 
             PlanOtherTrainStopMarker marker;
@@ -777,7 +767,7 @@ void App::rebuild_marker_overlay_cache() {
                                       double lateral, double forward) {
         PlanRepeaterSegment segment;
         if (end < start) std::swap(start, end);
-        if (!source.points || source.points->empty() || source.points->cols < 3) {
+        if (source.points->empty() || source.points->cols < 3) {
             return segment;
         }
 
@@ -821,7 +811,7 @@ void App::rebuild_marker_overlay_cache() {
         double distance = 0.0;
         std::string track_key;
         std::string edit_id;
-        std::optional<TrackSource> track_source;
+        const TrackSource* track_source;
         bool own_track_alias = false;
         double lateral = 0.0;
         double forward = 0.0;
@@ -842,9 +832,7 @@ void App::rebuild_marker_overlay_cache() {
 
     auto finish_repeater = [&](const RepeaterBeginState& begin,
                                double end_distance, const std::string& label) {
-        if (begin.row_index >= repeaters->size()) return;
         RepeaterOverlayRow& overlay = (*repeaters)[begin.row_index];
-        if (!begin.track_source) return;
 
         TrackSource segment_source = *begin.track_source;
         auto source_begin = sample_matrix_track_point(
@@ -872,7 +860,7 @@ void App::rebuild_marker_overlay_cache() {
 
     repeaters->reserve(model_.repeaters.size());
     for (const repeater_linkage::Segment& segment :
-         repeater_linkage::pair_segments(table_repeater_events(model_.repeaters))) {
+         model_.repeater_links.segments) {
         if (segment.begin_source_index >= model_.repeaters.size()) continue;
         const TableRow& row = model_.repeaters[segment.begin_source_index];
         const std::string key = table_cell(row, "repeaterKey");
@@ -889,29 +877,22 @@ void App::rebuild_marker_overlay_cache() {
             is_own_track_placement_key(normalized_track_key);
         begin.own_track_alias = own_placement_key ||
             is_own_track_lookup_alias(normalized_track_key);
-        begin.track_source = own_placement_key
-            ? std::optional<TrackSource>{own_source}
-            : find_track_source(normalized_track_key);
+        begin.track_source = own_placement_key ? &own_source : find_track_source(normalized_track_key);
         if (!begin.track_source) {
-            begin.track_source = own_source;
-            begin.own_track_alias = true;
+            begin.track_source = &own_source;
         }
+        begin.own_track_alias = begin.own_track_alias && begin.track_source->points != own_source.points;
 
         RepeaterOverlayRow overlay;
-        if (begin.track_source) {
-            auto base = sample_matrix_track_point(
-                *begin.track_source->points, begin.distance,
-                begin.track_source->has_theta_column);
-            if (!base && begin.own_track_alias) {
-                base = sample_matrix_track_point(
-                    *own_source.points, begin.distance, own_source.has_theta_column);
-            }
-            if (base) {
-                const TrackPoint point =
-                    offset_track_point(*base, begin.lateral, begin.forward);
-                overlay.begin_marker = make_repeater_marker(
-                    begin.distance, point, key, begin.edit_id, begin.row_index);
-            }
+        auto base = sample_matrix_track_point(
+            *begin.track_source->points, begin.distance, begin.track_source->has_theta_column);
+        if (!base && begin.own_track_alias) {
+            base = sample_matrix_track_point(model_.own, begin.distance, true);
+        }
+        if (base) {
+            const TrackPoint point = offset_track_point(*base, begin.lateral, begin.forward);
+            overlay.begin_marker = make_repeater_marker(
+                begin.distance, point, key, begin.edit_id, begin.row_index);
         }
         repeaters->push_back(std::move(overlay));
         if (segment.boundary_kind != repeater_linkage::BoundaryKind::Open) {

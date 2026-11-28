@@ -43,25 +43,15 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
-#include <thread>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <windows.h>
-#endif
 
 namespace kme::maploader::detail {
-
-#if !defined(_WIN32)
-constexpr unsigned int CP_UTF8 = 65001;
-#endif
 
 using SteadyClock = std::chrono::steady_clock;
 
@@ -137,6 +127,9 @@ private:
 std::string ascii_lower(std::string s);
 std::string trim_field_copy(const std::string& s);
 bool parse_finite_number(const std::string& text, double& value);
+std::string_view other_track_parameter_digits(std::string_view field);
+std::string format_c_decimal(double value, int significant_digits);
+std::string format_stream_decimal(double value, int significant_digits);
 std::string canonical_number(double value);
 std::uint64_t stable_hash64(const std::string& text);
 std::string hex64(std::uint64_t value);
@@ -186,7 +179,6 @@ LoadedText load_header_text(const std::filesystem::path& path,
                             bool collect_source_metadata = true,
                             std::string* full_text = nullptr,
                             bool* utf8_bom = nullptr);
-std::filesystem::path join_path(const std::filesystem::path& root, const std::string& file);
 
 /* Shared source-backed transaction primitive used by map and Scenario
    writeback. It verifies expected_hash immediately before replacement and
@@ -233,10 +225,43 @@ inline bool csv_comment_starts_at(std::string_view text, size_t index) {
     return index < text.size() && (text[index] == '#' ||
         (text[index] == '/' && index + 1 < text.size() && text[index + 1] == '/'));
 }
+template<class ReadByte, class EndField>
+size_t scan_csv_fields(std::string_view line, bool stop_on_comment,
+                       ReadByte&& read_byte, EndField&& end_field) {
+    bool quoted = false;
+    size_t start = 0;
+    size_t i = 0;
+    for (; i < line.size(); ++i) {
+        const char ch = line[i];
+        if (ch == '"') {
+            if (quoted && i + 1 < line.size() && line[i + 1] == '"') {
+                read_byte(ch);
+                ++i;
+            } else {
+                quoted = !quoted;
+            }
+        } else if (!quoted && ch == ',') {
+            end_field(line.substr(start, i - start));
+            start = i + 1;
+        } else if (!quoted && stop_on_comment && csv_comment_starts_at(line, i)) {
+            break;
+        } else {
+            read_byte(ch);
+        }
+    }
+    end_field(line.substr(start, i - start));
+    return i;
+}
+
 std::vector<std::string> parse_comma_separated_fields(const std::string& line, bool stop_on_inline_comment);
 std::string strip_ini_comment_copy(const std::string& line);
 std::string trim_matching_quotes(std::string text);
-int parse_sound_buffer_count(const std::string& text);
+enum class SoundBufferCountKind { Omitted, Valid, Invalid };
+struct SoundBufferCount {
+    SoundBufferCountKind kind;
+    int value;
+};
+SoundBufferCount parse_sound_buffer_count(const std::string& text);
 
 constexpr size_t k_no_source_ref = std::numeric_limits<size_t>::max();
 inline constexpr const char* k_root_include_invocation_key = "root";
@@ -307,6 +332,22 @@ enum class ResourceListLoadKind {
     Sound,
     Sound3D,
 };
+
+struct ResourceListHeader {
+    const char* prefix;
+    double minimum_version;
+};
+
+inline const ResourceListHeader& resource_list_header(ResourceListLoadKind kind) {
+    static constexpr ResourceListHeader headers[] = {
+        {"BveTs Station List ", 0.04},
+        {"BveTs Structure List ", 1.0},
+        {"BveTs Signal Aspects List ", 2.0},
+        {"BveTs Sound List ", 2.0},
+        {"BveTs Sound List ", 2.0},
+    };
+    return headers[static_cast<size_t>(kind)];
+}
 
 struct VariableAssignment {
     std::string normalized_name;
@@ -833,13 +874,7 @@ inline std::string normalized_resource_list_edit_value(const std::string& input,
 inline std::string normalized_sound_buffer_count_edit_value(const std::string& input) {
     const std::string value =
         normalized_resource_list_edit_value(input, "bufferCount");
-    if (value.empty()) return {};
-
-    char* end = nullptr;
-    errno = 0;
-    const long parsed = std::strtol(value.c_str(), &end, 10);
-    if (end == value.c_str() || !end || *end != '\0' || errno == ERANGE ||
-        parsed < 1 || parsed > std::numeric_limits<int>::max()) {
+    if (parse_sound_buffer_count(value).kind == SoundBufferCountKind::Invalid) {
         throw std::runtime_error(
             "bufferCount must be empty or a positive integer");
     }
@@ -1178,15 +1213,6 @@ std::vector<size_t> merge_source_file_records(MapContext& dest, const MapContext
 std::vector<size_t> merge_include_stacks(MapContext& dest, const MapContext& child);
 std::vector<size_t> merge_include_invocation_keys(MapContext& dest, const MapContext& child);
 void offset_edit_ref(EditSourceRef& ref, size_t statement_index_base);
-template <typename Row>
-void offset_row_edit_ref(Row& row, size_t statement_index_base) {
-    offset_edit_ref(row.edit_ref, statement_index_base);
-}
-
-template <typename Rows>
-void offset_row_edit_refs(Rows& rows, size_t statement_index_base) {
-    for (auto& row : rows) offset_row_edit_ref(row, statement_index_base);
-}
 
 template <typename Fn>
 void for_each_loaded_body_line(const LoadedText& loaded, Fn&& fn) {
@@ -1241,7 +1267,7 @@ void log_load_timing(const MapContext& ctx);
 void add_controlpoint(MapContext& ctx, double value);
 bool set_distance(MapContext& ctx, double value);
 void put_own(MapContext& ctx, const std::string& key, const Value& value, const std::string& flag = "");
-void ensure_othertrack(MapContext& ctx, const std::string& key);
+std::vector<OtherTrackEvent>& ensure_othertrack(MapContext& ctx, const std::string& key);
 void put_other(MapContext& ctx, const Value& track_key, const std::string& element_key,
                const Value& value, const std::string& flag = "");
 
@@ -1268,6 +1294,53 @@ std::string element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
 // committed-row population so that station.list row indices stay stable
 // across map snapshots, edit reports, and the GUI table cache.
 std::vector<const StationListEntry*> ordered_station_list_entries(const MapContext& ctx);
+
+template<class Visit>
+void visit_edit_row_families(const MapContext& ctx,
+                             const std::vector<const StationListEntry*>& station_entries,
+                             Visit&& visit) {
+    visit("own_track", ctx.own_track);
+    visit("curve", ctx.curves);
+    visit("gradient", ctx.gradients);
+    visit("otherTrack.change", ctx.other_track_changes);
+    visit("station.put", ctx.station_puts);
+    visit("station.list", station_entries);
+    visit("structure.load", ctx.structure_loads);
+    visit("structure.put", ctx.structure_puts);
+    visit("structure.between", ctx.structure_betweens);
+    visit("structure.model", ctx.structure_models);
+    visit("otherTrain.definition", ctx.other_trains);
+    visit("otherTrain.structureKey", ctx.other_train_structure_keys);
+    visit("otherTrain.sound3DKey", ctx.other_train_sound_3d_keys);
+    visit("otherTrain.enable", ctx.other_train_enables);
+    visit("otherTrain.stop", ctx.other_train_stops);
+    visit("section.begin", ctx.section_begins);
+    visit("section.speedLimit", ctx.section_speed_limits);
+    visit("signal.aspect", ctx.signal_aspects);
+    visit("signal.put", ctx.signal_puts);
+    visit("beacon.put", ctx.beacons);
+    visit("preTrain.pass", ctx.pretrains);
+    visit("sound.list", ctx.sound_list);
+    visit("mapSound.play", ctx.map_sounds);
+    visit("mapSound3D.put", ctx.map_sound_3d);
+    visit("rollingNoise.change", ctx.rolling_noises);
+    visit("flangeNoise.change", ctx.flange_noises);
+    visit("jointNoise.play", ctx.joint_noises);
+    visit("repeater", ctx.repeaters);
+    visit("irregularity.change", ctx.irregularities);
+    visit("background.change", ctx.backgrounds);
+    visit("adhesion.change", ctx.adhesions);
+    visit("cabIlluminance.change", ctx.cab_illuminance);
+    visit("fog.change", ctx.fogs);
+    visit("light.ambient", ctx.light_ambient);
+    visit("creator.message", ctx.creator_messages);
+    visit("light.diffuse", ctx.light_diffuse);
+    visit("light.direction", ctx.light_direction);
+    visit("legacyFog.change", ctx.legacy_fogs);
+    visit("drawDistance.change", ctx.draw_distances);
+    visit("speedlimit", ctx.speedlimits);
+}
+
 struct MapEditChange {
     std::string change_id;
     std::string edit_id;
